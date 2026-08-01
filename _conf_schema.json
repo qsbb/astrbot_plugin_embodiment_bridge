@@ -1,0 +1,117 @@
+{
+  "bridge_api_key": {
+    "description": "Quest 桥接二次认证密钥",
+    "type": "string",
+    "hint": "至少 32 个随机字符。Unity 通过 X-Quest-Avatar-Key 发送；它不能替代带 plugin scope 的 AstrBot API Key。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "chat_provider_id": {
+    "description": "角色决策使用的聊天模型 Provider ID",
+    "type": "string",
+    "_special": "select_provider",
+    "hint": "Quest 会话没有消息平台 UMO，因此必须显式选择 AstrBot 聊天模型。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "persona_prompt": {
+    "description": "Quest 角色设定",
+    "type": "text",
+    "hint": "只描述角色性格、表达和边界；不要填写 PMX 骨骼、Morph、Unity 对象或动画路径。",
+    "default": "保持自然、尊重边界、不过度亲昵的角色。"
+  },
+  "max_sessions": {
+    "description": "最大并发 Quest 会话数",
+    "type": "int",
+    "default": 8,
+    "minimum": 1,
+    "maximum": 64
+  },
+  "event_queue_size": {
+    "description": "每个会话的 SSE 有界事件队列容量",
+    "type": "int",
+    "hint": "慢客户端会先合并或丢弃可重建的增量事件，关键事件不会丢失。",
+    "default": 64,
+    "minimum": 8,
+    "maximum": 512
+  },
+  "max_audio_seconds": {
+    "description": "单轮输入音频最大秒数",
+    "type": "int",
+    "default": 60,
+    "minimum": 1,
+    "maximum": 120
+  },
+  "max_audio_chunk_bytes": {
+    "description": "单个解码后 PCM16 音频块最大字节数",
+    "type": "int",
+    "hint": "16000 Hz 单声道 PCM16 的 40-100 毫秒约为 1280-3200 字节；默认允许更大的网络批次。",
+    "default": 16000,
+    "minimum": 3200,
+    "maximum": 65536
+  },
+  "interaction_debounce_ms": {
+    "description": "相同交互名称和阶段的去抖窗口（毫秒）",
+    "type": "int",
+    "default": 250,
+    "minimum": 0,
+    "maximum": 2000
+  },
+  "max_intensity": {
+    "description": "下行动作最大强度",
+    "type": "float",
+    "default": 0.85,
+    "minimum": 0.1,
+    "maximum": 1.0
+  },
+  "max_intent_duration_ms": {
+    "description": "下行动作最大持续时间（毫秒）",
+    "type": "int",
+    "default": 8000,
+    "minimum": 100,
+    "maximum": 30000
+  },
+  "max_continuous_touch_ms": {
+    "description": "Continuous touch safety limit in milliseconds",
+    "type": "int",
+    "hint": "When an active touch reaches this duration, policy emits a safe refusal intent.",
+    "default": 15000,
+    "minimum": 1000,
+    "maximum": 120000
+  },
+  "gesture_cooldown_ms": {
+    "description": "重复非空闲动作冷却（毫秒）",
+    "type": "int",
+    "default": 350,
+    "minimum": 0,
+    "maximum": 10000
+  },
+  "output_chunk_ms": {
+    "description": "输出 PCM16 SSE 音频块时长（毫秒）",
+    "type": "int",
+    "default": 50,
+    "minimum": 40,
+    "maximum": 100
+  },
+  "sse_heartbeat_seconds": {
+    "description": "SSE 心跳间隔（秒）",
+    "type": "int",
+    "default": 15,
+    "minimum": 5,
+    "maximum": 60
+  },
+  "max_json_body_bytes": {
+    "description": "普通 JSON 请求体上限（字节）",
+    "type": "int",
+    "default": 65536,
+    "minimum": 4096,
+    "maximum": 262144
+  },
+  "max_audio_request_bytes": {
+    "description": "Base64 音频 JSON 请求体上限（字节）",
+    "type": "int",
+    "default": 32768,
+    "minimum": 8192,
+    "maximum": 131072
+  }
+}
