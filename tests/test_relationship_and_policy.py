@@ -38,6 +38,7 @@ class RelationshipProviderStub:
             "name": "relationship.snapshot",
             "version": self.version,
             "capabilities": ("read_snapshot",),
+            "privacy": "derived_only",
         }
 
     async def get_relationship_snapshot(
@@ -47,8 +48,9 @@ class RelationshipProviderStub:
         group_id: str | None,
         *,
         relationship_profile_id: str | None,
+        person_id: str,
     ) -> dict[str, Any]:
-        del bot_id, user_id, group_id, relationship_profile_id
+        del bot_id, user_id, group_id, relationship_profile_id, person_id
         self.calls += 1
         return {
             "version": "1.0",

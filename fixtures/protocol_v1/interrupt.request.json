@@ -1,0 +1,7 @@
+{
+  "type": "interrupt",
+  "protocol_version": "1.0",
+  "session_id": "smoke-session",
+  "turn_id": "i:e9",
+  "reason": "user_started_speaking"
+}

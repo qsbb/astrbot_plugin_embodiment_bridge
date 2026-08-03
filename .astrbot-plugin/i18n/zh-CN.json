@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "pairing": {
+      "title": "Quest 快速绑定",
+      "description": "填写公网地址和身份参数，生成一次性二维码或 6 位配对码"
+    }
+  }
+}

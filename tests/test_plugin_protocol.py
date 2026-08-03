@@ -127,7 +127,7 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     return request_stub
 
 
-def test_plugin_registers_only_public_http_sse_routes_and_terminates(
+def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -145,13 +145,21 @@ def test_plugin_registers_only_public_http_sse_routes_and_terminates(
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 9
+        assert len(registered) == 14
         assert (
             "/astrbot_plugin_quest_avatar_bridge/events/<session_id>",
             ("GET",),
         ) in registered
         assert (
             "/astrbot_plugin_quest_avatar_bridge/interaction",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/create",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/exchange",
             ("POST",),
         ) in registered
 

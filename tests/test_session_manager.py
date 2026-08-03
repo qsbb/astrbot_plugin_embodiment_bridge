@@ -122,3 +122,39 @@ def test_noncritical_event_drops_when_only_critical_events_fill_queue() -> None:
         await queue.close()
 
     asyncio.run(scenario())
+
+
+def test_audio_backpressure_keeps_critical_events_and_bounds_queue() -> None:
+    async def scenario() -> None:
+        queue = BoundedEventQueue(4)
+        await queue.put(QueueItem({"type": "avatar.intent"}, "t1", 1))
+        await queue.put(QueueItem({"type": "error"}, "t1", 1))
+        await queue.put(
+            QueueItem({"type": "reply.audio.chunk", "sequence": 0}, "t1", 1)
+        )
+        await queue.put(
+            QueueItem({"type": "reply.audio.chunk", "sequence": 1}, "t1", 1)
+        )
+
+        blocked = asyncio.create_task(
+            queue.put(
+                QueueItem({"type": "reply.audio.chunk", "sequence": 2}, "t1", 1)
+            )
+        )
+        await asyncio.sleep(0)
+        assert blocked.done() is False
+        assert queue.size == 4
+
+        assert (await queue.get()).event_type == "avatar.intent"
+        assert await asyncio.wait_for(blocked, timeout=1) is True
+        remaining = [(await queue.get()).payload for _ in range(4)]
+        assert [item["type"] for item in remaining] == [
+            "error",
+            "reply.audio.chunk",
+            "reply.audio.chunk",
+            "reply.audio.chunk",
+        ]
+        assert [item["sequence"] for item in remaining[1:]] == [0, 1, 2]
+        await queue.close()
+
+    asyncio.run(scenario())

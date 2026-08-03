@@ -1,10 +1,10 @@
 name: astrbot_plugin_quest_avatar_bridge
-display_name: 凝心溯溪-映
-short_desc: 凝心溯溪系列 Quest 角色桥接模块：对话、互动决策与模型无关意图
+display_name: 凝心溯溪-临
+short_desc: 凝心溯溪系列具身交互模块：让 AI 化身进入 Quest 与现实空间
 desc: >
-  凝心溯溪系列 Quest 角色桥接模块：通过 HTTP POST 与 SSE 连接 Unity，
-  由 AstrBot 统一决定回复、触碰边界、动作、表情和注视意图。
-version: 0.1.0
+  凝心溯溪系列具身交互模块：通过 HTTP POST 与 SSE 连接 Unity，
+  让 AstrBot 统一决定回复、触碰边界、动作、表情、注视和语音意图。
+version: 0.1.1
 author: qsbb
 repo: https://github.com/qsbb/astrbot_plugin_quest_avatar_bridge
 astrbot_version: ">=4.26.8,<5"

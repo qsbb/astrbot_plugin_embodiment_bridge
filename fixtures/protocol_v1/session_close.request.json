@@ -1,0 +1,5 @@
+{
+  "type": "session.close",
+  "protocol_version": "1.0",
+  "session_id": "smoke-session"
+}

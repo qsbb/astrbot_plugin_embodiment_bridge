@@ -1,0 +1,10 @@
+{
+  "status": "ok",
+  "data": {
+    "session_id": "smoke-session",
+    "event_id": "e9",
+    "accepted": true,
+    "turn_id": "i:e9",
+    "reason": "accepted"
+  }
+}

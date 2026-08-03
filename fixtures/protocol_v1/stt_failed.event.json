@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "protocol_version": "1.0",
+  "session_id": "audio-session",
+  "turn_id": "audio-turn",
+  "code": "stt_failed",
+  "message": "Speech recognition failed"
+}

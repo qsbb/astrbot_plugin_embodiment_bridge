@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "data": {
+    "session_id": "smoke-session",
+    "turn_id": "i:e9",
+    "cancelled": true
+  }
+}

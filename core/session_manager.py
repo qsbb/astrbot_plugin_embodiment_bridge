@@ -11,10 +11,10 @@ from typing import Any, Callable
 from .models import AudioChunkRequest, InteractionEvent, SessionStartRequest
 
 
-CRITICAL_EVENT_TYPES = frozenset({"asr.final", "avatar.intent", "reply.end", "error"})
-DROPPABLE_EVENT_TYPES = frozenset(
-    {"asr.partial", "reply.text.delta", "reply.audio.chunk"}
+CRITICAL_EVENT_TYPES = frozenset(
+    {"asr.final", "avatar.intent", "reply.audio.chunk", "reply.end", "error"}
 )
+DROPPABLE_EVENT_TYPES = frozenset({"asr.partial", "reply.text.delta"})
 
 
 class BridgeStateError(RuntimeError):
@@ -159,6 +159,8 @@ class SessionState:
     group_id: str
     relationship_profile_id: str
     queue: BoundedEventQueue
+    protected_context_authorized: bool = False
+    context_authorization_reason: str = "not_checked"
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     generation: int = 0
     current_turn: TurnState | None = None
@@ -194,7 +196,12 @@ class SessionManager:
         self._terminated = False
 
     async def start_session(
-        self, request: SessionStartRequest, owner: str
+        self,
+        request: SessionStartRequest,
+        owner: str,
+        *,
+        protected_context_authorized: bool = False,
+        context_authorization_reason: str = "not_checked",
     ) -> SessionState:
         async with self._lock:
             if self._terminated:
@@ -212,6 +219,10 @@ class SessionManager:
                 group_id=request.group_id,
                 relationship_profile_id=request.relationship_profile_id,
                 queue=BoundedEventQueue(self.event_queue_size),
+                protected_context_authorized=protected_context_authorized,
+                context_authorization_reason=str(
+                    context_authorization_reason or "not_checked"
+                )[:128],
             )
             self._sessions[request.session_id] = session
             return session

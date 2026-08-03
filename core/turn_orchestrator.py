@@ -6,7 +6,14 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 from ..adapters.astrbot_llm import DecisionGenerator
+from ..adapters.environment import CachedEnvironmentAdapter
+from ..adapters.identity import (
+    ProtectedContextDecision,
+    QuestSessionAuthorizationAdapter,
+)
+from ..adapters.knowledge import GlobalKnowledgeAdapter
 from ..adapters.relationship import RelationshipSnapshotAdapter
+from ..adapters.runtime import SeriesRuntimeAdapter
 from ..adapters.stt import AdapterUnavailable, STTAdapter
 from ..adapters.tts import (
     OUTPUT_CHANNELS,
@@ -19,6 +26,7 @@ from .models import (
     PROTOCOL_VERSION,
     InteractionEvent,
     ModelDecision,
+    SessionStartRequest,
     TurnStartRequest,
 )
 from .session_manager import SessionManager, SessionState, TurnState
@@ -35,6 +43,10 @@ class TurnOrchestrator:
         relationship: RelationshipSnapshotAdapter,
         policy: InteractionPolicy,
         logger: Any,
+        identity: QuestSessionAuthorizationAdapter | None = None,
+        knowledge: GlobalKnowledgeAdapter | None = None,
+        environment: CachedEnvironmentAdapter | None = None,
+        runtime: SeriesRuntimeAdapter | None = None,
         output_chunk_ms: int = 50,
     ) -> None:
         self.sessions = sessions
@@ -44,7 +56,26 @@ class TurnOrchestrator:
         self.relationship = relationship
         self.policy = policy
         self.logger = logger
+        self.identity = identity
+        self.knowledge = knowledge
+        self.environment = environment
+        self.runtime = runtime
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
+
+    async def authorize_session(
+        self,
+        owner: str,
+        request: SessionStartRequest,
+    ) -> ProtectedContextDecision:
+        if self.identity is None:
+            return ProtectedContextDecision(False, "identity_adapter_unavailable")
+        return await self.identity.authorize(
+            api_principal=owner,
+            declared_client_id=request.client_id,
+            bot_id=request.bot_id,
+            user_id=request.user_id,
+            group_id=request.group_id,
+        )
 
     async def start_turn(
         self,
@@ -217,12 +248,21 @@ class TurnOrchestrator:
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
         history = await self.sessions.history_snapshot(session)
-        relationship = await self._read_relationship(session)
+        relationship_task = self._read_relationship(session)
+        knowledge_task = self._read_knowledge(user_text, interaction)
+        environment_task = self._read_environment()
+        relationship, knowledge, environment = await asyncio.gather(
+            relationship_task,
+            knowledge_task,
+            environment_task,
+        )
         decision = await self.llm.generate(
             user_text=user_text,
             history=history,
             interaction=interaction,
             relationship=relationship,
+            knowledge=knowledge,
+            environment=environment,
         )
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
@@ -319,12 +359,14 @@ class TurnOrchestrator:
         self,
         session: SessionState,
     ) -> dict[str, Any] | None:
+        if not session.protected_context_authorized:
+            return None
         try:
             return await self.relationship.read(
                 bot_id=session.bot_id,
                 user_id=session.user_id,
                 group_id=session.group_id,
-                relationship_profile_id=session.relationship_profile_id,
+                relationship_profile_id="",
             )
         except asyncio.CancelledError:
             raise
@@ -334,6 +376,37 @@ class TurnOrchestrator:
                 type(exc).__name__,
             )
             return None
+
+    async def _read_knowledge(
+        self,
+        user_text: str,
+        interaction: InteractionEvent | None,
+    ) -> list[dict[str, Any]]:
+        if self.knowledge is None or interaction is not None:
+            return []
+        return await self.knowledge.recall(user_text)
+
+    async def _read_environment(self) -> dict[str, Any] | None:
+        if self.environment is None:
+            return None
+        return await self.environment.read()
+
+    def integration_status(self) -> dict[str, Any]:
+        return {
+            "identity": self.identity.status
+            if self.identity is not None
+            else "disabled",
+            "knowledge": self.knowledge.status
+            if self.knowledge is not None
+            else "disabled",
+            "relationship": "authorization_gated",
+            "environment": self.environment.status
+            if self.environment is not None
+            else "disabled",
+            "runtime": self.runtime.snapshot
+            if self.runtime is not None
+            else {"status": "disabled"},
+        }
 
     async def _emit(
         self,
@@ -398,5 +471,15 @@ class TurnOrchestrator:
             self.stt.close(),
             self.tts.close(),
             self.relationship.close(),
+            *(
+                adapter.close()
+                for adapter in (
+                    self.identity,
+                    self.knowledge,
+                    self.environment,
+                    self.runtime,
+                )
+                if adapter is not None
+            ),
             return_exceptions=True,
         )

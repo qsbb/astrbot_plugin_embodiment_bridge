@@ -14,6 +14,83 @@
     "obvious_hint": true,
     "default": ""
   },
+  "enable_astrbot_stt": {
+    "description": "启用 AstrBot 默认 STT Provider",
+    "type": "bool",
+    "hint": "启用后把 Quest PCM16 封装为 16000 Hz 单声道 WAV，再调用 AstrBot 4.26.8 的 get_using_stt_provider().get_text()。",
+    "default": false
+  },
+  "enable_astrbot_tts": {
+    "description": "启用 AstrBot 默认 TTS Provider",
+    "type": "bool",
+    "hint": "启用后调用 AstrBot 4.26.8 的 get_using_tts_provider().get_audio()；Provider 必须返回本地、可解析的 PCM WAV。",
+    "default": false
+  },
+  "enable_voice_hub_tts": {
+    "description": "优先使用「声」插件的语音输出",
+    "type": "bool",
+    "hint": "开启后优先走「声」（voice_hub）系列插件的 voice.audio_output@1.0 语音契约；未安装「声」时自动回退 AstrBot 内置 TTS，无需手动处理。默认开启。",
+    "default": true
+  },
+  "trusted_client_id": {
+    "description": "配对页预填的 Quest 客户端身份",
+    "type": "string",
+    "hint": "这是配对页预填的客户端身份，一般留空、由配对流程自动处理即可。只有与 trusted_platform_id 一起配置后才能开启受保护的关系上下文，且配对请求必须与此值一致。",
+    "default": ""
+  },
+  "trusted_platform_id": {
+    "description": "配对页预填的 AstrBot 平台身份",
+    "type": "string",
+    "hint": "例如 aiocqhttp。一般留空、由配对流程自动处理；不要从自然人关系映射推导这个值。",
+    "default": ""
+  },
+  "enable_global_knowledge": {
+    "description": "读取主动学习插件的全局知识证据",
+    "type": "bool",
+    "hint": "依赖「主动学习」（active_learner）系列插件的 active_learner.knowledge@1.0 契约；只允许 scope=global，私人用户域保持关闭。未安装对应插件时自动降级，无副作用。",
+    "default": true
+  },
+  "global_knowledge_top_k": {
+    "description": "每轮最多带入的全局知识条数",
+    "type": "int",
+    "hint": "默认 5 条；每条是一段简短证据，5 条大约几百个 token，能提供背景又不会挤占对话上下文。",
+    "default": 5,
+    "minimum": 1,
+    "maximum": 10
+  },
+  "enable_environment_context": {
+    "description": "读取环境感知插件的缓存事实",
+    "type": "bool",
+    "hint": "依赖「环境感知」（environment_awareness）系列插件的 environment.opportunity@1.0 契约，只调用不联网的 cached_read 能力。未安装对应插件时自动降级，无副作用。",
+    "default": true
+  },
+  "enable_runtime_diagnostics": {
+    "description": "启动时读取系列运行时诊断",
+    "type": "bool",
+    "hint": "依赖「更新管理」（update_manager）系列插件的 update_manager.series_runtime@1.0 契约，只读，不能更新、安装、启停、重载或联网。未安装对应插件时自动降级，无副作用。",
+    "default": true
+  },
+  "stt_timeout_seconds": {
+    "description": "单次 STT 超时（秒）",
+    "type": "float",
+    "default": 45.0,
+    "minimum": 1.0,
+    "maximum": 180.0
+  },
+  "tts_timeout_seconds": {
+    "description": "单次 TTS 超时（秒）",
+    "type": "float",
+    "default": 60.0,
+    "minimum": 1.0,
+    "maximum": 180.0
+  },
+  "max_tts_audio_seconds": {
+    "description": "单轮 TTS 输出最大秒数",
+    "type": "int",
+    "default": 120,
+    "minimum": 1,
+    "maximum": 300
+  },
   "persona_prompt": {
     "description": "Quest 角色设定",
     "type": "text",
@@ -72,9 +149,9 @@
     "maximum": 30000
   },
   "max_continuous_touch_ms": {
-    "description": "Continuous touch safety limit in milliseconds",
+    "description": "持续触碰安全上限（毫秒）",
     "type": "int",
-    "hint": "When an active touch reaches this duration, policy emits a safe refusal intent.",
+    "hint": "一次有效触碰达到该时长后，策略会发出安全拒绝意图。",
     "default": 15000,
     "minimum": 1000,
     "maximum": 120000

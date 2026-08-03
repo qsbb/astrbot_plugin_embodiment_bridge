@@ -1,0 +1,57 @@
+{
+  "protocol_version": "1.0",
+  "responses": [
+    {
+      "status_code": 400,
+      "body": {"status": "error", "message": "Content-Length is invalid", "data": {"code": "invalid_content_length"}}
+    },
+    {
+      "status_code": 400,
+      "body": {"status": "error", "message": "JSON request body is required", "data": {"code": "empty_body"}}
+    },
+    {
+      "status_code": 400,
+      "body": {"status": "error", "message": "audio data is not valid base64", "data": {"code": "invalid_audio"}}
+    },
+    {
+      "status_code": 401,
+      "body": {"status": "error", "message": "AstrBot API authentication is required", "data": {"code": "astrbot_auth_required"}}
+    },
+    {
+      "status_code": 401,
+      "body": {"status": "error", "message": "Quest bridge authentication failed", "data": {"code": "bridge_auth_failed"}}
+    },
+    {
+      "status_code": 403,
+      "body": {"status": "error", "message": "session owner does not match", "data": {"code": "session_ownership_mismatch"}}
+    },
+    {
+      "status_code": 404,
+      "body": {"status": "error", "message": "session not found", "data": {"code": "session_not_found"}}
+    },
+    {
+      "status_code": 409,
+      "body": {"status": "error", "message": "session already exists", "data": {"code": "session_conflict"}}
+    },
+    {
+      "status_code": 413,
+      "body": {"status": "error", "message": "Request body is too large", "data": {"code": "payload_too_large"}}
+    },
+    {
+      "status_code": 415,
+      "body": {"status": "error", "message": "Content-Type must be application/json", "data": {"code": "unsupported_media_type"}}
+    },
+    {
+      "status_code": 422,
+      "body": {"status": "error", "message": "Request schema validation failed", "data": {"code": "schema_validation_failed"}}
+    },
+    {
+      "status_code": 500,
+      "body": {"status": "error", "message": "Internal bridge error", "data": {"code": "internal_error"}}
+    },
+    {
+      "status_code": 503,
+      "body": {"status": "error", "message": "Quest bridge API key is not configured", "data": {"code": "bridge_not_configured"}}
+    }
+  ]
+}

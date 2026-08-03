@@ -1,0 +1,11 @@
+{
+  "type": "audio.chunk",
+  "protocol_version": "1.0",
+  "session_id": "audio-session",
+  "turn_id": "audio-turn",
+  "sequence": 0,
+  "format": "pcm16",
+  "sample_rate": 16000,
+  "channels": 1,
+  "data": "AA=="
+}

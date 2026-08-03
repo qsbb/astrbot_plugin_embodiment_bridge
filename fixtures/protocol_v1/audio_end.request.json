@@ -1,0 +1,6 @@
+{
+  "type": "audio.end",
+  "protocol_version": "1.0",
+  "session_id": "audio-session",
+  "turn_id": "audio-turn"
+}

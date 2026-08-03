@@ -42,3 +42,29 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         "user | hand | away | none",
     ):
         assert allowed_value in document
+    for error_code in (
+        "stt_empty",
+        "stt_unavailable",
+        "stt_failed",
+        "turn_failed",
+        "interaction_failed",
+        "tts_failed",
+    ):
+        assert f"`{error_code}`" in document
+
+
+def test_local_integration_document_keeps_security_and_fixture_contract() -> None:
+    document = (PLUGIN_ROOT / "docs" / "LOCAL_INTEGRATION_CN.md").read_text(
+        encoding="utf-8"
+    )
+    for required_text in (
+        "127.0.0.1",
+        "Quest 中的 `127.0.0.1` 指向头显自身",
+        "Authorization: Bearer",
+        "X-Quest-Avatar-Key",
+        "plugin` scope",
+        "fixtures/protocol_v1/manifest.json",
+        "不启用宽泛 CORS",
+        "fake 只替代外部 LLM/STT/TTS",
+    ):
+        assert required_text in document

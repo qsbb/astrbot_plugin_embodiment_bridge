@@ -1,0 +1,10 @@
+{
+  "type": "session.start",
+  "protocol_version": "1.0",
+  "session_id": "smoke-session",
+  "client_id": "quest3-contract",
+  "user_id": "unity-contract-user",
+  "bot_id": "bot-main",
+  "group_id": "",
+  "relationship_profile_id": ""
+}

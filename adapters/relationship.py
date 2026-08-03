@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+
+from .provider_utils import contract_matches, find_active_provider
 
 
 RELATIONSHIP_PLUGIN_NAME = "astrbot_plugin_relationship"
@@ -25,7 +28,7 @@ class RelationshipSnapshotAdapter:
         group_id: str,
         relationship_profile_id: str,
     ) -> dict[str, Any] | None:
-        provider = self._find_provider()
+        provider = find_active_provider(self.context, RELATIONSHIP_PLUGIN_NAME)
         if provider is None:
             if not self._missing_logged:
                 self.logger.info(
@@ -34,8 +37,19 @@ class RelationshipSnapshotAdapter:
                 self._missing_logged = True
             return None
 
-        contract = provider.relationship_snapshot_contract()
-        if not self._compatible(contract):
+        try:
+            contract = provider.relationship_snapshot_contract()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            contract = None
+        if (
+            not contract_matches(
+                contract,
+                name=RELATIONSHIP_SNAPSHOT_CONTRACT_NAME,
+                major=RELATIONSHIP_SNAPSHOT_CONTRACT_MAJOR,
+                capability="read_snapshot",
+            )
+            or contract.get("privacy") != "derived_only"
+        ):
             if not self._incompatible_logged:
                 self.logger.warning(
                     "[quest-avatar] relationship.snapshot contract is incompatible; integration disabled"
@@ -43,11 +57,15 @@ class RelationshipSnapshotAdapter:
                 self._incompatible_logged = True
             return None
 
-        snapshot = await provider.get_relationship_snapshot(
-            bot_id,
-            user_id,
-            group_id or None,
-            relationship_profile_id=relationship_profile_id or None,
+        snapshot = await asyncio.wait_for(
+            provider.get_relationship_snapshot(
+                bot_id,
+                user_id,
+                group_id or None,
+                relationship_profile_id=relationship_profile_id or None,
+                person_id="",
+            ),
+            timeout=1.0,
         )
         if not isinstance(snapshot, dict):
             self.logger.warning(
@@ -69,26 +87,6 @@ class RelationshipSnapshotAdapter:
             "silence",
         }
         return {key: snapshot[key] for key in allowed if key in snapshot}
-
-    def _find_provider(self) -> Any | None:
-        for metadata in self.context.get_all_stars():
-            if metadata.name != RELATIONSHIP_PLUGIN_NAME or not metadata.activated:
-                continue
-            return metadata.star_cls
-        return None
-
-    @staticmethod
-    def _compatible(contract: Any) -> bool:
-        if not isinstance(contract, dict):
-            return False
-        version = str(contract.get("version") or "")
-        capabilities = contract.get("capabilities")
-        return bool(
-            contract.get("name") == RELATIONSHIP_SNAPSHOT_CONTRACT_NAME
-            and version.split(".", 1)[0] == RELATIONSHIP_SNAPSHOT_CONTRACT_MAJOR
-            and isinstance(capabilities, (list, tuple))
-            and "read_snapshot" in capabilities
-        )
 
     async def close(self) -> None:
         return None

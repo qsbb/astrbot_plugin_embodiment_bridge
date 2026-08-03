@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-08-03
+
+### Added
+
+- 新增凝心溯溪系列适配器：知、序、情、境、声的只读能力按公开契约接入，缺失时安全降级，不猜测私有接口。
+- 新增配对 Page，使用一次性二维码和 6 位短码完成 Quest 绑定，不在页面、二维码或本地表单存储长期密钥。
+- 新增通过真实本机 HTTP 路由和生产 SSE generator 执行的 contract/smoke 测试，外部 LLM/STT/TTS 使用 fake adapter。
+- 新增 `fixtures/protocol_v1/` 稳定 JSON/SSE 样本，固定协议版本、路由、枚举、错误响应和事件顺序。
+- 新增基于 AstrBot 4.26.8 默认 STT/TTS Provider 的生产 adapter；默认关闭，显式启用后支持 16000 Hz PCM16 输入和 24000 Hz PCM16 输出。
+- 新增 TTS PCM WAV 校验、立体声下混、采样率转换、超时和输出时长限制。
+
+### Tests
+
+- 覆盖 health、session、interaction、interrupt、close 完整链路，以及输入音频错误矩阵、STT/TTS 故障、SSE 断线重连、重复 session、背压和迟到旧轮隔离。
+
+### Documentation
+
+- 新增本机 AstrBot/Unity 联调步骤、安全密钥、局域网地址、Windows 防火墙和 HTTPS 边界说明。
+- 记录 AstrBot Provider 输出限制、voice_hub 契约边界和生产语音启用步骤。
+
 ## 0.1.0 - 2026-08-01
 
 ### Added

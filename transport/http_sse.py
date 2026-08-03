@@ -106,7 +106,13 @@ class HttpSseTransport:
 
     async def session_start(self) -> Any:
         async def action(owner: str, payload: SessionStartRequest) -> Any:
-            session = await self.sessions.start_session(payload, owner)
+            authorization = await self.orchestrator.authorize_session(owner, payload)
+            session = await self.sessions.start_session(
+                payload,
+                owner,
+                protected_context_authorized=authorization.authorized,
+                context_authorization_reason=authorization.reason,
+            )
             return json_response(
                 {
                     "status": "ok",
@@ -299,6 +305,7 @@ class HttpSseTransport:
                             "channels": 1,
                             "tts_available": self.orchestrator.tts.available,
                         },
+                        "series_integrations": self.orchestrator.integration_status(),
                         **stats,
                     },
                 }

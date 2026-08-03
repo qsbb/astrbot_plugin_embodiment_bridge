@@ -1,0 +1,483 @@
+from __future__ import annotations
+
+import asyncio
+import contextvars
+import importlib
+import json
+import sys
+import types
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from pathlib import Path
+from time import monotonic
+from typing import Any
+
+from aiohttp import web
+
+from astrbot_plugin_quest_avatar_bridge.core.models import (
+    Emotion,
+    Gesture,
+    LookAt,
+    ModelDecision,
+    ProposedIntent,
+)
+
+
+API_MOUNT = "/api/v1/plugins/extensions"
+ASTRBOT_API_TOKEN = "contract-plugin-token"
+BRIDGE_API_KEY = "contract-bridge-key-0000000000000000"
+AUTH_HEADERS = {
+    "Authorization": f"Bearer {ASTRBOT_API_TOKEN}",
+    "X-Quest-Avatar-Key": BRIDGE_API_KEY,
+}
+
+
+class LoggerStub:
+    def info(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def warning(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def error(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+class ResponseStub:
+    def __init__(
+        self,
+        data: Any,
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.body = json.dumps(
+            data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
+class StreamingResponseStub:
+    def __init__(
+        self,
+        content: AsyncIterator[str],
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+        content_type: str = "text/event-stream",
+    ) -> None:
+        self.content = content
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.content_type = content_type
+
+
+class BoundRequest:
+    def __init__(self, value: web.Request) -> None:
+        self.value = value
+        authorization = value.headers.get("Authorization", "")
+        self.username = (
+            f"api_key:{ASTRBOT_API_TOKEN}"
+            if authorization == f"Bearer {ASTRBOT_API_TOKEN}"
+            else ""
+        )
+
+    @property
+    def content_type(self) -> str:
+        return self.value.content_type
+
+    @property
+    def headers(self) -> Any:
+        return self.value.headers
+
+    async def body(self) -> bytes:
+        return await self.value.read()
+
+
+class RequestProxy:
+    def __init__(self) -> None:
+        self._current: contextvars.ContextVar[BoundRequest | None] = (
+            contextvars.ContextVar("quest_avatar_http_request", default=None)
+        )
+
+    def bind(self, value: BoundRequest) -> contextvars.Token[BoundRequest | None]:
+        return self._current.set(value)
+
+    def reset(self, token: contextvars.Token[BoundRequest | None]) -> None:
+        self._current.reset(token)
+
+    def _bound(self) -> BoundRequest:
+        value = self._current.get()
+        if value is None:
+            raise RuntimeError("no HTTP request is bound to this task")
+        return value
+
+    @property
+    def username(self) -> str:
+        return self._bound().username
+
+    @property
+    def content_type(self) -> str:
+        return self._bound().content_type
+
+    @property
+    def headers(self) -> Any:
+        return self._bound().headers
+
+    async def body(self) -> bytes:
+        return await self._bound().body()
+
+
+class ContextStub:
+    def __init__(self) -> None:
+        self.routes: list[tuple[str, Any, list[str], str]] = []
+
+    def register_web_api(
+        self,
+        route: str,
+        handler: Any,
+        methods: list[str],
+        description: str,
+    ) -> None:
+        self.routes.append((route, handler, methods, description))
+
+    def get_all_stars(self) -> list[Any]:
+        return []
+
+
+class FakeLLMAdapter:
+    def __init__(self) -> None:
+        self.late_started = asyncio.Event()
+        self.late_cancelled = asyncio.Event()
+        self.late_release = asyncio.Event()
+        self.closed = False
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def generate(self, *, user_text: str, **kwargs: Any) -> ModelDecision:
+        del kwargs
+        if user_text == "hold-old-turn":
+            self.late_started.set()
+            try:
+                await self.late_release.wait()
+            except asyncio.CancelledError:
+                self.late_cancelled.set()
+                await self.late_release.wait()
+        return ModelDecision(
+            should_reply=True,
+            reply_text="请轻一点。",
+            intent=ProposedIntent(
+                emotion=Emotion.SHY,
+                gesture=Gesture.STEP_BACK,
+                look_at=LookAt.AWAY,
+                intensity=0.65,
+                duration_ms=1_800,
+                reason_code="boundary_soft_refusal",
+            ),
+        )
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeSTTAdapter:
+    def __init__(self) -> None:
+        self.fail_next = False
+        self.closed = False
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
+        assert pcm16 == b"\x00\x00\x01\x00"
+        assert sample_rate == 16_000
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("contract STT failure")
+        return "你好"
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeTTSAdapter:
+    def __init__(self) -> None:
+        self.block_next = False
+        self.fail_next = False
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.release = asyncio.Event()
+        self.closed = False
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        emotion: str,
+    ) -> AsyncIterator[bytes]:
+        assert text == "请轻一点。"
+        assert emotion == "shy"
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("contract TTS failure")
+        if self.block_next:
+            self.started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+        yield b"\x00\x00\x01\x00"
+
+    async def close(self) -> None:
+        self.release.set()
+        self.closed = True
+
+
+@dataclass(slots=True)
+class HarnessBundle:
+    plugin: Any
+    context: ContextStub
+    request_proxy: RequestProxy
+    llm: FakeLLMAdapter
+    stt: FakeSTTAdapter
+    tts: FakeTTSAdapter
+
+
+def build_plugin(monkeypatch: Any, tmp_path: Path) -> HarnessBundle:
+    request_proxy = RequestProxy()
+    api = types.ModuleType("astrbot.api")
+    api.AstrBotConfig = dict
+    api.logger = LoggerStub()
+
+    star = types.ModuleType("astrbot.api.star")
+
+    class Star:
+        def __init__(self, context: Any) -> None:
+            self.context = context
+
+    class StarTools:
+        @staticmethod
+        def get_data_dir(name: str) -> str:
+            return str(tmp_path / "data" / "plugin_data" / name)
+
+    star.Context = ContextStub
+    star.Star = Star
+    star.StarTools = StarTools
+
+    web_module = types.ModuleType("astrbot.api.web")
+    web_module.request = request_proxy
+    web_module.json_response = lambda data=None, status_code=200, headers=None: (
+        ResponseStub(data or {}, status_code=status_code, headers=headers)
+    )
+    web_module.error_response = (
+        lambda message, status_code=400, data=None, headers=None: ResponseStub(
+            {"status": "error", "message": message, "data": data},
+            status_code=status_code,
+            headers=headers,
+        )
+    )
+    web_module.stream_response = (
+        lambda content, status_code=200, headers=None, content_type="text/event-stream", **kwargs: (
+            StreamingResponseStub(
+                content,
+                status_code=status_code,
+                headers=headers,
+                content_type=content_type,
+            )
+        )
+    )
+
+    astrbot = types.ModuleType("astrbot")
+    astrbot.api = api
+    monkeypatch.setitem(sys.modules, "astrbot", astrbot)
+    monkeypatch.setitem(sys.modules, "astrbot.api", api)
+    monkeypatch.setitem(sys.modules, "astrbot.api.star", star)
+    monkeypatch.setitem(sys.modules, "astrbot.api.web", web_module)
+    for module_name in (
+        "astrbot_plugin_quest_avatar_bridge.adapters.astrbot_llm",
+        "astrbot_plugin_quest_avatar_bridge.main",
+        "astrbot_plugin_quest_avatar_bridge.transport.http_sse",
+        "astrbot_plugin_quest_avatar_bridge.transport.pairing",
+    ):
+        sys.modules.pop(module_name, None)
+
+    main_module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+    context = ContextStub()
+    plugin = main_module.QuestAvatarBridgePlugin(
+        context,
+        {
+            "bridge_api_key": BRIDGE_API_KEY,
+            "chat_provider_id": "fake-provider",
+            "gesture_cooldown_ms": 0,
+        },
+    )
+    llm = FakeLLMAdapter()
+    stt = FakeSTTAdapter()
+    tts = FakeTTSAdapter()
+    plugin.llm = llm
+    plugin.stt = stt
+    plugin.tts = tts
+    plugin.orchestrator.llm = llm
+    plugin.orchestrator.stt = stt
+    plugin.orchestrator.tts = tts
+    return HarnessBundle(plugin, context, request_proxy, llm, stt, tts)
+
+
+class LiveHttpServer:
+    def __init__(self, bundle: HarnessBundle) -> None:
+        self.bundle = bundle
+        self.runner: web.AppRunner | None = None
+        self.base_url = ""
+
+    async def __aenter__(self) -> LiveHttpServer:
+        app = web.Application()
+        for route, handler, methods, _description in self.bundle.context.routes:
+            path = API_MOUNT + route.replace("<session_id>", "{session_id}")
+            for method in methods:
+                app.router.add_route(method, path, self._endpoint(handler))
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, "127.0.0.1", 0)
+        await site.start()
+        server = site._server
+        assert server is not None and server.sockets
+        port = server.sockets[0].getsockname()[1]
+        self.base_url = f"http://127.0.0.1:{port}{API_MOUNT}"
+        return self
+
+    async def __aexit__(self, *exc_info: Any) -> None:
+        if self.runner is not None:
+            await self.runner.cleanup()
+        await self.bundle.plugin.terminate()
+
+    def url(self, path: str) -> str:
+        return f"{self.base_url}/astrbot_plugin_quest_avatar_bridge{path}"
+
+    def _endpoint(self, handler: Any) -> Any:
+        async def endpoint(value: web.Request) -> web.StreamResponse:
+            token = self.bundle.request_proxy.bind(BoundRequest(value))
+            try:
+                result = await handler(**dict(value.match_info))
+                if isinstance(result, StreamingResponseStub):
+                    return await self._stream(value, result)
+                headers = dict(result.headers)
+                headers.setdefault("Content-Type", "application/json; charset=utf-8")
+                return web.Response(
+                    body=result.body,
+                    status=result.status_code,
+                    headers=headers,
+                )
+            finally:
+                self.bundle.request_proxy.reset(token)
+
+        return endpoint
+
+    async def _stream(
+        self,
+        request: web.Request,
+        result: StreamingResponseStub,
+    ) -> web.StreamResponse:
+        response = web.StreamResponse(
+            status=result.status_code,
+            headers=result.headers,
+        )
+        response.content_type = result.content_type
+        await response.prepare(request)
+        iterator = result.content.__aiter__()
+        next_item: asyncio.Task[str] | None = None
+        try:
+            while True:
+                if next_item is None:
+                    next_item = asyncio.create_task(anext(iterator))
+                done, _pending = await asyncio.wait({next_item}, timeout=0.02)
+                if not done:
+                    transport = request.transport
+                    if transport is None or transport.is_closing():
+                        next_item.cancel()
+                        await asyncio.gather(next_item, return_exceptions=True)
+                        break
+                    continue
+                try:
+                    chunk = next_item.result()
+                except StopAsyncIteration:
+                    break
+                next_item = None
+                await response.write(chunk.encode("utf-8"))
+        except ConnectionResetError:
+            pass
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if next_item is not None and not next_item.done():
+                next_item.cancel()
+                await asyncio.gather(next_item, return_exceptions=True)
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except (RuntimeError, asyncio.CancelledError):
+                    pass
+        try:
+            await response.write_eof()
+        except ConnectionResetError:
+            pass
+        return response
+
+
+@dataclass(frozen=True, slots=True)
+class SseFrame:
+    raw: str
+    event: str | None
+    data: dict[str, Any] | None
+    comment: str | None
+
+
+async def read_sse_frame(response: Any, *, timeout: float = 1.0) -> SseFrame:
+    deadline = monotonic() + timeout
+    lines: list[str] = []
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError("timed out waiting for SSE frame")
+        raw_line = await asyncio.wait_for(response.content.readline(), remaining)
+        if not raw_line:
+            raise EOFError("SSE stream ended")
+        line = raw_line.decode("utf-8").rstrip("\r\n")
+        if line:
+            lines.append(line)
+            continue
+        if not lines:
+            continue
+        raw = "\n".join(lines) + "\n\n"
+        comment = next(
+            (line[1:].strip() for line in lines if line.startswith(":")), None
+        )
+        event = next(
+            (
+                line.removeprefix("event:").strip()
+                for line in lines
+                if line.startswith("event:")
+            ),
+            None,
+        )
+        data_line = next(
+            (
+                line.removeprefix("data:").strip()
+                for line in lines
+                if line.startswith("data:")
+            ),
+            None,
+        )
+        data = json.loads(data_line) if data_line is not None else None
+        return SseFrame(raw=raw, event=event, data=data, comment=comment)

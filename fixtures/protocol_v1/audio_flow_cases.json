@@ -1,0 +1,89 @@
+{
+  "protocol_version": "1.0",
+  "input": {
+    "format": "pcm16",
+    "byte_order": "little_endian",
+    "sample_rate": 16000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "recommended_chunk_ms": {"minimum": 40, "maximum": 100},
+    "sequence": {"first": 0, "step": 1}
+  },
+  "output": {
+    "format": "pcm16",
+    "byte_order": "little_endian",
+    "sample_rate": 24000,
+    "channels": 1,
+    "sample_width_bytes": 2,
+    "encoding": "base64_in_sse_data"
+  },
+  "request_cases": [
+    {
+      "id": "invalid_base64",
+      "request_fixture": "audio_chunk.invalid_base64.request.json",
+      "expected_status": 400,
+      "expected_body": {"status": "error", "message": "audio data is not valid base64", "data": {"code": "invalid_audio"}}
+    },
+    {
+      "id": "odd_pcm16_byte_count",
+      "request_fixture": "audio_chunk.odd_pcm16.request.json",
+      "expected_status": 400,
+      "expected_body": {"status": "error", "message": "PCM16 data must contain complete samples", "data": {"code": "invalid_audio"}}
+    },
+    {
+      "id": "non_contiguous_sequence",
+      "request_fixture": "audio_chunk.sequence_gap.request.json",
+      "expected_status": 400,
+      "expected_body": {"status": "error", "message": "audio sequence is not contiguous", "data": {"code": "invalid_audio"}}
+    },
+    {
+      "id": "wrong_sample_rate",
+      "request_fixture": "audio_chunk.wrong_sample_rate.request.json",
+      "expected_status": 422,
+      "expected_body": {"status": "error", "message": "Request schema validation failed", "data": {"code": "schema_validation_failed"}}
+    },
+    {
+      "id": "wrong_channels",
+      "request_fixture": "audio_chunk.wrong_channels.request.json",
+      "expected_status": 422,
+      "expected_body": {"status": "error", "message": "Request schema validation failed", "data": {"code": "schema_validation_failed"}}
+    },
+    {
+      "id": "wrong_format",
+      "request_fixture": "audio_chunk.wrong_format.request.json",
+      "expected_status": 422,
+      "expected_body": {"status": "error", "message": "Request schema validation failed", "data": {"code": "schema_validation_failed"}}
+    },
+    {
+      "id": "chunk_decoded_size_overflow",
+      "generated_pcm16_bytes": 16002,
+      "expected_status": 413,
+      "expected_body": {"status": "error", "message": "audio chunk exceeds configured limit", "data": {"code": "payload_too_large"}}
+    },
+    {
+      "id": "turn_total_size_overflow",
+      "generated_chunks": {"decoded_bytes_each": 16000, "count": 3, "configured_total_limit": 32000},
+      "expected_status": 413,
+      "expected_body": {"status": "error", "message": "turn audio exceeds configured limit", "data": {"code": "payload_too_large"}}
+    },
+    {
+      "id": "audio_end_without_data",
+      "request_fixture": "audio_end.request.json",
+      "expected_status": 400,
+      "expected_body": {"status": "error", "message": "audio stream is empty", "data": {"code": "invalid_audio"}}
+    },
+    {
+      "id": "stale_turn_audio",
+      "request_fixture": "audio_chunk.request.json",
+      "precondition": "a newer turn is current",
+      "expected_status": 409,
+      "expected_body": {"status": "error", "message": "audio belongs to a stale turn", "data": {"code": "session_conflict"}}
+    }
+  ],
+  "sse_event_order": {
+    "stt_unavailable": ["error"],
+    "stt_failed": ["error"],
+    "tts_failed_after_text": ["avatar.intent", "reply.text.delta", "error", "reply.end"],
+    "interrupted_after_ack": []
+  }
+}

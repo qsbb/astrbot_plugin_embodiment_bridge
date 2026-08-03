@@ -2,6 +2,8 @@
 
 本文档面向 Meta Quest 3 上的 Unity MMD/VRM 前端。插件作者为 `qsbb`，中文名凌溪。
 
+本机 AstrBot/Unity 部署步骤、安全配置和 curl 联调命令见 [LOCAL_INTEGRATION_CN.md](LOCAL_INTEGRATION_CN.md)。可执行协议样本位于 [`fixtures/protocol_v1/`](../fixtures/protocol_v1/)。
+
 ## 1. 协议概览
 
 - 协议版本：`1.0`
@@ -13,6 +15,14 @@
 - 时间单位：毫秒
 
 Unity 只上报事实、播放音频并执行模型无关的语义意图。角色是否回应、是否接受触碰、情绪、动作、注视、强度和持续时间都由 AstrBot 决定。
+
+### 1.1 语音适配器可用性
+
+语音适配器默认关闭。管理员需要先在 AstrBot 的 Provider 设置中启用并选定默认 STT/TTS Provider，再打开本插件的 `enable_astrbot_stt` 或 `enable_astrbot_tts`。本插件使用 AstrBot 4.26.8 的 `Context.get_using_stt_provider()` / `Context.get_using_tts_provider()`，不通过 `hasattr()` 猜测接口，也不调用 voice_hub 未声明的内部方法。
+
+STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS 是文件式整轮调用：`TTSProvider.get_audio(text)` 完成后，本插件严格读取并规范化 Provider 返回的 WAV，才开始发送 24000 Hz 单声道 PCM16 SSE 块。
+
+AstrBot 的 TTS Provider 基类只承诺“返回音频文件路径”，不承诺采样率、声道或编码。本插件接受未压缩 PCM16 WAV（单声道或立体声、8000-192000 Hz），立体声会下混，采样率会转换到 24000 Hz；MP3、压缩/浮点 WAV、截断或超限文件产生 `tts_failed`，文字仍会保留。`emotion` 只参与角色意图决策，不会被猜测性地传给没有该参数的 Provider。
 
 ## 2. 服务地址与认证
 
@@ -284,6 +294,8 @@ POST /audio/chunk
 - 原始 PCM 字节数必须为偶数。
 - 建议每块 40-100 ms，即 1280-3200 原始字节。
 - 默认单块解码上限 16000 字节；总音频默认上限 60 秒。服务端配置可收紧或放宽。
+- `audio/chunk` 成功只代表已进入当前轮的有界缓冲区；不能重发同一序号，也不能跳号。`audio/end` 没有任何有效块时返回 `400 invalid_audio`。
+- `audio/end` 返回 `202` 后，STT 失败不会改写 HTTP 响应，而是在 SSE 中发送 `stt_unavailable`、`stt_failed` 或 `stt_empty`。
 
 响应：
 
@@ -314,7 +326,7 @@ POST /audio/end
 }
 ```
 
-首版 STT 默认关闭，因此音频会完成格式和顺序校验，但随后 SSE 返回：
+当 `health.data.input_audio.stt_available=false` 时，音频会完成格式和顺序校验，但随后 SSE 返回：
 
 ```text
 event: error
@@ -322,7 +334,7 @@ data: {"type":"error","protocol_version":"1.0","session_id":"s1","turn_id":"t4",
 
 ```
 
-前端在 health 返回 `stt_available=false` 时，应优先使用文本轮次或在 Unity 端完成 STT 后提交文本。
+前端在 health 返回 `stt_available=false` 时，应优先使用文本轮次或在 Unity 端完成 STT 后提交文本。启用 STT 后，仍需等待 `asr.final`；本版不提供 partial 识别。
 
 ## 11. 上报交互事实
 
@@ -522,7 +534,7 @@ GET /health
 }
 ```
 
-默认目标块长 50 ms，配置范围 40-100 ms。Unity 应按真实 PCM 播放进度驱动嘴型，不应按文字估算。
+默认目标块长 50 ms，配置范围 40-100 ms。`reply.audio.chunk` 是受背压保护的有序事件，慢客户端不会主动丢音频块；生产者会等待队列消费，或在 interrupt/close 时被取消。Unity 应按真实 PCM 播放进度驱动嘴型，不应按文字估算。
 
 ### 15.5 `avatar.intent`
 
@@ -585,6 +597,19 @@ Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降�
 
 SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分别处理。
 
+稳定的 SSE 错误码：
+
+| `code` | 含义 | 前端处理 |
+|---|---|---|
+| `stt_empty` | 没有识别到有效文本 | 提示重说，不自动重放旧音频 |
+| `stt_unavailable` | 后端未配置 PCM16 STT | 切换到文本输入或 Unity 侧 STT |
+| `stt_failed` | STT 执行失败 | 结束当前轮，允许用户重试 |
+| `turn_failed` | 普通文本轮生成失败 | 结束当前轮，不执行猜测动作 |
+| `interaction_failed` | 交互决策失败 | 保持安全 idle，不自行映射情绪 |
+| `tts_failed` | 文本可用但语音合成失败 | 保留文字，停止等待音频 |
+
+收到 interrupt 成功响应后，旧轮的 `asr.partial`、`asr.final`、`reply.text.delta`、`reply.audio.chunk`、`avatar.intent`、`error` 和 `reply.end` 均禁止继续生效。响应到达前已由网络发送的数据可能仍在客户端缓冲区，Unity 仍必须按当前 `(session_id, turn_id)` 丢弃旧轮数据。
+
 ## 16. HTTP 错误码
 
 | HTTP | `data.code` | 处理建议 |
@@ -618,7 +643,9 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 
 ## 18. 首版能力限制
 
-- 默认 STT/TTS adapter 关闭。文本轮次和角色意图链可用。
+- 默认 STT/TTS adapter 关闭；文本轮次和角色意图链可用。启用后仍是文件式整轮 Provider，不是流式 STT/TTS。
+- AstrBot 4.26.8 的公开 TTS Provider 没有结构化 emotion 或固定输出 PCM 契约；本插件通过 WAV 解析和重采样建立输出约束，无法解析的 Provider 音频会 `tts_failed`。
+- `astrbot_plugin_voice_hub` 的 `voice.delivery@1.0` 只声明 `plan_delivery` 和 `consume_delivery_plan`，没有原始 PCM STT/TTS 能力；本插件不会猜测或调用其内部 `synthesize_text()`。
 - 没有公开 WebSocket 接口，前端不得尝试连接猜测的 WebSocket 路径。
 - 未完成 Quest 真机网络、麦克风回声、嘴型和具体模型动作验收。
 - 协议只返回语义意图，不会返回 PMX 骨骼、Morph、Unity 对象或本地动画路径。

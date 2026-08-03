@@ -1,0 +1,7 @@
+{
+  "status": "error",
+  "message": "session already exists",
+  "data": {
+    "code": "session_conflict"
+  }
+}

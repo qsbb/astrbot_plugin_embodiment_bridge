@@ -59,6 +59,24 @@ class TTSStub:
         pass
 
 
+class LateTTSStub(TTSStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def synthesize(self, text: str, *, emotion: str) -> AsyncIterator[bytes]:
+        del text, emotion
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            await self.release.wait()
+        yield b"\x00\x00" * 1_200
+
+
 class DecisionStub:
     def __init__(self, decision: ModelDecision) -> None:
         self.decision = decision
@@ -106,7 +124,12 @@ def decision(
     )
 
 
-async def build_orchestrator(llm: Any, *, queue_size: int = 64):
+async def build_orchestrator(
+    llm: Any,
+    *,
+    queue_size: int = 64,
+    tts: Any | None = None,
+):
     sessions = SessionManager(event_queue_size=queue_size, interaction_debounce_ms=0)
     session = await sessions.start_session(
         SessionStartRequest(
@@ -121,7 +144,7 @@ async def build_orchestrator(llm: Any, *, queue_size: int = 64):
         sessions=sessions,
         llm=llm,
         stt=DisabledSTTAdapter(),
-        tts=TTSStub(),
+        tts=tts or TTSStub(),
         relationship=RelationshipStub(),
         policy=InteractionPolicy(gesture_cooldown_seconds=0),
         logger=LoggerStub(),
@@ -241,6 +264,35 @@ def test_interrupt_prevents_all_old_turn_events() -> None:
         await late.started.wait()
         assert await sessions.cancel_current(session, "t1") is True
         late.release.set()
+        await asyncio.sleep(0.05)
+        assert session.queue.size == 0
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_late_tts_after_interrupt_cannot_emit_audio_error_or_end() -> None:
+    async def scenario() -> None:
+        late_tts = LateTTSStub()
+        result = decision(
+            Emotion.HAPPY,
+            Gesture.WAVE,
+            LookAt.USER,
+            "reply",
+            "hello",
+        )
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(result),
+            tts=late_tts,
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t1", text="hello"),
+        )
+        await asyncio.wait_for(late_tts.started.wait(), timeout=1)
+        assert await sessions.cancel_current(session, "t1") is True
+        await asyncio.wait_for(late_tts.cancelled.wait(), timeout=1)
+        late_tts.release.set()
         await asyncio.sleep(0.05)
         assert session.queue.size == 0
         await orchestrator.close()

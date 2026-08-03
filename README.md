@@ -2,14 +2,16 @@
 
 凝心溯溪系列 Quest 角色桥接模块。它把 Meta Quest 3 上 Unity MMD/VRM 前端上报的对话与交互事实交给 AstrBot 决策，再通过 SSE 返回模型无关的文字、音频和角色意图。
 
-插件基于 AstrBot `v4.26.8` 已公开的 `Context.register_web_api()`、`astrbot.api.web.request`、`json_response()`、`error_response()`、`stream_response()` 和 `Context.llm_generate()`。不注册 WebSocket，也不依赖 AstrBot Core、service hub 或 orchestration hub 的修改。
+插件基于 AstrBot `v4.26.8` 已公开的 `Context.register_web_api()`、`astrbot.api.web.request`、`json_response()`、`error_response()`、`stream_response()`、`Context.llm_generate()`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。不注册 WebSocket，也不依赖 AstrBot Core、service hub 或 orchestration hub 的修改。
 
 ## 项目信息
 
 - 作者：`qsbb`
-- 中文名：凌溪
+- 中文名：凝心溯溪-临
 - 源码仓库：<https://github.com/qsbb/astrbot_plugin_quest_avatar_bridge>
 - Unity 前端接口：[docs/API_CN.md](docs/API_CN.md)
+- 本机联调与安全配置：[docs/LOCAL_INTEGRATION_CN.md](docs/LOCAL_INTEGRATION_CN.md)
+- Unity 可复用协议样本：[fixtures/protocol_v1/](fixtures/protocol_v1/)
 
 ## 职责边界
 
@@ -36,8 +38,35 @@ Unity 负责感知、播放和执行：
 - 一个至少 32 字符的随机 `bridge_api_key`。
 - 一个具有 `plugin` scope 的 AstrBot API Key，供 Unity 调用 `/api/v1/plugins/extensions/...`。
 - AstrBot 主机与 Quest 在可达网络中。正式网络建议使用 HTTPS 反向代理，不要把 Dashboard 直接暴露到公网。
+- 可选：AstrBot 已启用并选定默认 STT/TTS Provider；只有需要生产语音输入或输出时才配置。
 
 把插件目录安装到 AstrBot 的 `data/plugins/astrbot_plugin_quest_avatar_bridge/` 后安装 `requirements.txt`，在 AstrBot 插件配置页设置以上配置并重载插件。运行数据目录由 `StarTools.get_data_dir()` 解析到 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/`；插件不会向安装目录写运行数据。
+
+## 配对页
+
+插件自带「Quest 快速绑定」配对页：在 AstrBot 已安装插件页面打开本插件的 Page，生成一次性配对码（二维码 + 6 位短码），Quest 端输入后即可完成绑定，无需手动搬运长期密钥。
+
+复制短码或撤销配对期间，对应按钮会暂时禁用并显示“正在处理”，成功或失败后都会恢复，避免连续点击产生重复请求。如果服务端返回了当前页面尚不认识的配对状态，页面会显示中文提示并停止复制、撤销和轮询，避免把未知状态误当成仍可使用。
+
+前置条件：已设置至少 32 字符的 `bridge_api_key`、已选择聊天模型 Provider，且 AstrBot 有一个 Quest 能直接访问、证书可信的 HTTPS 地址。详细步骤、Page 字段说明与 Quest 端操作见 [docs/PAIRING_CN.md](docs/PAIRING_CN.md)。
+
+## 生产 STT/TTS 配置
+
+语音能力默认关闭。先在 AstrBot 的 Provider 设置中启用 STT/TTS，并分别选定默认 Provider，再在本插件配置中启用：
+
+| 配置 | 默认 | 作用 |
+|---|---:|---|
+| `enable_astrbot_stt` | `false` | 调用 `get_using_stt_provider().get_text()` |
+| `enable_astrbot_tts` | `false` | 调用 `get_using_tts_provider().get_audio()` |
+| `stt_timeout_seconds` | `45` | 单次整轮识别超时 |
+| `tts_timeout_seconds` | `60` | 单次整轮合成超时 |
+| `max_tts_audio_seconds` | `120` | 规范化后输出时长上限 |
+
+STT adapter 把 Unity 上传的原始 PCM16 封装为 16000 Hz、单声道 WAV，临时文件位于 AstrBot `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/`，完成、失败、取消和插件终止时都会清理。
+
+AstrBot 4.26.8 的 TTS Provider 契约只保证返回音频文件路径，不保证采样格式。本插件因此只接受本地、未压缩 PCM WAV，源文件必须是 PCM16、单声道或立体声、8000-192000 Hz；随后下混并重采样为 24000 Hz 单声道 PCM16。MP3、压缩 WAV、浮点 WAV、截断文件和超限音频都会产生 `tts_failed`，不会把未知字节发给 Unity。Provider 返回的文件归 AstrBot/Provider 管理，本插件只读且不删除。
+
+启用后调用 `/health` 确认 `stt_available=true` 和 `tts_available=true`。开关已启用但 AstrBot 没有选中对应 Provider 时，health 仍返回 `false`。本插件不通过猜测方法调用 voice_hub，也没有生产 mock 开关。
 
 ## 完整 URL
 
@@ -216,7 +245,7 @@ data: {"type":"reply.end","protocol_version":"1.0","session_id":"s1","turn_id":"
 
 | 类型 | 说明 |
 |---|---|
-| `asr.partial` | 可合并的临时识别文本；首版禁用 STT 时不会产生 |
+| `asr.partial` | 可合并的临时识别文本；当前文件式 STT adapter 不产生 |
 | `asr.final` | 最终识别文本 |
 | `reply.text.delta` | 可重建的回复文本增量 |
 | `reply.audio.chunk` | Base64 PCM16、单声道、24000 Hz 音频 |
@@ -224,7 +253,7 @@ data: {"type":"reply.end","protocol_version":"1.0","session_id":"s1","turn_id":"
 | `reply.end` | 必须保留的正常轮次结束标记 |
 | `error` | 必须保留的轮次错误 |
 
-慢客户端导致队列满时，插件可以合并 `asr.partial`，并优先丢弃可重建的 partial、文字增量或音频增量。`avatar.intent`、`reply.end` 和 `error` 不会被主动丢弃；当队列只剩关键事件时，生产任务等待客户端消费。
+慢客户端导致队列满时，插件可以合并 `asr.partial`，并优先丢弃可重建的 partial 或文字增量。`asr.final`、`reply.audio.chunk`、`avatar.intent`、`reply.end` 和 `error` 不会被主动丢弃；当队列只剩这些受保护事件时，生产任务等待客户端消费。interrupt 会取消等待并清除旧轮事件，因此背压不会让旧音频越过 generation 边界。
 
 ## 意图白名单
 
@@ -240,12 +269,14 @@ LLM 输出必须是单个严格 JSON 对象。未知枚举、额外字段、Mark
 
 - `astrbot_plugin_relationship`：可选消费明确声明且 major 兼容的 `relationship.snapshot@1.0`，只读派生字段。未安装时正常退化；契约不兼容时告警并停用联动。
 - `astrbot_plugin_conversation_flow`：不调用。Quest 会话不是 AstrBot 消息事件会话，本插件自行维护有界近期对话和取消 token。
-- `astrbot_plugin_voice_hub`：首版不调用。当前登记的 `voice.delivery@1.0` 不声明“输出 24000 Hz PCM16 流”能力，不能把内部 `synthesize_text()` 猜作稳定跨插件 PCM 契约。
+- `astrbot_plugin_voice_hub`：不直接调用。当前登记的 `voice.delivery@1.0` 只声明 `plan_delivery` 和 `consume_delivery_plan`，不声明 STT 或“输出 24000 Hz PCM16 流”；不能把内部 `synthesize_text()` 猜作稳定跨插件契约。生产 TTS 走 AstrBot 4.26.8 自身选中的 TTS Provider。
 
-## 首版限制
+## 当前限制
 
-- STT adapter 默认禁用。`turn/start` 的文本路径可用；音频上传会通过格式、大小和顺序校验，但 `audio/end` 最终产生 `stt_unavailable` SSE 错误，直到接入明确的 PCM16 STT adapter。
-- TTS adapter 默认禁用。回复文本和角色意图可用，`reply.end.audio_sent=false`；不会产生 `reply.audio.chunk`。测试使用 fake TTS 验证了 Unity 协议和 24000 Hz PCM16 分块。
+- STT/TTS 默认禁用；未启用或未选中 Provider 时文本决策链仍可用，音频输入在 `audio/end` 后产生 `stt_unavailable`。
+- STT 是整轮文件式识别：插件在 `audio/end` 后才调用 Provider，不产生 `asr.partial`，也不执行 VAD、回声消除或唤醒词检测。
+- TTS 是整轮文件式合成：Provider 完成音频文件后才开始发送 SSE PCM 块。AstrBot 4.26.8 的 `get_audio(text)` 不接受结构化 emotion，因此角色意图中的情绪不会被猜测性地传成 Provider 参数。
+- TTS Provider 若不返回可解析的 PCM WAV，会安全产生 `tts_failed`；文字、意图和最终 `reply.end(audio_sent=false)` 保留。
 - 没有 Quest 真机网络、麦克风、扬声器回声、嘴型、模型动作兼容性或 72 Hz 性能验证；这些属于 Unity/设备验收。
 - 会话历史和交互事实只在内存中有界保存。当前不持久化用户正文或原始音频。
 - 第一版仅实现 HTTP POST + SSE。后续只有在目标 AstrBot 版本提供公开稳定 WebSocket API 后，才替换 Transport；业务层不需要改动。
@@ -261,3 +292,9 @@ python -m compileall .
 ```
 
 测试使用 fake/stub，不访问真实 LLM、STT、TTS 或 Quest 设备。
+其中 `tests/test_http_contract_smoke.py` 会在 `127.0.0.1` 随机端口启动测试专用服务器，通过真实 HTTP 请求和生产 SSE generator 验证路由、认证、会话、打断、重连与编码；fake 只替代外部 adapter，不会进入生产插件。
+
+
+## Series plugin integrations
+
+Quest calls only this Bridge. Backend reuse of knowledge, identity authorization, relationship snapshots, cached environment facts, Voice Hub PCM output, and runtime diagnostics is documented in [docs/SERIES_INTEGRATIONS_CN.md](docs/SERIES_INTEGRATIONS_CN.md). Conversation proactive delivery and orchestration-hub resolution are intentionally not consumed in normal Quest turns.

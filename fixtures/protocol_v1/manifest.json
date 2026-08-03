@@ -1,0 +1,171 @@
+{
+  "protocol_version": "1.0",
+  "base_path": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge",
+  "authentication_headers": [
+    "Authorization",
+    "X-Quest-Avatar-Key"
+  ],
+  "audio": {
+    "input": {
+      "format": "pcm16",
+      "byte_order": "little_endian",
+      "sample_rate": 16000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "recommended_chunk_ms": {"minimum": 40, "maximum": 100},
+      "sequence_first": 0,
+      "sequence_step": 1
+    },
+    "output": {
+      "format": "pcm16",
+      "byte_order": "little_endian",
+      "sample_rate": 24000,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "encoding": "base64_in_sse_data"
+    }
+  },
+  "routes": [
+    {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/status", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/revoke", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "one_time_pairing_credential"},
+    {"method": "POST", "path": "/session/start", "success_status": 201},
+    {"method": "GET", "path": "/events/<session_id>", "success_status": 200},
+    {"method": "POST", "path": "/turn/start", "success_status": 202},
+    {"method": "POST", "path": "/audio/chunk", "success_status": 202},
+    {"method": "POST", "path": "/audio/end", "success_status": 202},
+    {"method": "POST", "path": "/interaction", "success_status": 202},
+    {"method": "POST", "path": "/interrupt", "success_status": 200},
+    {"method": "POST", "path": "/session/close", "success_status": 200},
+    {"method": "GET", "path": "/health", "success_status": 200}
+  ],
+  "enums": {
+    "emotion": [
+      "neutral",
+      "happy",
+      "shy",
+      "surprised",
+      "concerned",
+      "uncomfortable"
+    ],
+    "gesture": [
+      "idle",
+      "talk",
+      "wave",
+      "bow",
+      "handshake",
+      "head_pat",
+      "cheek_pinch",
+      "refuse",
+      "step_back"
+    ],
+    "look_at": ["user", "hand", "away", "none"],
+    "interaction_name": [
+      "handshake",
+      "head_pat",
+      "cheek_pinch",
+      "gaze",
+      "speaking"
+    ],
+    "interaction_phase": ["start", "update", "end", "cancel"],
+    "hand": ["left", "right", "both", "none"]
+  },
+  "event_order": {
+    "speech_success": [
+      "asr.final",
+      "avatar.intent",
+      "reply.text.delta",
+      "reply.audio.chunk",
+      "reply.end"
+    ],
+    "text_success": [
+      "avatar.intent",
+      "reply.text.delta",
+      "reply.audio.chunk",
+      "reply.end"
+    ],
+    "interaction_success": [
+      "avatar.intent",
+      "reply.text.delta",
+      "reply.audio.chunk",
+      "reply.end"
+    ],
+    "stt_unavailable": ["error"],
+    "stt_failed": ["error"],
+    "tts_failed_after_text": [
+      "avatar.intent",
+      "reply.text.delta",
+      "error",
+      "reply.end"
+    ]
+  },
+  "critical_events": [
+    "asr.final",
+    "avatar.intent",
+    "reply.audio.chunk",
+    "reply.end",
+    "error"
+  ],
+  "droppable_events": [
+    "asr.partial",
+    "reply.text.delta"
+  ],
+  "interrupt_semantics": {
+    "forbidden_after_interrupt_ack": [
+      "asr.partial",
+      "asr.final",
+      "reply.text.delta",
+      "reply.audio.chunk",
+      "avatar.intent",
+      "reply.end",
+      "error"
+    ]
+  },
+  "backpressure_semantics": {
+    "bounded_per_session_queue": true,
+    "asr_partial_coalesced_per_turn": true,
+    "droppable_when_full": [
+      "asr.partial",
+      "reply.text.delta"
+    ],
+    "never_dropped_to_admit_noncritical": [
+      "asr.final",
+      "avatar.intent",
+      "reply.audio.chunk",
+      "reply.end",
+      "error"
+    ],
+    "critical_producer_waits_when_only_critical_events_remain": true
+  },
+  "reconnect_semantics": {
+    "max_streams_per_session": 1,
+    "last_event_id_replay": false,
+    "already_consumed_events_replayed": false,
+    "queued_unconsumed_critical_events_retained": true
+  },
+  "sse_error_codes": [
+    "stt_empty",
+    "stt_unavailable",
+    "stt_failed",
+    "turn_failed",
+    "interaction_failed",
+    "tts_failed"
+  ],
+  "http_error_codes": [
+    {"status": 400, "code": "invalid_content_length"},
+    {"status": 400, "code": "empty_body"},
+    {"status": 400, "code": "invalid_audio"},
+    {"status": 401, "code": "astrbot_auth_required"},
+    {"status": 401, "code": "bridge_auth_failed"},
+    {"status": 403, "code": "session_ownership_mismatch"},
+    {"status": 404, "code": "session_not_found"},
+    {"status": 409, "code": "session_conflict"},
+    {"status": 413, "code": "payload_too_large"},
+    {"status": 415, "code": "unsupported_media_type"},
+    {"status": 422, "code": "schema_validation_failed"},
+    {"status": 500, "code": "internal_error"},
+    {"status": 503, "code": "bridge_not_configured"}
+  ]
+}

@@ -7,16 +7,23 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
+from .adapters.environment import CachedEnvironmentAdapter
+from .adapters.identity import QuestSessionAuthorizationAdapter
+from .adapters.knowledge import GlobalKnowledgeAdapter
 from .adapters.relationship import RelationshipSnapshotAdapter
-from .adapters.stt import DisabledSTTAdapter
-from .adapters.tts import DisabledTTSAdapter
+from .adapters.runtime import SeriesRuntimeAdapter
+from .adapters.stt import AstrBotSTTAdapter
+from .adapters.tts import AstrBotTTSAdapter
+from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.interaction_policy import InteractionPolicy
+from .core.pairing import PairingManager
 from .core.session_manager import SessionManager
 from .core.turn_orchestrator import TurnOrchestrator
 from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
+from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -32,6 +39,13 @@ class QuestAvatarBridgePlugin(Star):
 
         self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+        bridge_api_key = str(config.get("bridge_api_key", "") or "")
+        trusted_client_id = str(config.get("trusted_client_id", "") or "")
+        trusted_platform_id = str(config.get("trusted_platform_id", "") or "")
+        max_json_body_bytes = self._int_config(
+            "max_json_body_bytes", 65_536, 4_096, 262_144
+        )
 
         max_audio_seconds = self._int_config("max_audio_seconds", 60, 1, 120)
         self.sessions = SessionManager(
@@ -50,8 +64,53 @@ class QuestAvatarBridgePlugin(Star):
             chat_provider_id=str(config.get("chat_provider_id", "") or ""),
             persona_prompt=str(config.get("persona_prompt", "") or ""),
         )
-        self.stt = DisabledSTTAdapter()
-        self.tts = DisabledTTSAdapter()
+        self.stt = AstrBotSTTAdapter(
+            context,
+            data_dir=self.data_dir / "stt_input",
+            enabled=self._bool_config("enable_astrbot_stt", False),
+            timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
+        )
+        max_tts_audio_seconds = self._int_config("max_tts_audio_seconds", 120, 1, 300)
+        self.astrbot_tts = AstrBotTTSAdapter(
+            context,
+            enabled=self._bool_config("enable_astrbot_tts", False),
+            timeout_seconds=self._float_config("tts_timeout_seconds", 60.0, 1.0, 180.0),
+            max_audio_seconds=max_tts_audio_seconds,
+        )
+        self.voice_hub_tts = VoiceHubTTSAdapter(
+            context,
+            logger,
+            enabled=self._bool_config("enable_voice_hub_tts", True),
+            timeout_seconds=65.0,
+            max_audio_seconds=max_tts_audio_seconds,
+        )
+        self.tts = FallbackTTSAdapter(
+            self.voice_hub_tts,
+            self.astrbot_tts,
+            logger,
+        )
+        self.identity = QuestSessionAuthorizationAdapter(
+            context,
+            logger,
+            trusted_client_id=trusted_client_id,
+            trusted_platform_id=trusted_platform_id,
+        )
+        self.knowledge = GlobalKnowledgeAdapter(
+            context,
+            logger,
+            enabled=self._bool_config("enable_global_knowledge", True),
+            top_k=self._int_config("global_knowledge_top_k", 5, 1, 10),
+        )
+        self.environment = CachedEnvironmentAdapter(
+            context,
+            logger,
+            enabled=self._bool_config("enable_environment_context", True),
+        )
+        self.runtime = SeriesRuntimeAdapter(
+            context,
+            logger,
+            enabled=self._bool_config("enable_runtime_diagnostics", True),
+        )
         self.relationship = RelationshipSnapshotAdapter(context, logger)
         self.policy = InteractionPolicy(
             max_intensity=self._float_config("max_intensity", 0.85, 0.1, 1.0),
@@ -73,6 +132,10 @@ class QuestAvatarBridgePlugin(Star):
             relationship=self.relationship,
             policy=self.policy,
             logger=logger,
+            identity=self.identity,
+            knowledge=self.knowledge,
+            environment=self.environment,
+            runtime=self.runtime,
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
         )
         self.transport = HttpSseTransport(
@@ -80,10 +143,8 @@ class QuestAvatarBridgePlugin(Star):
             sessions=self.sessions,
             orchestrator=self.orchestrator,
             config=TransportConfig(
-                bridge_api_key=str(config.get("bridge_api_key", "") or ""),
-                max_json_body_bytes=self._int_config(
-                    "max_json_body_bytes", 65_536, 4_096, 262_144
-                ),
+                bridge_api_key=bridge_api_key,
+                max_json_body_bytes=max_json_body_bytes,
                 max_audio_request_bytes=self._int_config(
                     "max_audio_request_bytes", 32_768, 8_192, 131_072
                 ),
@@ -94,23 +155,39 @@ class QuestAvatarBridgePlugin(Star):
             logger=logger,
         )
         self.transport.register()
+        self.pairing = PairingManager(bridge_api_key=bridge_api_key)
+        self.pairing_api = PairingHttpApi(
+            context=context,
+            manager=self.pairing,
+            logger=logger,
+            trusted_client_id=trusted_client_id,
+            trusted_platform_id=trusted_platform_id,
+            max_json_body_bytes=min(max_json_body_bytes, 65_536),
+        )
+        self.pairing_api.register()
 
     async def initialize(self) -> None:
+        runtime = await self.runtime.refresh()
         logger.info(
-            "[quest-avatar] bridge initialized: version=%s transport=http+sse llm=%s stt=%s tts=%s",
+            "[quest-avatar] bridge initialized: version=%s transport=http+sse llm=%s stt=%s tts=%s runtime=%s",
             __version__,
             self.llm.available,
             self.stt.available,
             self.tts.available,
+            runtime.get("status"),
         )
 
     def plugin_health(self) -> dict[str, object]:
         checks = {
             "transport_registered": self.transport is not None,
+            "pairing_registered": self.pairing_api is not None,
             "bridge_api_key_configured": len(self.transport.config.bridge_api_key)
             >= 32,
             "chat_provider_configured": self.llm.available,
             "data_dir_ready": self.data_dir.is_dir(),
+            "identity_guard_configured": self.identity.configured,
+            "series_runtime_checked": self.runtime.snapshot.get("status")
+            != "not_checked",
         }
         reasons = [name.upper() for name, passed in checks.items() if not passed]
         return {
@@ -124,11 +201,20 @@ class QuestAvatarBridgePlugin(Star):
         if self._terminated:
             return
         self._terminated = True
+        self.pairing.close()
         await self.orchestrator.close()
         logger.info("[quest-avatar] bridge terminated")
 
     def _int_config(self, key: str, default: int, minimum: int, maximum: int) -> int:
         return int(self._number_config(key, default, minimum, maximum))
+
+    def _bool_config(self, key: str, default: bool) -> bool:
+        value: Any = self.config.get(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     def _float_config(
         self,

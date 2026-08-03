@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from astrbot_plugin_quest_avatar_bridge.core.models import (
+    Emotion,
+    Gesture,
+    Hand,
+    InteractionName,
+    InteractionPhase,
+    LookAt,
+)
+
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "protocol_v1"
+
+
+def load_json(name: str) -> dict[str, Any]:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_protocol_manifest_matches_production_enums_and_errors() -> None:
+    manifest = load_json("manifest.json")
+    assert manifest["protocol_version"] == "1.0"
+    assert manifest["enums"] == {
+        "emotion": [item.value for item in Emotion],
+        "gesture": [item.value for item in Gesture],
+        "look_at": [item.value for item in LookAt],
+        "interaction_name": [item.value for item in InteractionName],
+        "interaction_phase": [item.value for item in InteractionPhase],
+        "hand": [item.value for item in Hand],
+    }
+
+    manifest_errors = {
+        (item["status"], item["code"]) for item in manifest["http_error_codes"]
+    }
+    response_errors = {
+        (item["status_code"], item["body"]["data"]["code"])
+        for item in load_json("errors.json")["responses"]
+    }
+    assert response_errors == manifest_errors
+    assert manifest["sse_error_codes"] == [
+        "stt_empty",
+        "stt_unavailable",
+        "stt_failed",
+        "turn_failed",
+        "interaction_failed",
+        "tts_failed",
+    ]
+    assert manifest["interrupt_semantics"]["forbidden_after_interrupt_ack"] == [
+        "asr.partial",
+        "asr.final",
+        "reply.text.delta",
+        "reply.audio.chunk",
+        "avatar.intent",
+        "reply.end",
+        "error",
+    ]
+    assert manifest["reconnect_semantics"] == {
+        "max_streams_per_session": 1,
+        "last_event_id_replay": False,
+        "already_consumed_events_replayed": False,
+        "queued_unconsumed_critical_events_retained": True,
+    }
+    assert manifest["audio"] == {
+        "input": {
+            "format": "pcm16",
+            "byte_order": "little_endian",
+            "sample_rate": 16000,
+            "channels": 1,
+            "sample_width_bytes": 2,
+            "recommended_chunk_ms": {"minimum": 40, "maximum": 100},
+            "sequence_first": 0,
+            "sequence_step": 1,
+        },
+        "output": {
+            "format": "pcm16",
+            "byte_order": "little_endian",
+            "sample_rate": 24000,
+            "channels": 1,
+            "sample_width_bytes": 2,
+            "encoding": "base64_in_sse_data",
+        },
+    }
+    assert manifest["critical_events"] == [
+        "asr.final",
+        "avatar.intent",
+        "reply.audio.chunk",
+        "reply.end",
+        "error",
+    ]
+    assert manifest["droppable_events"] == ["asr.partial", "reply.text.delta"]
+    assert manifest["backpressure_semantics"] == {
+        "bounded_per_session_queue": True,
+        "asr_partial_coalesced_per_turn": True,
+        "droppable_when_full": ["asr.partial", "reply.text.delta"],
+        "never_dropped_to_admit_noncritical": [
+            "asr.final",
+            "avatar.intent",
+            "reply.audio.chunk",
+            "reply.end",
+            "error",
+        ],
+        "critical_producer_waits_when_only_critical_events_remain": True,
+    }
+
+
+def test_json_request_and_event_fixtures_are_protocol_v1() -> None:
+    for path in FIXTURES.glob("*.request.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["protocol_version"] == "1.0", path.name
+        assert isinstance(payload["type"], str), path.name
+
+    for path in FIXTURES.glob("*.event.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["protocol_version"] == "1.0", path.name
+        assert isinstance(payload["type"], str), path.name
+
+
+def test_sse_fixture_is_parseable_and_has_stable_event_order() -> None:
+    assert _sse_event_types("audio_turn.events.sse") == load_json("manifest.json")[
+        "event_order"
+    ]["speech_success"]
+    assert _sse_event_types("tts_failure.events.sse") == load_json("manifest.json")[
+        "event_order"
+    ]["tts_failed_after_text"]
+
+
+def test_audio_flow_cases_reference_stable_fixtures_and_errors() -> None:
+    cases = load_json("audio_flow_cases.json")
+    manifest = load_json("manifest.json")
+    assert cases["protocol_version"] == manifest["protocol_version"]
+    assert cases["input"]["sample_rate"] == manifest["audio"]["input"][
+        "sample_rate"
+    ]
+    assert cases["output"]["sample_rate"] == manifest["audio"]["output"][
+        "sample_rate"
+    ]
+    ids = {item["id"] for item in cases["request_cases"]}
+    assert ids == {
+        "invalid_base64",
+        "odd_pcm16_byte_count",
+        "non_contiguous_sequence",
+        "wrong_sample_rate",
+        "wrong_channels",
+        "wrong_format",
+        "chunk_decoded_size_overflow",
+        "turn_total_size_overflow",
+        "audio_end_without_data",
+        "stale_turn_audio",
+    }
+    for item in cases["request_cases"]:
+        assert item["expected_body"]["status"] == "error"
+        assert item["expected_body"]["data"]["code"] in {
+            "invalid_audio",
+            "payload_too_large",
+            "schema_validation_failed",
+            "session_conflict",
+        }
+        fixture_name = item.get("request_fixture")
+        if fixture_name:
+            assert (FIXTURES / fixture_name).is_file()
+    assert cases["sse_event_order"] == {
+        "stt_unavailable": ["error"],
+        "stt_failed": ["error"],
+        "tts_failed_after_text": [
+            "avatar.intent",
+            "reply.text.delta",
+            "error",
+            "reply.end",
+        ],
+        "interrupted_after_ack": [],
+    }
+
+
+def _sse_event_types(name: str) -> list[str]:
+    raw = (FIXTURES / name).read_text(encoding="utf-8")
+    frames = [frame for frame in raw.split("\n\n") if frame]
+    event_types: list[str] = []
+    for frame in frames:
+        lines = frame.splitlines()
+        event_type = next(
+            line.removeprefix("event:").strip()
+            for line in lines
+            if line.startswith("event:")
+        )
+        data = json.loads(
+            next(
+                line.removeprefix("data:").strip()
+                for line in lines
+                if line.startswith("data:")
+            )
+        )
+        assert data["type"] == event_type
+        assert data["protocol_version"] == "1.0"
+        event_types.append(event_type)
+    return event_types

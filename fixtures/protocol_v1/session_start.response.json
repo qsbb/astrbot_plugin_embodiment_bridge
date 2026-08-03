@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "data": {
+    "protocol_version": "1.0",
+    "session_id": "smoke-session",
+    "events_url": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/events/smoke-session"
+  }
+}
