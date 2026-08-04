@@ -1,10 +1,106 @@
 {
+  "pairing_listener_enabled": {
+    "description": "启用内置 Quest Bridge 8520 监听器",
+    "type": "bool",
+    "hint": "默认关闭以保持兼容。启用后插件在 initialize() 中监听；仅开放匿名 pairing/exchange 和严格白名单内的 Quest 正常接口。",
+    "default": false
+  },
+  "pairing_listener_host": {
+    "description": "内置监听器绑定 IP",
+    "type": "string",
+    "hint": "只允许 IP 字面量，禁止域名。容器部署通常填写 0.0.0.0。",
+    "default": "0.0.0.0"
+  },
+  "pairing_listener_port": {
+    "description": "内置监听器端口",
+    "type": "int",
+    "hint": "Docker 端口映射本身不会创建监听器；插件启用并初始化成功后才会绑定该端口。",
+    "default": 8520,
+    "minimum": 1024,
+    "maximum": 65535
+  },
+  "pairing_listener_upstream_url": {
+    "description": "容器内 AstrBot 固定上游",
+    "type": "string",
+    "hint": "只允许无路径、无认证信息的 HTTP loopback IP 字面量，例如 http://127.0.0.1:6185；禁止域名和非回环地址。",
+    "default": "http://127.0.0.1:6185"
+  },
+  "pairing_listener_public_url": {
+    "description": "向 Quest 公布的内置监听器 URL",
+    "type": "string",
+    "hint": "可填写主机 base URL 或精确 pairing/exchange URL。私网 HTTP 还必须启用 allow_private_http_pairing；公网必须 HTTPS。不自动猜测宿主机 IP。",
+    "default": ""
+  },
   "bridge_api_key": {
     "description": "Quest 桥接二次认证密钥",
     "type": "string",
     "hint": "至少 32 个随机字符。Unity 通过 X-Quest-Avatar-Key 发送；它不能替代带 plugin scope 的 AstrBot API Key。",
     "obvious_hint": true,
     "default": ""
+  },
+  "pairing_exchange_proxy_url": {
+    "description": "旧外部代理的一次性配对交换地址（兼容）",
+    "type": "string",
+    "hint": "可选 fallback。仅当内置 listener 未就绪或 public URL 不合法时使用；外部代理必须只开放精确 POST，并安全注入最小 plugin-scope 身份。不要填写会先被统一认证拦截的 AstrBot 原始 extensions 地址。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "pairing_trusted_proxy_ip": {
+    "description": "旧外部配对代理的直连 IP",
+    "type": "string",
+    "hint": "仅用于旧外部代理路径。只有请求直连来源精确匹配此 IP 时才信任 X-Quest-Pairing-Source；内置 listener 始终忽略转发来源头并使用 TCP peer IP。",
+    "default": ""
+  },
+  "allow_private_http_pairing": {
+    "description": "允许私网 IP 使用明文 HTTP 配对和连接",
+    "type": "bool",
+    "hint": "仅用于受控局域网，由 Bridge 服务端固定配置，不在快速绑定页显示。URL 主机必须是 RFC1918 IPv4 或 IPv6 ULA 字面量；公网、域名和其他地址仍强制 HTTPS。",
+    "default": false
+  },
+  "pairing_public_url": {
+    "description": "Quest 正常连接地址",
+    "type": "string",
+    "hint": "快速绑定由服务端使用，不在扫码页显示。通常与 pairing_listener_public_url 的主机一致；可填写主机地址或完整 Bridge extensions 地址。",
+    "default": ""
+  },
+  "pairing_astrbot_api_key": {
+    "description": "Quest 专用 AstrBot API Key",
+    "type": "string",
+    "hint": "必须具有 plugin scope，仅由快速绑定服务端注入 Quest，不在 Page、二维码、日志或状态接口中返回。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "pairing_user_id": {
+    "description": "Quest 会话用户 ID",
+    "type": "string",
+    "hint": "由服务端固定并在快速绑定时注入，不在扫码页显示。",
+    "default": ""
+  },
+  "pairing_bot_id": {
+    "description": "Quest 会话机器人 ID",
+    "type": "string",
+    "hint": "由服务端固定并在快速绑定时注入，不在扫码页显示。",
+    "default": ""
+  },
+  "pairing_group_id": {
+    "description": "Quest 会话群组 ID",
+    "type": "string",
+    "hint": "可选；由服务端固定，不在扫码页显示。",
+    "default": ""
+  },
+  "pairing_relationship_profile_id": {
+    "description": "Quest 会话关系档案 ID",
+    "type": "string",
+    "hint": "可选兼容字段；优先使用 relationship_person_id，不在扫码页显示。",
+    "default": ""
+  },
+  "pairing_ttl_seconds": {
+    "description": "一次性配对凭据有效秒数",
+    "type": "int",
+    "hint": "快速绑定页不提供修改入口。建议保持 120 秒。",
+    "default": 120,
+    "minimum": 60,
+    "maximum": 300
   },
   "chat_provider_id": {
     "description": "角色决策使用的聊天模型 Provider ID",
@@ -20,6 +116,30 @@
     "hint": "启用后把 Quest PCM16 封装为 16000 Hz 单声道 WAV，再调用 AstrBot 4.26.8 的 get_using_stt_provider().get_text()。",
     "default": false
   },
+  "enable_plugin_mimo_stt": {
+    "description": "启用 Bridge 插件独立 MiMo STT",
+    "type": "bool",
+    "hint": "仅使用本插件配置，不启用或修改 AstrBot 全局 STT Provider。Quest PCM16 会封装为 WAV 后发送到下方 HTTPS API。",
+    "default": false
+  },
+  "plugin_mimo_stt_api_base": {
+    "description": "Bridge 插件 MiMo STT API 地址",
+    "type": "string",
+    "hint": "必须是无内嵌凭据的 HTTPS URL；可填写 API 根地址或完整 chat/completions 地址。",
+    "default": "https://api.xiaomimimo.com/v1"
+  },
+  "plugin_mimo_stt_api_key": {
+    "description": "Bridge 插件 MiMo STT API Key",
+    "type": "string",
+    "hint": "仅保存在本插件配置中，不读取或修改 AstrBot 全局 Provider 选择。",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "plugin_mimo_stt_model": {
+    "description": "Bridge 插件 MiMo STT 模型",
+    "type": "string",
+    "default": "mimo-v2.5-asr"
+  },
   "enable_astrbot_tts": {
     "description": "启用 AstrBot 默认 TTS Provider",
     "type": "bool",
@@ -33,15 +153,21 @@
     "default": true
   },
   "trusted_client_id": {
-    "description": "配对页预填的 Quest 客户端身份",
+    "description": "服务端固定的 Quest 客户端身份",
     "type": "string",
-    "hint": "这是配对页预填的客户端身份，一般留空、由配对流程自动处理即可。只有与 trusted_platform_id 一起配置后才能开启受保护的关系上下文，且配对请求必须与此值一致。",
+    "hint": "由 AstrBot 管理员在服务端配置，不能信任 Unity 自报。留空会明确关闭受保护关系上下文；配置后 session.start.client_id 必须精确匹配。",
     "default": ""
   },
   "trusted_platform_id": {
-    "description": "配对页预填的 AstrBot 平台身份",
+    "description": "服务端固定的原始 AstrBot 平台身份",
     "type": "string",
-    "hint": "例如 aiocqhttp。一般留空、由配对流程自动处理；不要从自然人关系映射推导这个值。",
+    "hint": "例如 aiocqhttp。由 AstrBot 管理员按真实原始平台配置，不能由 Unity 提交，也不能从自然人关系映射推导；留空会关闭受保护关系上下文。",
+    "default": ""
+  },
+  "relationship_person_id": {
+    "description": "Quest 角色绑定的自然人 ID",
+    "type": "string",
+    "hint": "由 AstrBot 管理员在本插件专属配置中管理。它只决定受保护关系快照的自然人范围，不授予平台权限；快速绑定页不会读取或显示该值，契约缺失时不得从私有存储猜测。",
     "default": ""
   },
   "enable_global_knowledge": {
@@ -65,7 +191,7 @@
     "default": true
   },
   "enable_runtime_diagnostics": {
-    "description": "启动时读取系列运行时诊断",
+    "description": "启动和显式 health 时读取系列运行时诊断",
     "type": "bool",
     "hint": "依赖「更新管理」（update_manager）系列插件的 update_manager.series_runtime@1.0 契约，只读，不能更新、安装、启停、重载或联网。未安装对应插件时自动降级，无副作用。",
     "default": true

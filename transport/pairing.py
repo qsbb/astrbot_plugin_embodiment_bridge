@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 from io import BytesIO
 from typing import Any, TypeVar
 
 import qrcode
 from astrbot.api.web import error_response, json_response, request
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from qrcode.constants import ERROR_CORRECT_M
 from qrcode.image.svg import SvgPathImage
 
@@ -16,10 +17,12 @@ from ..core.pairing import (
     PairingCreateRequest,
     PairingError,
     PairingExchangeRequest,
+    PairingExchangeService,
     PairingManager,
     PairingRevokeRequest,
     PairingStatusRequest,
 )
+from ..core.operator_settings import OperatorSettingsError
 
 
 PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
@@ -32,26 +35,78 @@ NO_STORE_HEADERS = {
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
+class ChatProviderSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    chat_provider_id: str = Field(min_length=1, max_length=256)
+
+
+class RelationshipPersonSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    person_id: str = Field(
+        default="",
+        max_length=64,
+        pattern=r"^(?:|[A-Za-z0-9_.-]{1,64})$",
+    )
+
+
 class PairingHttpApi:
     def __init__(
         self,
         *,
         context: Any,
         manager: PairingManager,
+        exchange_service: PairingExchangeService,
+        listener: Any,
         logger: Any,
         trusted_client_id: str,
         trusted_platform_id: str,
+        operator_settings: Any,
+        relationship_candidates: Any,
+        pairing_defaults: dict[str, Any] | None = None,
+        trusted_proxy_ip: str = "",
         max_json_body_bytes: int = 16_384,
     ) -> None:
         self.context = context
         self.manager = manager
+        self.exchange_service = exchange_service
+        self.listener = listener
         self.logger = logger
         self.trusted_client_id = str(trusted_client_id or "").strip()
         self.trusted_platform_id = str(trusted_platform_id or "").strip()
+        self.trusted_proxy_ip = _canonical_ip(trusted_proxy_ip)
+        self.operator_settings = operator_settings
+        self.relationship_candidates = relationship_candidates
+        self.pairing_defaults = dict(pairing_defaults or {})
         self.max_json_body_bytes = max(4096, min(65_536, max_json_body_bytes))
 
     def register(self) -> None:
         routes = (
+            (
+                "pairing/operator-settings",
+                self.operator_settings_overview,
+                ["GET"],
+                "Read safe Quest operator model settings",
+            ),
+            (
+                "pairing/operator-settings",
+                self.save_operator_settings,
+                ["POST"],
+                "Save Quest chat model selection",
+            ),
+            (
+                "pairing/identity-candidates",
+                self.identity_candidates,
+                ["GET"],
+                "Read minimal natural-person candidates from relationship contract",
+            ),
+            (
+                "pairing/identity-selection",
+                self.save_identity_selection,
+                ["POST"],
+                "Save Quest relationship natural-person selection",
+            ),
             (
                 "pairing/overview",
                 self.overview,
@@ -91,19 +146,85 @@ class PairingHttpApi:
                 description,
             )
 
+    async def operator_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "settings": self.operator_settings.snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "operator_settings_overview")
+
+    async def save_operator_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(ChatProviderSelectionRequest)
+            settings = await self.operator_settings.save_chat_provider_id(
+                payload.chat_provider_id
+            )
+            return _json_no_store({"success": True, "settings": settings})
+        except Exception as exc:
+            return self._error(exc, "save_operator_settings")
+
+    async def identity_candidates(self) -> Any:
+        try:
+            self._dashboard_owner()
+            result = await self.relationship_candidates.list_candidates()
+            return _json_no_store({"success": True, "identity_catalog": result})
+        except Exception as exc:
+            return self._error(exc, "identity_candidates")
+
+    async def save_identity_selection(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(RelationshipPersonSelectionRequest)
+            if payload.person_id:
+                catalog = await self.relationship_candidates.list_candidates()
+                if catalog.get("status") != "ok":
+                    raise PairingError(
+                        "relationship_identity_contract_unavailable",
+                        503,
+                        "情当前版本未提供可用的自然人候选读取契约",
+                    )
+                candidate_ids = {
+                    str(item.get("person_id") or "")
+                    for item in catalog.get("candidates", [])
+                    if isinstance(item, dict)
+                }
+                if payload.person_id not in candidate_ids:
+                    raise PairingError(
+                        "relationship_person_not_available",
+                        422,
+                        "所选自然人不存在或已经不可用",
+                    )
+            settings = await self.operator_settings.save_relationship_person_id(
+                payload.person_id
+            )
+            return _json_no_store({"success": True, "settings": settings})
+        except Exception as exc:
+            return self._error(exc, "save_identity_selection")
+
     async def overview(self) -> Any:
         try:
             self._dashboard_owner()
+            quick_pairing_ready, quick_pairing_reason = self._quick_pairing_status()
             return _json_no_store(
                 {
                     "success": True,
                     "pairing_protocol_version": PAIRING_PROTOCOL_VERSION,
                     "public_api_path": PUBLIC_API_PATH,
                     "bridge_key_configured": len(self.manager.bridge_api_key) >= 32,
-                    "trusted_client_id": self.trusted_client_id,
-                    "trusted_platform_id": self.trusted_platform_id,
-                    "requires_https": True,
-                    "ttl_options": [60, 120, 180, 300],
+                    "requires_https": not self.manager.allow_private_http,
+                    "allow_private_http": self.manager.allow_private_http,
+                    "bootstrap_ready": self.manager.bootstrap_ready,
+                    "bootstrap_reason": self.manager.bootstrap_reason,
+                    "exchange_url": self.manager.exchange_url,
+                    "listener": self.listener.status_snapshot(),
+                    "quick_pairing_ready": quick_pairing_ready,
+                    "quick_pairing_reason": quick_pairing_reason,
                 },
             )
         except Exception as exc:
@@ -114,7 +235,9 @@ class PairingHttpApi:
         pairing_id = ""
         try:
             owner = self._dashboard_owner()
-            payload = await self._read_model(PairingCreateRequest)
+            payload = self._complete_create_request(
+                await self._read_model(PairingCreateRequest)
+            )
             result = self.manager.create(owner, payload)
             pairing_id = result.pairing_id
             qr_svg_data_uri = _qr_svg_data_uri(result.qr_payload)
@@ -140,6 +263,60 @@ class PairingHttpApi:
                 except PairingError:
                     pass
             return self._error(exc, "create")
+
+    def _quick_pairing_status(self) -> tuple[bool, str]:
+        if len(self.manager.bridge_api_key) < 32:
+            return False, "bridge_key_missing"
+        if not self.manager.bootstrap_ready:
+            return (
+                False,
+                self.manager.bootstrap_reason or "pairing_bootstrap_unavailable",
+            )
+        required = (
+            "public_url",
+            "astrbot_api_key",
+            "client_id",
+            "user_id",
+            "bot_id",
+        )
+        if any(
+            not str(self.pairing_defaults.get(key) or "").strip() for key in required
+        ):
+            return False, "quick_pairing_defaults_missing"
+        return True, "ready"
+
+    def _complete_create_request(
+        self,
+        payload: PairingCreateRequest,
+    ) -> PairingCreateRequest:
+        if payload.public_url:
+            return payload
+        ready, reason = self._quick_pairing_status()
+        if not ready:
+            raise PairingError(
+                reason,
+                503,
+                "Quest quick-pairing server settings are incomplete",
+            )
+        values = {
+            "protocol_version": payload.protocol_version,
+            "public_url": str(self.pairing_defaults.get("public_url") or "").strip(),
+            "port": None,
+            "astrbot_api_key": str(self.pairing_defaults.get("astrbot_api_key") or ""),
+            "client_id": str(self.pairing_defaults.get("client_id") or "").strip(),
+            "user_id": str(self.pairing_defaults.get("user_id") or "").strip(),
+            "bot_id": str(self.pairing_defaults.get("bot_id") or "").strip(),
+            "group_id": str(self.pairing_defaults.get("group_id") or "").strip(),
+            "relationship_profile_id": str(
+                self.pairing_defaults.get("relationship_profile_id") or ""
+            ).strip(),
+            "expected_remote_ip": "",
+            "allow_insecure_http": bool(
+                self.pairing_defaults.get("allow_insecure_http", False)
+            ),
+            "ttl_seconds": self.pairing_defaults.get("ttl_seconds", 120),
+        }
+        return PairingCreateRequest.model_validate(values)
 
     async def status(self) -> Any:
         try:
@@ -169,17 +346,13 @@ class PairingHttpApi:
 
     async def exchange(self) -> Any:
         try:
+            self._dashboard_owner()
             payload = await self._read_model(PairingExchangeRequest)
-            result = self.manager.exchange(payload, remote=self._remote_address())
             return _json_no_store(
-                {
-                    "status": "ok",
-                    "data": {
-                        "pairing_protocol_version": PAIRING_PROTOCOL_VERSION,
-                        "pairing_id": result.pairing_id,
-                        "configuration": result.configuration,
-                    },
-                },
+                self.exchange_service.exchange(
+                    payload,
+                    remote=self._remote_address(),
+                )
             )
         except Exception as exc:
             return self._error(exc, "exchange")
@@ -196,9 +369,21 @@ class PairingHttpApi:
 
     def _remote_address(self) -> str:
         try:
-            return str(request.remote_addr or "unknown")
+            # AstrBot 4.26.8 exposes the authenticated plugin request's direct
+            # peer as ``client_host``.  Do not use framework-private request
+            # attributes here: a missing peer must fail closed instead of
+            # trusting a client-supplied forwarding header.
+            direct = _canonical_ip(request.client_host)
+            if self.trusted_proxy_ip and direct == self.trusted_proxy_ip:
+                forwarded = str(
+                    request.headers.get("x-quest-pairing-source") or ""
+                ).strip()
+                if "," in forwarded:
+                    return "invalid"
+                return _canonical_ip(forwarded) or "invalid"
+            return direct or "invalid"
         except (AttributeError, RuntimeError):
-            return "unknown"
+            return "invalid"
 
     async def _read_model(self, model: type[ModelT]) -> ModelT:
         content_type = str(request.content_type or "").lower()
@@ -245,11 +430,12 @@ class PairingHttpApi:
 
     def _error(self, exc: Exception, operation: str) -> Any:
         headers = dict(NO_STORE_HEADERS)
-        if isinstance(exc, PairingError):
+        if isinstance(exc, (PairingError, OperatorSettingsError)):
             data: dict[str, object] = {"code": exc.code}
-            if exc.retry_after is not None:
-                data["retry_after"] = exc.retry_after
-                headers["Retry-After"] = str(exc.retry_after)
+            retry_after = getattr(exc, "retry_after", None)
+            if retry_after is not None:
+                data["retry_after"] = retry_after
+                headers["Retry-After"] = str(retry_after)
             response = error_response(
                 exc.public_message,
                 status_code=exc.status_code,
@@ -300,3 +486,13 @@ def _qr_svg_data_uri(payload: str) -> str:
     image.save(buffer)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return "data:image/svg+xml;base64," + encoded
+
+
+def _canonical_ip(value: object) -> str:
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return ""
+    if address.is_unspecified or address.is_multicast:
+        return ""
+    return str(address)

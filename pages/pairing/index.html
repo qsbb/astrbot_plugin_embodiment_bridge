@@ -21,68 +21,15 @@
     </header>
 
     <section class="workspace" aria-label="Quest 后端配对">
-      <form id="pairing-form" class="config-panel" autocomplete="off">
-        <div class="section-heading">
-          <div>
-            <h2>后端连接</h2>
-            <p>填写 Quest 能直接访问的公网 HTTPS 地址。端口留空时使用 443。</p>
-          </div>
+      <form id="pairing-form" class="pairing-controls" autocomplete="off">
+        <div>
+          <span class="section-label">一次性连接</span>
+          <h2>准备绑定 Quest</h2>
+          <p id="form-hint">Bridge 正在检查服务端绑定配置。</p>
         </div>
-
-        <div class="form-grid">
-          <label class="field field-wide">
-            <span>公开 HTTPS 地址</span>
-            <input id="public-url" name="public_url" type="url" inputmode="url" placeholder="https://bot.example.com" required />
-            <small>可填写域名或带可信证书的公网 IP，不要填写 Dashboard 页面路径。</small>
-          </label>
-          <label class="field">
-            <span>端口</span>
-            <input id="port" name="port" type="number" inputmode="numeric" min="1" max="65535" placeholder="443" />
-          </label>
-          <div class="field identity-readonly">
-            <span>平台身份</span>
-            <div id="trusted-platform" class="identity-value">由 Bridge 服务端配置</div>
-          </div>
-          <label class="field field-wide">
-            <span>AstrBot API Key</span>
-            <input id="astrbot-api-key" name="astrbot_api_key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" required />
-            <small>仅进入本次内存配对会话，不保存到页面、二维码或插件数据目录。其余字段会保存在本浏览器以便下次填写。</small>
-          </label>
-          <label class="field">
-            <span>客户端 ID</span>
-            <input id="client-id" name="client_id" type="text" maxlength="64" value="quest-living-room" required />
-          </label>
-          <label class="field">
-            <span>有效期</span>
-            <select id="ttl" name="ttl_seconds">
-              <option value="60">60 秒</option>
-              <option value="120" selected>120 秒</option>
-              <option value="180">180 秒</option>
-              <option value="300">300 秒</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>用户 ID</span>
-            <input id="user-id" name="user_id" type="text" maxlength="128" required />
-          </label>
-          <label class="field">
-            <span>机器人 ID</span>
-            <input id="bot-id" name="bot_id" type="text" maxlength="128" required />
-          </label>
-          <label class="field">
-            <span>群组 ID（可选）</span>
-            <input id="group-id" name="group_id" type="text" maxlength="128" />
-          </label>
-          <label class="field">
-            <span>关系档案 ID（可选）</span>
-            <input id="relationship-profile-id" name="relationship_profile_id" type="text" maxlength="128" />
-          </label>
-        </div>
-
-        <div class="form-actions">
-          <p id="form-hint">生成后，在 Quest 中按左手柄菜单键并选择 PAIR BACKEND。</p>
-          <button id="generate-button" class="primary" type="submit">生成配对</button>
-        </div>
+        <button id="generate-button" class="primary" type="submit" aria-busy="false" disabled>
+          生成绑定二维码
+        </button>
       </form>
 
       <section class="pairing-panel" aria-labelledby="pairing-title">
@@ -120,7 +67,6 @@
             <button id="copy-code" type="button" aria-busy="false">复制配对码</button>
             <button id="revoke" class="danger" type="button" aria-busy="false">撤销</button>
           </div>
-          <p id="exchange-url" class="exchange-url"></p>
         </div>
       </section>
     </section>

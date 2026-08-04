@@ -137,9 +137,7 @@ def test_audio_backpressure_keeps_critical_events_and_bounds_queue() -> None:
         )
 
         blocked = asyncio.create_task(
-            queue.put(
-                QueueItem({"type": "reply.audio.chunk", "sequence": 2}, "t1", 1)
-            )
+            queue.put(QueueItem({"type": "reply.audio.chunk", "sequence": 2}, "t1", 1))
         )
         await asyncio.sleep(0)
         assert blocked.done() is False

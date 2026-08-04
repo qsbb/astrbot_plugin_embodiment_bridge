@@ -44,14 +44,33 @@ $bridgeBytes = New-Object byte[] 32
 | 配置 | 联调要求 |
 |---|---|
 | `bridge_api_key` | 使用上一步生成的随机值，至少 32 字符 |
+| `pairing_listener_enabled` | 默认 `false`；容器私网统一入口时显式设为 `true` |
+| `pairing_listener_host` / `pairing_listener_port` | 只允许 IP 字面量与 1024–65535 端口；容器通常用 `0.0.0.0` / `8520` |
+| `pairing_listener_upstream_url` | 只允许无路径、无认证信息的 loopback HTTP IP，例如 `http://127.0.0.1:6185` |
+| `pairing_listener_public_url` | Quest 可达的主机 base URL 或精确 exchange URL；不猜宿主机 IP |
+| `pairing_exchange_proxy_url` | 可选旧外部代理 fallback；内置 listener 未就绪或 public URL 不合法时才使用 |
+| `pairing_trusted_proxy_ip` | 仅供旧外部代理路径；内置 listener 始终使用直接 peer IP，不信任转发来源头 |
+| `allow_private_http_pairing` | 只在受控私网启用；由服务端固定，快速绑定页不显示，公网继续强制 HTTPS |
+| `pairing_public_url` / `pairing_astrbot_api_key` | 服务端快速绑定使用的 Quest 地址与专用 plugin-scope Key；不进入 Page、二维码或日志 |
+| `pairing_user_id` / `pairing_bot_id` | 服务端固定的 Quest 会话身份；群组和关系档案字段可按需配置 |
+| `pairing_ttl_seconds` | 服务端固定的一次性凭证 TTL，默认 120 秒；Page 只显示剩余时间 |
 | `chat_provider_id` | 明确选择聊天模型 Provider |
+| `relationship_person_id` | 可选；由管理员在插件专属配置中管理，不改变平台授权 |
 | `persona_prompt` | 只写角色设定和边界，不写骨骼、Morph 或动画路径 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |
 | `enable_astrbot_stt` | 真实 STT 联调时设为 `true`，否则 `audio/end` 返回 SSE `stt_unavailable` |
+| `enable_plugin_mimo_stt` / `plugin_mimo_stt_*` | 可选插件独立 MiMo ASR；只使用本插件专属配置，不修改 AstrBot 全局 STT |
 | `enable_astrbot_tts` | 真实 TTS 联调时设为 `true`，否则只发送文字和意图 |
+| `enable_voice_hub_tts` | 默认 `true`；安装“声”后优先消费 `voice.audio_output@1.0` |
+| `trusted_client_id` / `trusted_platform_id` | 由 AstrBot 管理员在服务端配置；留空会关闭受保护关系上下文 |
+| `enable_global_knowledge` | 只读取 `global`，不得改成 private user scope |
+| `enable_environment_context` | 只读取 provider 缓存，不触发实时网络请求 |
+| `enable_runtime_diagnostics` | 启动与显式 health 只读诊断，不执行更新操作 |
 | `stt_timeout_seconds` / `tts_timeout_seconds` | 按 Provider 延迟设置，保持有界，不要设为无限 |
 | `max_tts_audio_seconds` | 限制单轮 Provider WAV 读入和输出时长 |
+
+「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、角色、连接或身份设置。聊天模型和自然人范围均由管理员在本插件专属配置中管理；Bridge 仍只接受公开契约并在缺失、超时或畸形响应时安全降级，不访问其他插件私有接口。
 
 还需要在 AstrBot 中创建一个具有 `plugin` scope 的 API Key。Unity 的每个请求必须同时携带：
 
@@ -62,11 +81,24 @@ X-Quest-Avatar-Key: <bridge_api_key>
 
 两把密钥用途不同，不能只配置其中一个。
 
+内置 listener 不需要、不保存也不注入专用 plugin-scope 服务 Key。它只在精确 exchange 路径直接调用共享 `PairingExchangeService`；正常 Bridge 路径仍把 Quest 自己的两层认证原样转发给 AstrBot。推荐私网最小值：
+
+```text
+pairing_listener_enabled=true
+pairing_listener_host=0.0.0.0
+pairing_listener_port=8520
+pairing_listener_upstream_url=http://127.0.0.1:6185
+pairing_listener_public_url=http://192.168.5.88:8520
+allow_private_http_pairing=true
+```
+
+旧 [nginx_8520_pairing.example.conf](nginx_8520_pairing.example.conf) 继续作为可选兼容方案。只做 Docker 端口映射、却不启用内置 listener，也不部署外部代理，仍不会产生首次配对入口。
+
 ### 3.1 真实语音 Provider 检查
 
 插件不接受 STT/TTS Provider ID 字符串并自行寻找对象，而是读取 AstrBot 当前选中的默认 Provider。这与 4.26.8 的公开 `Context.get_using_stt_provider()` / `get_using_tts_provider()` 契约一致。启用前用 AstrBot 的 Provider 页面或 `/provider` 确认两类 Provider 都可用。
 
-TTS Provider 必须返回本地、未压缩 PCM16 WAV。插件会接受单声道或立体声并规范化为 Quest 输出格式；如果 Provider 返回 MP3、浮点 WAV、压缩 WAV、空文件或超限文件，SSE 会先保留已经发送的文字和意图，再发送 `tts_failed` 与 `reply.end(audio_sent=false)`。voice_hub 的 `voice.delivery@1.0` 不包含该能力，不能把它的内部 Python 方法当作跨插件接口。
+安装“声”时，Bridge 优先消费无消息副作用的 `voice.audio_output@1.0`，只读 provider 管理的 PCM16 WAV，且不删除/移动源文件。未安装或失败时，只有 `enable_astrbot_tts=true` 才会回退 AstrBot Core TTS。Core Provider 必须返回本地、未压缩 PCM16 WAV；MP3、浮点/压缩/截断或超限文件产生 `tts_failed`，文字和 `reply.end(audio_sent=false)` 保留。不得调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
 STT 输入在 `audio/end` 后一次性写为 16000 Hz 单声道 PCM16 WAV，再调用 Provider。当前没有 `asr.partial`，也不会把原始 PCM 写入插件安装目录；临时文件只在 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/` 中短暂存在。
 
@@ -83,7 +115,7 @@ http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_brid
 Quest 中的 `127.0.0.1` 指向头显自身，不能用于访问电脑。应使用电脑的局域网 IPv4，例如：
 
 ```text
-http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://192.168.1.10:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
 ```
 
 要求电脑和 Quest 位于互通的可信开发网络。Windows 防火墙只应允许专用网络和必要端口，不要创建面向公用网络或任意来源的宽泛规则。
@@ -93,6 +125,32 @@ http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_b
 ## 5. HTTP 与 SSE 冒烟联调
 
 以下命令假设：
+### 4.1 Docker 与 8520 检查
+
+Docker 配置必须发布端口，例如：
+
+```yaml
+ports:
+  - "8520:8520"
+```
+
+这只把 host 8520 转发到 container 8520；它不会在容器内启动进程。插件 `initialize()` 成功后，`GET /health` 和 Dashboard 的 `pairing/overview` 会给出脱敏状态：
+
+```json
+{
+  "enabled": true,
+  "ready": true,
+  "bind_host": "0.0.0.0",
+  "port": 8520,
+  "upstream_kind": "loopback_http",
+  "reason": "ready"
+}
+```
+
+`enabled=true, ready=false` 时先检查 `reason`：`invalid_*` 表示配置校验失败，`bind_failed` 表示端口占用或权限问题，`start_failed` 表示 listener 初始化异常。插件其余 6185/25520 官方路由仍应可用。`ready=true` 但 reason 为 `pairing_listener_public_url_missing` 或 URL 校验错误时，socket 已监听，但内置入口不会写入新配对二维码；若旧代理也未配置，则 `bootstrap_ready=false`。
+
+8520 正常接口上游断线返回 no-store 的稳定 503 JSON。SSE 已开始后如果上游断线，只关闭当前流，不伪造 `reply.end` 或旧轮事件；Unity 应按现有重连/新会话规则处理。
+
 
 ```powershell
 $bridgeBase = "http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge"
@@ -159,6 +217,8 @@ curl.exe --fail-with-body "$bridgeBase/session/close" -H "Authorization: Bearer 
 - `reply.audio.chunk` 需要 Base64 解码为 PCM16、单声道、24000 Hz，并按真实播放进度驱动嘴型。
 - `reply.audio.chunk` 是有序且受背压保护的事件；客户端应持续消费 SSE，不应并行创建第二条流来“抢速度”。
 - `audio/chunk` 的 `sequence` 从 0 严格递增；HTTP 成功响应只代表进入有界缓冲区，收到 `audio/end` 的 `202` 后再等待 `asr.final` 或 SSE `error`。
+- 当前 `ConversationController` 的语音轮会在 `turn/start` 发送 `text: null`（某些 Unity `JsonUtility` 版本可能省略该字段或发 `""`），Bridge 三种形状都按 `awaiting_audio` 处理；文本输入可发送最多 8192 个字符。
+- Unity 默认每 80 ms 采集一块 PCM16，即 2560 字节；`sequence` 必须从 0 连续递增。收到 `interrupt` 的成功响应后，旧轮任何迟到事件都必须按 `(session_id, turn_id)` 丢弃。
 - Unity 必须对白名单做二次校验，并按当前模型能力把不支持动作降级为 `idle`。
 - 不得把 `head_pat` 固定映射为开心，也不得把 `cheek_pinch` 固定映射为害羞。
 

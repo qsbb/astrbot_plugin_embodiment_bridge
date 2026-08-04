@@ -13,6 +13,21 @@ RUNTIME_CAPABILITY = "read_runtime_snapshot"
 RUNTIME_METHOD = "get_series_runtime_snapshot"
 _RUNTIME_STATUSES = {"ok", "degraded", "unavailable", "error"}
 _MEMBER_STATUSES = {"ok", "compatible", "degraded", "unhealthy", "missing"}
+_RUNTIME_REASONS = {
+    "HEALTHY",
+    "MEMBERS_DEGRADED",
+    "ADAPTER_UNAVAILABLE",
+    "DIAGNOSTIC_TIMEOUT",
+    "INVALID_REQUEST",
+    "DIAGNOSTIC_FAILED",
+    "DIAGNOSTIC_INVALID",
+}
+_STATUS_REASONS = {
+    "ok": {"HEALTHY"},
+    "degraded": {"MEMBERS_DEGRADED"},
+    "unavailable": {"ADAPTER_UNAVAILABLE", "DIAGNOSTIC_TIMEOUT"},
+    "error": {"INVALID_REQUEST", "DIAGNOSTIC_FAILED", "DIAGNOSTIC_INVALID"},
+}
 
 
 class SeriesRuntimeAdapter:
@@ -31,6 +46,7 @@ class SeriesRuntimeAdapter:
         self.enabled = enabled
         self.timeout_seconds = min(max(float(timeout_seconds), 0.05), 5.0)
         self.snapshot: dict[str, Any] = {
+            "contract": f"{RUNTIME_CONTRACT_NAME}@1.0",
             "status": "disabled" if not enabled else "not_checked",
             "reason": "",
             "members": [],
@@ -39,8 +55,13 @@ class SeriesRuntimeAdapter:
         }
         self._missing_logged = False
         self._incompatible_logged = False
+        self._refresh_lock = asyncio.Lock()
 
     async def refresh(self) -> dict[str, Any]:
+        async with self._refresh_lock:
+            return await self._refresh_unlocked()
+
+    async def _refresh_unlocked(self) -> dict[str, Any]:
         if not self.enabled:
             return self.snapshot
         provider = find_active_provider(self.context, RUNTIME_PLUGIN_NAME)
@@ -93,7 +114,10 @@ class SeriesRuntimeAdapter:
             )
             self.snapshot = self._empty("error", "DIAGNOSTIC_FAILED")
             return self.snapshot
-        normalized = self._normalize(raw)
+        try:
+            normalized = self._normalize(raw)
+        except (TypeError, ValueError):
+            normalized = None
         self.snapshot = normalized or self._empty("error", "DIAGNOSTIC_INVALID")
         return self.snapshot
 
@@ -109,6 +133,8 @@ class SeriesRuntimeAdapter:
             "healthy",
             "total",
         }
+        status = payload.get("status") if isinstance(payload, dict) else None
+        reason = payload.get("reason") if isinstance(payload, dict) else None
         if (
             not isinstance(payload, dict)
             or set(payload) != required
@@ -116,7 +142,11 @@ class SeriesRuntimeAdapter:
             or str(payload.get("contract_version") or "").split(".", 1)[0]
             != RUNTIME_CONTRACT_MAJOR
             or payload.get("capability") != RUNTIME_CAPABILITY
-            or payload.get("status") not in _RUNTIME_STATUSES
+            or not isinstance(status, str)
+            or status not in _RUNTIME_STATUSES
+            or not isinstance(reason, str)
+            or reason not in _RUNTIME_REASONS
+            or reason not in _STATUS_REASONS.get(status, set())
             or not isinstance(payload.get("members"), list)
         ):
             return None
@@ -135,7 +165,15 @@ class SeriesRuntimeAdapter:
             if (
                 not isinstance(item, dict)
                 or set(item) != member_fields
+                or not isinstance(item.get("health_status"), str)
                 or item.get("health_status") not in _MEMBER_STATUSES
+                or not isinstance(item.get("plugin_id"), str)
+                or not isinstance(item.get("label"), str)
+                or not isinstance(item.get("installed"), bool)
+                or not isinstance(item.get("loaded"), bool)
+                or not isinstance(item.get("activated"), bool)
+                or not isinstance(item.get("version"), str)
+                or not isinstance(item.get("reason"), str)
             ):
                 return None
             members.append(
@@ -150,22 +188,33 @@ class SeriesRuntimeAdapter:
                     "reason": str(item.get("reason") or "")[:128],
                 }
             )
+        if (
+            isinstance(payload.get("healthy"), bool)
+            or not isinstance(payload.get("healthy"), int)
+            or isinstance(payload.get("total"), bool)
+            or not isinstance(payload.get("total"), int)
+        ):
+            return None
         try:
-            healthy = max(0, int(payload.get("healthy") or 0))
-            total = max(0, int(payload.get("total") or 0))
+            healthy = int(payload.get("healthy") or 0)
+            total = int(payload.get("total") or 0)
         except (TypeError, ValueError):
             return None
+        if healthy < 0 or total < 0 or healthy > total:
+            return None
         return {
+            "contract": f"{RUNTIME_CONTRACT_NAME}@1.0",
             "status": str(payload.get("status")),
             "reason": str(payload.get("reason") or "")[:128],
             "members": members,
-            "healthy": min(healthy, total),
+            "healthy": healthy,
             "total": total,
         }
 
     @staticmethod
     def _empty(status: str, reason: str) -> dict[str, Any]:
         return {
+            "contract": f"{RUNTIME_CONTRACT_NAME}@1.0",
             "status": status,
             "reason": reason,
             "members": [],

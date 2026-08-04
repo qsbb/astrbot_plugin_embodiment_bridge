@@ -11,6 +11,8 @@ import pytest
 from astrbot_plugin_quest_avatar_bridge.adapters.stt import (
     AdapterUnavailable,
     AstrBotSTTAdapter,
+    ConfiguredMiMoSTTAdapter,
+    select_stt_adapter,
 )
 from astrbot_plugin_quest_avatar_bridge.adapters.tts import AstrBotTTSAdapter
 
@@ -119,9 +121,7 @@ def test_astrbot_stt_adapter_unavailable_and_cancel_cleanup(tmp_path: Path) -> N
             data_dir=work_dir,
             enabled=True,
         )
-        task = asyncio.create_task(
-            adapter.transcribe(b"\x00\x00", sample_rate=16_000)
-        )
+        task = asyncio.create_task(adapter.transcribe(b"\x00\x00", sample_rate=16_000))
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -132,14 +132,80 @@ def test_astrbot_stt_adapter_unavailable_and_cancel_cleanup(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
+def test_plugin_mimo_stt_wraps_pcm_without_global_provider(monkeypatch) -> None:
+    async def scenario() -> None:
+        captured = {}
+
+        async def fake_post(url, *, api_key, payload, timeout_seconds):
+            captured.update(
+                url=url,
+                api_key=api_key,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
+            return {"choices": [{"message": {"content": "  plugin transcript  "}}]}
+
+        monkeypatch.setattr(
+            "astrbot_plugin_quest_avatar_bridge.adapters.stt._post_mimo_json",
+            fake_post,
+        )
+        adapter = ConfiguredMiMoSTTAdapter(
+            enabled=True,
+            api_base="https://api.xiaomimimo.com/v1",
+            api_key="plugin-only-key",
+            model="mimo-v2.5-asr",
+            timeout_seconds=12,
+        )
+        pcm16 = struct.pack("<hhhh", -1000, 0, 1000, 2000)
+
+        assert adapter.available is True
+        assert await adapter.transcribe(pcm16, sample_rate=16_000) == (
+            "plugin transcript"
+        )
+        assert captured["url"] == "https://api.xiaomimimo.com/v1/chat/completions"
+        assert captured["api_key"] == "plugin-only-key"
+        assert "max_completion_tokens" not in captured["payload"]
+        audio_url = captured["payload"]["messages"][0]["content"][0]["input_audio"][
+            "data"
+        ]
+        header = __import__("base64").b64decode(audio_url.split(",", 1)[1])[:12]
+        assert header[:4] == b"RIFF" and header[8:12] == b"WAVE"
+        await adapter.close()
+        assert adapter.available is False
+
+    asyncio.run(scenario())
+
+
+def test_plugin_mimo_stt_requires_https_and_has_explicit_fallback() -> None:
+    primary = ConfiguredMiMoSTTAdapter(
+        enabled=True,
+        api_base="http://api.example.test/v1",
+        api_key="key",
+    )
+    fallback = ProviderContext(stt=InspectingSTTProvider(b"\x00\x00"))
+    fallback_adapter = AstrBotSTTAdapter(
+        fallback,
+        data_dir=Path.cwd() / ".unused-stt-test",
+        enabled=True,
+    )
+    try:
+        assert primary.available is False
+        assert select_stt_adapter(primary, fallback_adapter) is fallback_adapter
+    finally:
+        asyncio.run(fallback_adapter.close())
+        try:
+            (Path.cwd() / ".unused-stt-test").rmdir()
+        except OSError:
+            pass
+
+
 def test_astrbot_tts_adapter_normalizes_stereo_48k_to_mono_24k(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         source_path = tmp_path / "provider.wav"
         stereo_frames = b"".join(
-            struct.pack("<hh", sample, -sample)
-            for sample in range(-1000, 1000)
+            struct.pack("<hh", sample, -sample) for sample in range(-1000, 1000)
         )
         write_wav(
             source_path,
@@ -180,7 +246,9 @@ def test_astrbot_tts_adapter_rejects_invalid_or_oversized_wav(
             enabled=True,
         )
         with pytest.raises(ValueError, match="invalid WAV"):
-            _ = [chunk async for chunk in invalid.synthesize("hello", emotion="neutral")]
+            _ = [
+                chunk async for chunk in invalid.synthesize("hello", emotion="neutral")
+            ]
 
         long_path = tmp_path / "too-long.wav"
         write_wav(
@@ -196,6 +264,8 @@ def test_astrbot_tts_adapter_rejects_invalid_or_oversized_wav(
             max_audio_seconds=1,
         )
         with pytest.raises(ValueError, match="duration limit"):
-            _ = [chunk async for chunk in limited.synthesize("hello", emotion="neutral")]
+            _ = [
+                chunk async for chunk in limited.synthesize("hello", emotion="neutral")
+            ]
 
     asyncio.run(scenario())

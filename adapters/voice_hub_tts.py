@@ -49,9 +49,30 @@ class VoiceHubTTSAdapter:
     @property
     def available(self) -> bool:
         if self._closed or not self.enabled:
+            self.status = "closed" if self._closed else "disabled"
             return False
         provider = find_active_provider(self.context, VOICE_PLUGIN_NAME)
-        return provider is not None and self._contract_compatible(provider)
+        if provider is None:
+            self.status = "provider_unavailable"
+            return False
+        if not self._contract_compatible(provider):
+            self.status = "contract_incompatible"
+            return False
+        if self.status in {"enabled", "provider_unavailable", "contract_incompatible"}:
+            self.status = "ready"
+        return True
+
+    def status_snapshot(self) -> dict[str, Any]:
+        available = self.available
+        return {
+            "contract": f"{VOICE_CONTRACT_NAME}@1.0",
+            "enabled": self.enabled,
+            "available": available,
+            "status": self.status,
+            "preferred": True,
+            "sends_message": False,
+            "provider_managed_files": True,
+        }
 
     async def synthesize(
         self,
@@ -174,6 +195,19 @@ class VoiceHubTTSAdapter:
         ):
             self.status = "unsupported_audio_format"
             raise RuntimeError("voice.audio_output returned unsafe audio metadata")
+        numeric_values = (
+            response.get("sample_rate"),
+            response.get("channels"),
+            response.get("sample_width"),
+            response.get("frame_count"),
+            response.get("duration_ms"),
+        )
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in numeric_values
+        ):
+            self.status = "invalid_response"
+            raise RuntimeError("voice.audio_output metadata is invalid")
         try:
             sample_rate = int(response.get("sample_rate") or 0)
             channels = int(response.get("channels") or 0)
@@ -199,6 +233,7 @@ class VoiceHubTTSAdapter:
 
     async def close(self) -> None:
         self._closed = True
+        self.status = "closed"
 
 
 class FallbackTTSAdapter:

@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import Any
+
+
+_PERSON_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+class OperatorSettingsError(RuntimeError):
+    def __init__(self, code: str, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+        self.public_message = message
+
+
+class OperatorSettings:
+    """Persist administrator-only Bridge choices without exposing provider secrets."""
+
+    def __init__(
+        self,
+        *,
+        context: Any,
+        config: Any,
+        llm: Any,
+        relationship: Any,
+        logger: Any,
+    ) -> None:
+        self.context = context
+        self.config = config
+        self.llm = llm
+        self.relationship = relationship
+        self.logger = logger
+        self._save_lock = asyncio.Lock()
+
+    def snapshot(self) -> dict[str, Any]:
+        providers = self._list_chat_providers()
+        selected_id = str(self.llm.chat_provider_id or "").strip()
+        provider_ids = {item["id"] for item in providers}
+        if not providers:
+            status = "empty"
+        elif selected_id and selected_id not in provider_ids:
+            status = "selected_missing"
+        else:
+            status = "ok"
+        return {
+            "status": status,
+            "selected_id": selected_id,
+            "selected_available": bool(selected_id and selected_id in provider_ids),
+            "providers": providers,
+            "relationship_person_id": str(
+                getattr(self.relationship, "person_id", "") or ""
+            ).strip(),
+            "config_writable": callable(
+                getattr(self.config, "save_config_async", None)
+            ),
+        }
+
+    async def save_chat_provider_id(self, value: str) -> dict[str, Any]:
+        provider_id = str(value or "").strip()
+        if not provider_id or len(provider_id) > 256:
+            raise OperatorSettingsError(
+                "invalid_chat_provider_id",
+                422,
+                "聊天模型 Provider ID 无效",
+            )
+        available = {item["id"] for item in self._list_chat_providers()}
+        if provider_id not in available:
+            raise OperatorSettingsError(
+                "chat_provider_not_available",
+                422,
+                "所选聊天模型不存在或当前不可用",
+            )
+        await self._persist("chat_provider_id", provider_id)
+        self.llm.configure_provider(provider_id)
+        return self.snapshot()
+
+    async def save_relationship_person_id(self, value: str) -> dict[str, Any]:
+        person_id = str(value or "").strip()
+        if person_id and not _PERSON_ID_RE.fullmatch(person_id):
+            raise OperatorSettingsError(
+                "invalid_relationship_person_id",
+                422,
+                "自然人 ID 无效",
+            )
+        await self._persist("relationship_person_id", person_id)
+        self.relationship.configure_person_id(person_id)
+        return self.snapshot()
+
+    def _list_chat_providers(self) -> list[dict[str, str]]:
+        try:
+            providers = self.context.get_all_providers()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            self.logger.warning(
+                "[quest-avatar] failed to list chat providers: error_type=%s",
+                type(exc).__name__,
+            )
+            return []
+        if not isinstance(providers, (list, tuple)):
+            return []
+
+        items: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for provider in providers:
+            try:
+                metadata = provider.meta()
+                provider_id = str(metadata.id or "").strip()
+                model = str(metadata.model or "").strip()
+                adapter_type = str(metadata.type or "").strip()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            if not provider_id or len(provider_id) > 256 or provider_id in seen:
+                continue
+            seen.add(provider_id)
+            items.append(
+                {
+                    "id": provider_id,
+                    "model": model[:256],
+                    "adapter_type": adapter_type[:128],
+                    "provider_type": "chat_completion",
+                }
+            )
+        items.sort(key=lambda item: (item["id"].casefold(), item["model"].casefold()))
+        return items
+
+    async def _persist(self, key: str, value: str) -> None:
+        save = getattr(self.config, "save_config_async", None)
+        if not callable(save):
+            raise OperatorSettingsError(
+                "native_config_unavailable",
+                503,
+                "当前 AstrBot 配置对象不支持安全异步保存",
+            )
+
+        async with self._save_lock:
+            try:
+                old_exists = key in self.config
+            except TypeError:
+                old_exists = False
+            try:
+                old_value = self.config.get(key)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                old_value = None
+            try:
+                committed = await save({key: value})
+            except Exception as exc:
+                self._restore_value(key, old_value, old_exists)
+                self.logger.warning(
+                    "[quest-avatar] operator setting save failed: key=%s error_type=%s",
+                    key,
+                    type(exc).__name__,
+                )
+                raise OperatorSettingsError(
+                    "config_save_failed",
+                    500,
+                    "配置保存失败，运行时设置未改变",
+                ) from exc
+
+            if committed is not True:
+                raise OperatorSettingsError(
+                    "config_save_superseded",
+                    409,
+                    "配置已被更新，请刷新页面后重试",
+                )
+
+    def _restore_value(self, key: str, old_value: Any, old_exists: bool) -> None:
+        try:
+            if old_exists:
+                self.config[key] = old_value
+            else:
+                self.config.pop(key, None)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return

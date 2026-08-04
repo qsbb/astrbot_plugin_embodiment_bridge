@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import secrets
 import threading
@@ -11,9 +12,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 
-from .models import Identifier, OptionalScope, StrictModel
+from .models import OptionalScope, StrictModel
 
 
 PAIRING_PROTOCOL_VERSION = "1.0"
@@ -23,32 +24,44 @@ PUBLIC_API_PATH = f"/api/v1/plugins/extensions/{PLUGIN_NAME}"
 MIN_TTL_SECONDS = 60
 MAX_TTL_SECONDS = 300
 DEFAULT_TTL_SECONDS = 120
+PRIVATE_HTTP_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+)
 
 
 class PairingCreateRequest(StrictModel):
     protocol_version: Literal["1.0"] = PAIRING_PROTOCOL_VERSION
-    public_url: str = Field(min_length=1, max_length=2048)
+    public_url: str = Field(default="", max_length=2048)
     port: int | None = Field(default=None, ge=1, le=65535)
-    astrbot_api_key: SecretStr
-    client_id: Identifier
-    user_id: OptionalScope
-    bot_id: OptionalScope
+    astrbot_api_key: SecretStr = SecretStr("")
+    client_id: OptionalScope = ""
+    user_id: OptionalScope = ""
+    bot_id: OptionalScope = ""
     group_id: OptionalScope = ""
     relationship_profile_id: OptionalScope = ""
+    expected_remote_ip: str = Field(default="", max_length=64)
+    allow_insecure_http: bool = False
     ttl_seconds: int = Field(
         default=DEFAULT_TTL_SECONDS,
         ge=MIN_TTL_SECONDS,
         le=MAX_TTL_SECONDS,
     )
 
-    @model_validator(mode="after")
-    def require_identity_and_key(self) -> PairingCreateRequest:
-        if not self.user_id or not self.bot_id:
-            raise ValueError("user_id and bot_id are required")
-        key = self.astrbot_api_key.get_secret_value()
-        if not key or len(key) > 4096:
-            raise ValueError("astrbot_api_key is required and must be at most 4096 chars")
-        return self
+    @field_validator("expected_remote_ip")
+    @classmethod
+    def validate_expected_remote_ip(cls, value: str) -> str:
+        if not value:
+            return ""
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError("expected_remote_ip must be an IP literal") from exc
+        if parsed.is_unspecified or parsed.is_multicast:
+            raise ValueError("expected_remote_ip must be a unicast address")
+        return str(parsed)
 
 
 class PairingStatusRequest(StrictModel):
@@ -113,7 +126,7 @@ class PairingConfiguration:
             "bot_id": self.bot_id,
             "group_id": self.group_id,
             "relationship_profile_id": self.relationship_profile_id,
-            "allow_insecure_http": False,
+            "allow_insecure_http": self.allow_insecure_http,
         }
 
     def wipe(self) -> None:
@@ -130,6 +143,7 @@ class PairingSession:
     created_at: float
     expires_at: float
     exchange_url: str
+    expected_remote_ip: str
     configuration: PairingConfiguration | None = field(repr=False)
     state: str = "waiting"
     consumed_at: float | None = None
@@ -160,6 +174,33 @@ class PairingExchangeResult:
     configuration: dict[str, object] = field(repr=False)
 
 
+class PairingExchangeService:
+    """Transport-neutral one-time credential exchange service.
+
+    The authenticated plugin route and built-in bootstrap listener use this
+    same service, so all pairing state remains owned by one manager.
+    """
+
+    def __init__(self, manager: "PairingManager") -> None:
+        self.manager = manager
+
+    def exchange(
+        self,
+        payload: PairingExchangeRequest,
+        *,
+        remote: str,
+    ) -> dict[str, object]:
+        result = self.manager.exchange(payload, remote=remote)
+        return {
+            "status": "ok",
+            "data": {
+                "pairing_protocol_version": PAIRING_PROTOCOL_VERSION,
+                "pairing_id": result.pairing_id,
+                "configuration": result.configuration,
+            },
+        }
+
+
 class PairingManager:
     """In-memory, single-use Quest pairing sessions.
 
@@ -172,21 +213,62 @@ class PairingManager:
         self,
         *,
         bridge_api_key: str,
+        exchange_url: str = "",
+        allow_private_http: bool = False,
         clock: Callable[[], float] = time.time,
         max_active_sessions: int = 32,
         max_owner_sessions: int = 5,
         exchange_attempts_per_minute: int = 12,
+        global_exchange_attempts_per_minute: int = 120,
     ) -> None:
         self.bridge_api_key = str(bridge_api_key or "")
+        self.allow_private_http = bool(allow_private_http)
+        self.exchange_url = ""
+        self.bootstrap_reason = "pairing_exchange_proxy_url_missing"
+        if str(exchange_url or "").strip():
+            try:
+                self.exchange_url = normalize_pairing_exchange_url(
+                    exchange_url,
+                    allow_private_http=self.allow_private_http,
+                )
+                self.bootstrap_reason = "ready"
+            except PairingError as exc:
+                self.bootstrap_reason = exc.code
         self.clock = clock
         self.max_active_sessions = max(1, max_active_sessions)
         self.max_owner_sessions = max(1, max_owner_sessions)
         self.exchange_attempts_per_minute = max(1, exchange_attempts_per_minute)
+        self.global_exchange_attempts_per_minute = max(
+            1, global_exchange_attempts_per_minute
+        )
         self._sessions: dict[str, PairingSession] = {}
         self._token_index: dict[str, str] = {}
         self._code_index: dict[str, str] = {}
         self._attempts: dict[str, deque[float]] = {}
+        self._global_attempts: deque[float] = deque()
         self._lock = threading.Lock()
+
+    @property
+    def bootstrap_ready(self) -> bool:
+        return bool(self.exchange_url)
+
+    def configure_exchange_url(self, value: str, *, missing_reason: str) -> None:
+        """Atomically replace the URL embedded in newly-created credentials."""
+
+        normalized = ""
+        reason = str(missing_reason or "pairing_exchange_url_missing")[:128]
+        if str(value or "").strip():
+            try:
+                normalized = normalize_pairing_exchange_url(
+                    value,
+                    allow_private_http=self.allow_private_http,
+                )
+                reason = "ready"
+            except PairingError as exc:
+                reason = exc.code
+        with self._lock:
+            self.exchange_url = normalized
+            self.bootstrap_reason = reason
 
     def create(self, owner: str, payload: PairingCreateRequest) -> PairingCreateResult:
         principal = str(owner or "").strip()
@@ -203,13 +285,40 @@ class PairingManager:
                 "Quest bridge API key is not configured",
             )
 
-        base_url = normalize_public_base_url(payload.public_url, payload.port)
+        if not self.bootstrap_ready:
+            raise PairingError(
+                "pairing_bootstrap_unavailable",
+                503,
+                "A public pairing exchange proxy is not configured",
+            )
+        key = payload.astrbot_api_key.get_secret_value()
+        if (
+            not payload.public_url
+            or not key
+            or len(key) > 4096
+            or not payload.client_id
+            or not payload.user_id
+            or not payload.bot_id
+        ):
+            raise PairingError(
+                "pairing_server_configuration_incomplete",
+                503,
+                "Quest quick-pairing server settings are incomplete",
+            )
+
+        base_url = normalize_public_base_url(
+            payload.public_url,
+            payload.port,
+            allow_private_http=(
+                self.allow_private_http and payload.allow_insecure_http
+            ),
+        )
         now = self.clock()
         token = secrets.token_urlsafe(32)
         token_hash = _credential_hash(token)
         pairing_id = secrets.token_hex(16)
         expires_at = now + payload.ttl_seconds
-        exchange_url = f"{base_url}/pairing/exchange"
+        exchange_url = self.exchange_url
         configuration = PairingConfiguration(
             base_url=base_url,
             astrbot_api_key=payload.astrbot_api_key.get_secret_value(),
@@ -219,11 +328,14 @@ class PairingManager:
             bot_id=payload.bot_id,
             group_id=payload.group_id,
             relationship_profile_id=payload.relationship_profile_id,
+            allow_insecure_http=urlsplit(base_url).scheme == "http",
         )
 
         with self._lock:
             self._expire_locked(now)
-            active = [item for item in self._sessions.values() if item.state == "waiting"]
+            active = [
+                item for item in self._sessions.values() if item.state == "waiting"
+            ]
             if len(active) >= self.max_active_sessions:
                 configuration.wipe()
                 raise PairingError(
@@ -248,6 +360,7 @@ class PairingManager:
                 created_at=now,
                 expires_at=expires_at,
                 exchange_url=exchange_url,
+                expected_remote_ip=payload.expected_remote_ip,
                 configuration=configuration,
             )
             self._sessions[pairing_id] = session
@@ -298,7 +411,7 @@ class PairingManager:
         remote: str,
     ) -> PairingExchangeResult:
         now = self.clock()
-        remote_key = str(remote or "unknown")[:256]
+        remote_key = _canonical_remote_ip(remote)
         with self._lock:
             self._rate_limit_locked(remote_key, now)
             self._expire_locked(now)
@@ -307,7 +420,19 @@ class PairingManager:
             else:
                 pairing_id = self._code_index.get(payload.code)
             session = self._sessions.get(pairing_id or "")
-            if session is None or session.state != "waiting" or session.configuration is None:
+            if (
+                session is None
+                or session.state != "waiting"
+                or session.configuration is None
+            ):
+                raise PairingError(
+                    "pairing_not_available",
+                    401,
+                    "Pairing credential is invalid, expired, or already used",
+                )
+            if session.expected_remote_ip and not secrets.compare_digest(
+                session.expected_remote_ip, remote_key
+            ):
                 raise PairingError(
                     "pairing_not_available",
                     401,
@@ -331,6 +456,7 @@ class PairingManager:
             self._token_index.clear()
             self._code_index.clear()
             self._attempts.clear()
+            self._global_attempts.clear()
 
     def _owned_session_locked(self, owner: str, pairing_id: str) -> PairingSession:
         if not owner:
@@ -341,7 +467,9 @@ class PairingManager:
             )
         session = self._sessions.get(pairing_id)
         if session is None or not secrets.compare_digest(session.owner, owner):
-            raise PairingError("pairing_not_found", 404, "Pairing session was not found")
+            raise PairingError(
+                "pairing_not_found", 404, "Pairing session was not found"
+            )
         return session
 
     def _new_short_code_locked(self) -> str:
@@ -356,8 +484,20 @@ class PairingManager:
         )
 
     def _rate_limit_locked(self, remote: str, now: float) -> None:
-        attempts = self._attempts.setdefault(remote, deque())
         cutoff = now - 60.0
+        while self._global_attempts and self._global_attempts[0] <= cutoff:
+            self._global_attempts.popleft()
+        if len(self._global_attempts) >= self.global_exchange_attempts_per_minute:
+            retry_after = max(1, int(60.0 - (now - self._global_attempts[0])))
+            raise PairingError(
+                "pairing_rate_limited",
+                429,
+                "Too many pairing attempts",
+                retry_after=retry_after,
+            )
+        self._global_attempts.append(now)
+
+        attempts = self._attempts.setdefault(remote, deque())
         while attempts and attempts[0] <= cutoff:
             attempts.popleft()
         if len(attempts) >= self.exchange_attempts_per_minute:
@@ -386,6 +526,8 @@ class PairingManager:
             self._sessions.pop(pairing_id, None)
 
         attempt_cutoff = now - 60.0
+        while self._global_attempts and self._global_attempts[0] <= attempt_cutoff:
+            self._global_attempts.popleft()
         for remote, attempts in list(self._attempts.items()):
             while attempts and attempts[0] <= attempt_cutoff:
                 attempts.popleft()
@@ -407,7 +549,12 @@ class PairingManager:
             session.configuration = None
 
 
-def normalize_public_base_url(value: str, port: int | None = None) -> str:
+def normalize_public_base_url(
+    value: str,
+    port: int | None = None,
+    *,
+    allow_private_http: bool = False,
+) -> str:
     raw = str(value or "").strip()
     try:
         parsed = urlsplit(raw)
@@ -415,7 +562,8 @@ def normalize_public_base_url(value: str, port: int | None = None) -> str:
     except ValueError as exc:
         raise PairingError("invalid_public_url", 422, "Public URL is invalid") from exc
 
-    if parsed.scheme.lower() != "https":
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
         raise PairingError(
             "https_required",
             422,
@@ -439,11 +587,86 @@ def normalize_public_base_url(value: str, port: int | None = None) -> str:
         )
 
     host = parsed.hostname
+    if scheme == "http" and (not allow_private_http or not _is_private_lan_ip(host)):
+        raise PairingError(
+            "https_required",
+            422,
+            "Plain HTTP is allowed only for an explicitly enabled private IP",
+        )
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     selected_port = port if port is not None else parsed_port
     netloc = host if selected_port is None else f"{host}:{selected_port}"
-    return urlunsplit(("https", netloc, PUBLIC_API_PATH, "", ""))
+    return urlunsplit((scheme, netloc, PUBLIC_API_PATH, "", ""))
+
+
+def normalize_pairing_exchange_url(
+    value: str,
+    *,
+    allow_private_http: bool = False,
+) -> str:
+    raw = str(value or "").strip()
+    if not raw or len(raw) > 2048:
+        raise PairingError(
+            "invalid_pairing_exchange_url",
+            422,
+            "Pairing exchange proxy URL is invalid",
+        )
+    try:
+        parsed = urlsplit(raw)
+        parsed.port
+    except ValueError as exc:
+        raise PairingError(
+            "invalid_pairing_exchange_url",
+            422,
+            "Pairing exchange proxy URL is invalid",
+        ) from exc
+    scheme = parsed.scheme.lower()
+    if (
+        scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path
+        or parsed.path.endswith("/")
+    ):
+        raise PairingError(
+            "invalid_pairing_exchange_url",
+            422,
+            "Pairing exchange proxy URL is invalid",
+        )
+    if scheme == "http" and (
+        not allow_private_http or not _is_private_lan_ip(parsed.hostname)
+    ):
+        raise PairingError(
+            "https_required",
+            422,
+            "Pairing exchange proxy must use HTTPS unless private HTTP is enabled",
+        )
+    return urlunsplit((scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _is_private_lan_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any(
+        address.version == network.version and address in network
+        for network in PRIVATE_HTTP_NETWORKS
+    )
+
+
+def _canonical_remote_ip(value: str) -> str:
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return "invalid"
+    if address.is_unspecified or address.is_multicast:
+        return "invalid"
+    return str(address)
 
 
 def _credential_hash(value: str) -> str:

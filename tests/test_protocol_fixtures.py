@@ -11,6 +11,7 @@ from astrbot_plugin_quest_avatar_bridge.core.models import (
     InteractionName,
     InteractionPhase,
     LookAt,
+    TurnStartRequest,
 )
 
 
@@ -64,6 +65,44 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "already_consumed_events_replayed": False,
         "queued_unconsumed_critical_events_retained": True,
     }
+    assert manifest["session_start_semantics"] == {
+        "protected_context_status_in_response": True,
+        "protected_context_default_access": "denied",
+        "api_principal_source": "astrbot_authenticated_request",
+        "trusted_client_id_source": "bridge_server_config",
+        "trusted_platform_id_source": "bridge_server_config",
+        "unity_trusted_source_fields": False,
+    }
+    assert manifest["pairing_bootstrap_semantics"] == {
+        "register_web_api_anonymous_supported": False,
+        "page_create_authentication": "astrbot_dashboard",
+        "exchange_core_authentication": "reverse_proxy_plugin_scope",
+        "exchange_credential": "single_use_token_or_six_digit_code",
+        "expected_remote_ip_bound_per_session": True,
+        "per_source_rate_limit": True,
+        "global_rate_limit": True,
+        "private_http_requires_server_and_session_opt_in": True,
+        "public_network_requires_https": True,
+    }
+    assert manifest["series_integration_semantics"] == {
+        "knowledge_scope": "global_only",
+        "relationship_requires_identity_authorization": True,
+        "environment_mode": "cached_only",
+        "voice_contract": "voice.audio_output@1.0",
+        "runtime_refresh": "startup_and_explicit_health",
+        "conversation_proactive_delivery_consumed": False,
+        "orchestration_hub_resolver_consumed": False,
+    }
+    assert manifest["unity_conversation_controller"] == {
+        "text_max_characters": 8192,
+        "audio_turn_text_forms_accepted": ["omitted", "null", "empty_string"],
+        "recommended_capture_chunk_ms": 80,
+        "recommended_capture_chunk_bytes": 2560,
+        "input_sequence_first": 0,
+        "input_sequence_step": 1,
+        "interrupt_before_new_turn": True,
+        "stale_events_after_interrupt_ack": "discard_by_session_and_turn",
+    }
     assert manifest["audio"] == {
         "input": {
             "format": "pcm16",
@@ -113,6 +152,9 @@ def test_json_request_and_event_fixtures_are_protocol_v1() -> None:
         assert payload["protocol_version"] == "1.0", path.name
         assert isinstance(payload["type"], str), path.name
 
+    unity_audio_start = load_json("unity_audio_turn_start.request.json")
+    assert TurnStartRequest.model_validate(unity_audio_start).text is None
+
     for path in FIXTURES.glob("*.event.json"):
         payload = json.loads(path.read_text(encoding="utf-8"))
         assert payload["protocol_version"] == "1.0", path.name
@@ -120,24 +162,22 @@ def test_json_request_and_event_fixtures_are_protocol_v1() -> None:
 
 
 def test_sse_fixture_is_parseable_and_has_stable_event_order() -> None:
-    assert _sse_event_types("audio_turn.events.sse") == load_json("manifest.json")[
-        "event_order"
-    ]["speech_success"]
-    assert _sse_event_types("tts_failure.events.sse") == load_json("manifest.json")[
-        "event_order"
-    ]["tts_failed_after_text"]
+    assert (
+        _sse_event_types("audio_turn.events.sse")
+        == load_json("manifest.json")["event_order"]["speech_success"]
+    )
+    assert (
+        _sse_event_types("tts_failure.events.sse")
+        == load_json("manifest.json")["event_order"]["tts_failed_after_text"]
+    )
 
 
 def test_audio_flow_cases_reference_stable_fixtures_and_errors() -> None:
     cases = load_json("audio_flow_cases.json")
     manifest = load_json("manifest.json")
     assert cases["protocol_version"] == manifest["protocol_version"]
-    assert cases["input"]["sample_rate"] == manifest["audio"]["input"][
-        "sample_rate"
-    ]
-    assert cases["output"]["sample_rate"] == manifest["audio"]["output"][
-        "sample_rate"
-    ]
+    assert cases["input"]["sample_rate"] == manifest["audio"]["input"]["sample_rate"]
+    assert cases["output"]["sample_rate"] == manifest["audio"]["output"]["sample_rate"]
     ids = {item["id"] for item in cases["request_cases"]}
     assert ids == {
         "invalid_base64",

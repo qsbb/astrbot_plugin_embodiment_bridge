@@ -59,12 +59,14 @@ class HttpSseTransport:
         context: Any,
         sessions: SessionManager,
         orchestrator: TurnOrchestrator,
+        listener: Any,
         config: TransportConfig,
         logger: Any,
     ) -> None:
         self.context = context
         self.sessions = sessions
         self.orchestrator = orchestrator
+        self.listener = listener
         self.config = config
         self.logger = logger
         self._identifier_adapter = TypeAdapter(Identifier)
@@ -120,6 +122,10 @@ class HttpSseTransport:
                         "protocol_version": PROTOCOL_VERSION,
                         "session_id": session.session_id,
                         "events_url": f"{PUBLIC_API_PREFIX}/events/{session.session_id}",
+                        "protected_context": {
+                            "authorized": authorization.authorized,
+                            "reason": authorization.reason,
+                        },
                     },
                 },
                 status_code=201,
@@ -286,6 +292,7 @@ class HttpSseTransport:
     async def health(self) -> Any:
         try:
             self._authenticate()
+            await self.orchestrator.refresh_runtime_diagnostics()
             stats = await self.sessions.stats()
             return json_response(
                 {
@@ -305,6 +312,7 @@ class HttpSseTransport:
                             "channels": 1,
                             "tts_available": self.orchestrator.tts.available,
                         },
+                        "pairing_listener": self.listener.status_snapshot(),
                         "series_integrations": self.orchestrator.integration_status(),
                         **stats,
                     },

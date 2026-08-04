@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout
+import pytest
 
 from .http_harness import (
     AUTH_HEADERS,
@@ -48,6 +49,21 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
                 assert health_body["data"]["protocol_version"] == "1.0"
                 assert health_body["data"]["input_audio"]["stt_available"] is True
                 assert health_body["data"]["output_audio"]["tts_available"] is True
+                integrations = health_body["data"]["series_integrations"]
+                assert integrations["identity"]["configured"] is False
+                assert integrations["identity"]["status"] == (
+                    "trusted_client_id_missing"
+                )
+                assert integrations["identity"]["default_access"] == "denied"
+                assert integrations["identity"]["unity_trusted_source_fields"] is False
+                assert integrations["knowledge"]["scope"] == "global"
+                assert integrations["knowledge"]["private_scope_enabled"] is False
+                assert integrations["environment"]["mode"] == "cached_only"
+                assert integrations["voice_audio_output"]["status"] == (
+                    "provider_unavailable"
+                )
+                assert integrations["runtime"]["status"] == "unavailable"
+                assert integrations["runtime"]["reason"] == "provider_unavailable"
 
                 session_request = load_json("session_start.request.json")
                 created = await client.post(
@@ -135,7 +151,8 @@ def test_real_http_audio_validation_matches_error_fixtures(
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
         cases = {
-            item["id"]: item for item in load_json("audio_flow_cases.json")["request_cases"]
+            item["id"]: item
+            for item in load_json("audio_flow_cases.json")["request_cases"]
         }
         async with LiveHttpServer(bundle) as server:
             async with ClientSession() as client:
@@ -178,9 +195,7 @@ def test_real_http_audio_validation_matches_error_fixtures(
                     assert await response.json() == case["expected_body"], case_id
 
                 overflow = load_json("audio_chunk.request.json")
-                overflow["data"] = base64.b64encode(b"\x00\x00" * 8_001).decode(
-                    "ascii"
-                )
+                overflow["data"] = base64.b64encode(b"\x00\x00" * 8_001).decode("ascii")
                 overflow_response = await client.post(
                     server.url("/audio/chunk"),
                     headers=AUTH_HEADERS,
@@ -194,9 +209,9 @@ def test_real_http_audio_validation_matches_error_fixtures(
                 for sequence in range(3):
                     request_body = load_json("audio_chunk.request.json")
                     request_body["sequence"] = sequence
-                    request_body["data"] = base64.b64encode(
-                        b"\x00\x00" * 8_000
-                    ).decode("ascii")
+                    request_body["data"] = base64.b64encode(b"\x00\x00" * 8_000).decode(
+                        "ascii"
+                    )
                     response = await client.post(
                         server.url("/audio/chunk"),
                         headers=AUTH_HEADERS,
@@ -240,6 +255,173 @@ def test_real_http_audio_validation_matches_error_fixtures(
                     },
                 )
                 assert closed.status == 200
+
+    asyncio.run(scenario())
+
+
+def test_unity_conversation_controller_realtime_chain(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """Exercise the exact HTTP/SSE order used by ConversationController.
+
+    The server is a real TCP aiohttp listener and invokes production handlers;
+    only the LLM/STT/TTS boundaries are fake. The voice turn is intentionally
+    interrupted while TTS is blocked so the no-late-events guarantee is tested
+    on the same path as the Unity client.
+    """
+
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession(
+                timeout=ClientTimeout(total=None, connect=2)
+            ) as client:
+                session_request = load_json("session_start.request.json")
+                session_request["session_id"] = "unity-session"
+                health = await client.get(server.url("/health"), headers=AUTH_HEADERS)
+                assert health.status == 200
+                assert (await health.json())["data"]["protocol_version"] == "1.0"
+
+                created = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json=session_request,
+                )
+                assert created.status == 201
+                created_body = await created.json()
+                assert created_body["data"]["session_id"] == "unity-session"
+
+                events = await client.get(
+                    server.url("/events/unity-session"),
+                    headers={**AUTH_HEADERS, "Accept": "text/event-stream"},
+                )
+                assert events.status == 200
+                assert (await read_sse_frame(events)).comment == "connected"
+
+                text_start = await client.post(
+                    server.url("/turn/start"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "turn.start",
+                        "protocol_version": "1.0",
+                        "session_id": "unity-session",
+                        "turn_id": "unity-text-turn",
+                        "text": "你好",
+                        "cancel_previous": True,
+                    },
+                )
+                assert text_start.status == 202
+                assert (await text_start.json())["data"]["state"] == "processing"
+
+                text_frames = [await read_sse_frame(events) for _ in range(4)]
+                assert [frame.event for frame in text_frames] == load_json(
+                    "manifest.json"
+                )["event_order"]["text_success"]
+                assert all(
+                    frame.data is not None
+                    and frame.data["protocol_version"] == "1.0"
+                    and frame.data["session_id"] == "unity-session"
+                    and frame.data["turn_id"] == "unity-text-turn"
+                    for frame in text_frames
+                )
+                audio_frame = text_frames[2].data
+                assert audio_frame is not None
+                assert audio_frame["format"] == "pcm16"
+                assert audio_frame["sample_rate"] == 24_000
+                assert audio_frame["channels"] == 1
+
+                # Unity sends null (or, depending on JsonUtility/runtime, an
+                # omitted/empty string) for the voice turn's text field.
+                audio_start = load_json("unity_audio_turn_start.request.json")
+                started = await client.post(
+                    server.url("/turn/start"),
+                    headers=AUTH_HEADERS,
+                    json=audio_start,
+                )
+                assert started.status == 202
+                assert (await started.json())["data"]["state"] == "awaiting_audio"
+
+                pcm16 = b"\x00\x00" * 1_280  # Unity's 80 ms @ 16 kHz chunk.
+                bundle.stt.expected_pcm16 = pcm16
+                bundle.tts.block_next = True
+                chunk = await client.post(
+                    server.url("/audio/chunk"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "audio.chunk",
+                        "protocol_version": "1.0",
+                        "session_id": "unity-session",
+                        "turn_id": "unity-audio-turn",
+                        "sequence": 0,
+                        "format": "pcm16",
+                        "sample_rate": 16_000,
+                        "channels": 1,
+                        "data": base64.b64encode(pcm16).decode("ascii"),
+                    },
+                )
+                assert chunk.status == 202
+                assert (await chunk.json())["data"]["buffered_bytes"] == len(pcm16)
+
+                ended = await client.post(
+                    server.url("/audio/end"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "audio.end",
+                        "protocol_version": "1.0",
+                        "session_id": "unity-session",
+                        "turn_id": "unity-audio-turn",
+                    },
+                )
+                assert ended.status == 202
+
+                asr_final = await read_sse_frame(events)
+                avatar_intent = await read_sse_frame(events)
+                reply_delta = await read_sse_frame(events)
+                assert [
+                    asr_final.event,
+                    avatar_intent.event,
+                    reply_delta.event,
+                ] == ["asr.final", "avatar.intent", "reply.text.delta"]
+                assert asr_final.data is not None
+                assert asr_final.data["text"] == "你好"
+                assert all(
+                    frame.data is not None
+                    and frame.data["session_id"] == "unity-session"
+                    and frame.data["turn_id"] == "unity-audio-turn"
+                    for frame in (asr_final, avatar_intent, reply_delta)
+                )
+                await asyncio.wait_for(bundle.tts.started.wait(), timeout=1)
+
+                interrupted = await client.post(
+                    server.url("/interrupt"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "interrupt",
+                        "protocol_version": "1.0",
+                        "session_id": "unity-session",
+                        "turn_id": "unity-audio-turn",
+                        "reason": "unity_interrupt",
+                    },
+                )
+                assert interrupted.status == 200
+                assert (await interrupted.json())["data"]["cancelled"] is True
+                await asyncio.wait_for(bundle.tts.cancelled.wait(), timeout=1)
+
+                with pytest.raises(TimeoutError):
+                    await read_sse_frame(events, timeout=0.15)
+
+                closed = await client.post(
+                    server.url("/session/close"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "session.close",
+                        "protocol_version": "1.0",
+                        "session_id": "unity-session",
+                    },
+                )
+                assert closed.status == 200
+                events.close()
 
     asyncio.run(scenario())
 

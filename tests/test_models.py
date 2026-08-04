@@ -10,6 +10,8 @@ from astrbot_plugin_quest_avatar_bridge.core.models import (
     Gesture,
     InteractionEvent,
     LookAt,
+    SessionStartRequest,
+    TurnStartRequest,
 )
 
 
@@ -51,6 +53,42 @@ def test_audio_schema_enforces_pcm_contract() -> None:
         AudioChunkRequest.model_validate({**payload, "sample_rate": 48000})
     with pytest.raises(ValidationError):
         AudioChunkRequest.model_validate({**payload, "channels": 2})
+
+
+def test_session_schema_rejects_whitespace_only_group_scope() -> None:
+    payload = {
+        "type": "session.start",
+        "protocol_version": "1.0",
+        "session_id": "s1",
+        "client_id": "quest",
+        "user_id": "user",
+        "bot_id": "bot",
+        "group_id": "",
+    }
+    assert SessionStartRequest.model_validate(payload).group_id == ""
+    with pytest.raises(ValidationError):
+        SessionStartRequest.model_validate({**payload, "group_id": "   "})
+
+
+def test_turn_start_accepts_unity_text_and_audio_shapes() -> None:
+    base = {
+        "type": "turn.start",
+        "protocol_version": "1.0",
+        "session_id": "s1",
+        "turn_id": "t1",
+        "cancel_previous": True,
+    }
+    assert TurnStartRequest.model_validate(base).text is None
+    assert TurnStartRequest.model_validate({**base, "text": None}).text is None
+    assert TurnStartRequest.model_validate({**base, "text": ""}).text is None
+    assert TurnStartRequest.model_validate({**base, "text": "x" * 8192}).text == (
+        "x" * 8192
+    )
+
+    with pytest.raises(ValidationError):
+        TurnStartRequest.model_validate({**base, "text": "   "})
+    with pytest.raises(ValidationError):
+        TurnStartRequest.model_validate({**base, "text": "x" * 8193})
 
 
 def test_intent_parser_accepts_whitelist_and_rejects_drift() -> None:

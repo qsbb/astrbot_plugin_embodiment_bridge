@@ -5,7 +5,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+import time
 import wave
+
+import pytest
 
 from astrbot_plugin_quest_avatar_bridge.adapters.environment import (
     CachedEnvironmentAdapter,
@@ -17,6 +20,7 @@ from astrbot_plugin_quest_avatar_bridge.adapters.knowledge import (
     GlobalKnowledgeAdapter,
 )
 from astrbot_plugin_quest_avatar_bridge.adapters.runtime import SeriesRuntimeAdapter
+from astrbot_plugin_quest_avatar_bridge.adapters.stt import AdapterUnavailable
 from astrbot_plugin_quest_avatar_bridge.adapters.voice_hub_tts import (
     VoiceHubTTSAdapter,
 )
@@ -48,6 +52,11 @@ class ContextStub:
         ]
 
 
+class EmptyContextStub:
+    def get_all_stars(self) -> list[Any]:
+        return []
+
+
 class IdentityProvider:
     def __init__(self, version: str = "1.0") -> None:
         self.version = version
@@ -59,6 +68,11 @@ class IdentityProvider:
             "version": self.version,
             "capabilities": ("authorize_read_only_session",),
             "method": "authorize_quest_session",
+            "timeout_ms": 1000,
+            "permission_identity_mode": "raw_platform_identity_tuple",
+            "permission_identity_fields": ("platform_id", "bot_id", "user_id"),
+            "cross_platform_inheritance": False,
+            "grants_platform_action": False,
         }
 
     def authorize_quest_session(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +144,191 @@ def test_identity_authorization_uses_server_config_and_fails_closed() -> None:
         assert denied.authorized is False
         assert incompatible.requests == []
 
+        invalid_version = IdentityProvider(version="1")
+        adapter = QuestSessionAuthorizationAdapter(
+            ContextStub("astrbot_plugin_identity_guardian", invalid_version),
+            LoggerStub(),
+            trusted_client_id="quest-living-room",
+            trusted_platform_id="aiocqhttp",
+        )
+        denied = await adapter.authorize(
+            api_principal="astrbot-api",
+            declared_client_id="quest-living-room",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert denied.authorized is False
+        assert denied.reason == "contract_incompatible"
+
+    asyncio.run(scenario())
+
+
+def test_missing_series_providers_degrade_without_enabling_private_context() -> None:
+    async def scenario() -> None:
+        logger = LoggerStub()
+        identity = QuestSessionAuthorizationAdapter(
+            EmptyContextStub(),
+            logger,
+            trusted_client_id="",
+            trusted_platform_id="",
+        )
+        assert identity.status_snapshot() == {
+            "contract": "identity.quest_session_authorization@1.0",
+            "configured": False,
+            "status": "trusted_client_id_missing",
+            "default_access": "denied",
+            "api_principal_source": "astrbot_authenticated_request",
+            "client_id_source": "bridge_server_config",
+            "platform_id_source": "bridge_server_config",
+            "unity_trusted_source_fields": False,
+        }
+        decision = await identity.authorize(
+            api_principal="api",
+            declared_client_id="unity",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert decision.authorized is False
+        assert decision.reason == "trusted_client_id_missing"
+
+        knowledge = GlobalKnowledgeAdapter(EmptyContextStub(), logger)
+        assert await knowledge.recall("query") == []
+        assert knowledge.status == "provider_unavailable"
+
+        environment = CachedEnvironmentAdapter(EmptyContextStub(), logger)
+        assert await environment.read() is None
+        assert environment.status == "provider_unavailable"
+
+        runtime = SeriesRuntimeAdapter(EmptyContextStub(), logger)
+        assert (await runtime.refresh())["reason"] == "provider_unavailable"
+
+        voice = VoiceHubTTSAdapter(EmptyContextStub(), logger)
+        assert voice.available is False
+        assert voice.status == "provider_unavailable"
+        with pytest.raises(AdapterUnavailable):
+            _ = [chunk async for chunk in voice.synthesize("hello", emotion="")]
+
+    asyncio.run(scenario())
+
+
+def test_series_adapter_timeouts_degrade_or_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class SlowIdentityProvider(IdentityProvider):
+        def authorize_quest_session(self, request: dict[str, Any]) -> dict[str, Any]:
+            time.sleep(0.05)
+            return super().authorize_quest_session(request)
+
+    class SlowKnowledgeProvider(KnowledgeProvider):
+        async def recall(
+            self, query: str, *, scope: str, top_k: int
+        ) -> list[dict[str, Any]]:
+            await asyncio.sleep(0.2)
+            return await super().recall(query, scope=scope, top_k=top_k)
+
+    class SlowEnvironmentProvider(EnvironmentProvider):
+        def get_cached_opportunity(self, *, allow_stale: bool) -> dict[str, Any]:
+            time.sleep(0.05)
+            return super().get_cached_opportunity(allow_stale=allow_stale)
+
+    class SlowRuntimeProvider(RuntimeProvider):
+        async def get_series_runtime_snapshot(
+            self, *, timeout_seconds: float
+        ) -> dict[str, Any]:
+            await asyncio.sleep(1)
+            return await super().get_series_runtime_snapshot(
+                timeout_seconds=timeout_seconds
+            )
+
+    class SlowVoiceProvider(VoiceProvider):
+        async def render_pcm_wav(
+            self,
+            text: str,
+            *,
+            emotion: str,
+            voice: str,
+            context: str,
+            session_id: str,
+        ) -> dict[str, Any]:
+            await asyncio.sleep(0.05)
+            return await super().render_pcm_wav(
+                text,
+                emotion=emotion,
+                voice=voice,
+                context=context,
+                session_id=session_id,
+            )
+
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            "astrbot_plugin_quest_avatar_bridge.adapters.identity.IDENTITY_TIMEOUT_SECONDS",
+            0.01,
+        )
+        logger = LoggerStub()
+        identity = QuestSessionAuthorizationAdapter(
+            ContextStub("astrbot_plugin_identity_guardian", SlowIdentityProvider()),
+            logger,
+            trusted_client_id="quest",
+            trusted_platform_id="platform",
+        )
+        decision = await identity.authorize(
+            api_principal="api",
+            declared_client_id="quest",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert decision.authorized is False
+        assert decision.reason == "authorization_timeout"
+
+        knowledge = GlobalKnowledgeAdapter(
+            ContextStub("astrbot_plugin_active_learner", SlowKnowledgeProvider()),
+            logger,
+            timeout_seconds=0.1,
+        )
+        assert await knowledge.recall("query") == []
+        assert knowledge.status == "timeout"
+
+        future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+        environment = CachedEnvironmentAdapter(
+            ContextStub(
+                "astrbot_plugin_environment_awareness",
+                SlowEnvironmentProvider(future),
+            ),
+            logger,
+            timeout_seconds=0.01,
+        )
+        assert await environment.read() is None
+        assert environment.status == "timeout"
+
+        runtime = SeriesRuntimeAdapter(
+            ContextStub("astrbot_plugin_update_manager", SlowRuntimeProvider()),
+            logger,
+            timeout_seconds=0.05,
+        )
+        assert (await runtime.refresh())["reason"] == "DIAGNOSTIC_TIMEOUT"
+
+        wav_path = tmp_path / "slow.wav"
+        with wave.open(str(wav_path), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(24_000)
+            output.writeframes(b"\x00\x00" * 2_400)
+        voice_adapter = VoiceHubTTSAdapter(
+            ContextStub("astrbot_plugin_voice_hub", SlowVoiceProvider(wav_path)),
+            logger,
+        )
+        voice_adapter.timeout_seconds = 0.01
+        with pytest.raises(AdapterUnavailable):
+            _ = [
+                chunk
+                async for chunk in voice_adapter.synthesize("hello", emotion="neutral")
+            ]
+        assert voice_adapter.status == "timeout"
+
     asyncio.run(scenario())
 
 
@@ -157,6 +356,14 @@ class KnowledgeProvider:
                 "verified": True,
                 "confidence": 0.9,
                 "private": "must not leak",
+            },
+            {
+                "content": "non-finite evidence",
+                "source": "memory",
+                "score": float("nan"),
+                "topic": "test",
+                "verified": True,
+                "confidence": 0.9,
             },
             {"content": "missing contract fields"},
         ]
@@ -210,7 +417,7 @@ class EnvironmentProvider:
             "kind": "weather_alert",
             "severity": "high",
             "severity_rank": 2,
-            "severity_basis": ["official"],
+            "severity_basis": ("official",),
             "facts": {"temperature": 36},
             "location": {"key": "home", "name": "Home", "timezone": "Asia/Shanghai"},
             "observed_at": None,
@@ -371,10 +578,22 @@ def test_voice_hub_adapter_normalizes_without_deleting_provider_file(
 
 
 def test_malformed_series_payloads_fail_closed(tmp_path: Path) -> None:
+    class MalformedIdentityProvider(IdentityProvider):
+        def quest_session_authorization_contract(self) -> dict[str, Any]:
+            payload = super().quest_session_authorization_contract()
+            payload["permission_identity_fields"] = {"unexpected": True}
+            return payload
+
     class MalformedEnvironmentProvider(EnvironmentProvider):
         def get_cached_opportunity(self, *, allow_stale: bool) -> dict[str, Any]:
             payload = super().get_cached_opportunity(allow_stale=allow_stale)
             payload["severity_rank"] = {"not": "an integer"}
+            return payload
+
+    class UnhashableEnvironmentProvider(EnvironmentProvider):
+        def get_cached_opportunity(self, *, allow_stale: bool) -> dict[str, Any]:
+            payload = super().get_cached_opportunity(allow_stale=allow_stale)
+            payload["severity"] = {"not": "a string"}
             return payload
 
     class MalformedRuntimeProvider(RuntimeProvider):
@@ -385,6 +604,16 @@ def test_malformed_series_payloads_fail_closed(tmp_path: Path) -> None:
                 timeout_seconds=timeout_seconds
             )
             payload["unexpected"] = True
+            return payload
+
+    class UnhashableRuntimeProvider(RuntimeProvider):
+        async def get_series_runtime_snapshot(
+            self, *, timeout_seconds: float
+        ) -> dict[str, Any]:
+            payload = await super().get_series_runtime_snapshot(
+                timeout_seconds=timeout_seconds
+            )
+            payload["status"] = {"not": "a string"}
             return payload
 
     class ErrorVoiceProvider(VoiceProvider):
@@ -408,6 +637,25 @@ def test_malformed_series_payloads_fail_closed(tmp_path: Path) -> None:
             return payload
 
     async def scenario() -> None:
+        identity = QuestSessionAuthorizationAdapter(
+            ContextStub(
+                "astrbot_plugin_identity_guardian",
+                MalformedIdentityProvider(),
+            ),
+            LoggerStub(),
+            trusted_client_id="quest",
+            trusted_platform_id="platform",
+        )
+        decision = await identity.authorize(
+            api_principal="api",
+            declared_client_id="quest",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert decision.authorized is False
+        assert decision.reason == "contract_incompatible"
+
         future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
         environment = CachedEnvironmentAdapter(
             ContextStub(
@@ -419,11 +667,29 @@ def test_malformed_series_payloads_fail_closed(tmp_path: Path) -> None:
         )
         assert await environment.read() is None
 
+        unhashable_environment = CachedEnvironmentAdapter(
+            ContextStub(
+                "astrbot_plugin_environment_awareness",
+                UnhashableEnvironmentProvider(future),
+            ),
+            LoggerStub(),
+            timeout_seconds=0.5,
+        )
+        assert await unhashable_environment.read() is None
+
         runtime = SeriesRuntimeAdapter(
             ContextStub("astrbot_plugin_update_manager", MalformedRuntimeProvider()),
             LoggerStub(),
         )
         snapshot = await runtime.refresh()
+        assert snapshot["status"] == "error"
+        assert snapshot["reason"] == "DIAGNOSTIC_INVALID"
+
+        unhashable_runtime = SeriesRuntimeAdapter(
+            ContextStub("astrbot_plugin_update_manager", UnhashableRuntimeProvider()),
+            LoggerStub(),
+        )
+        snapshot = await unhashable_runtime.refresh()
         assert snapshot["status"] == "error"
         assert snapshot["reason"] == "DIAGNOSTIC_INVALID"
 

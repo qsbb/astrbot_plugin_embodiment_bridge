@@ -21,6 +21,7 @@ from ..adapters.tts import (
     OUTPUT_SAMPLE_RATE,
     TTSAdapter,
 )
+from ..adapters.voice_hub_tts import VoiceHubTTSAdapter
 from .interaction_policy import InteractionPolicy
 from .models import (
     PROTOCOL_VERSION,
@@ -47,6 +48,7 @@ class TurnOrchestrator:
         knowledge: GlobalKnowledgeAdapter | None = None,
         environment: CachedEnvironmentAdapter | None = None,
         runtime: SeriesRuntimeAdapter | None = None,
+        voice_audio: VoiceHubTTSAdapter | None = None,
         output_chunk_ms: int = 50,
     ) -> None:
         self.sessions = sessions
@@ -60,6 +62,7 @@ class TurnOrchestrator:
         self.knowledge = knowledge
         self.environment = environment
         self.runtime = runtime
+        self.voice_audio = voice_audio
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
     async def authorize_session(
@@ -366,7 +369,7 @@ class TurnOrchestrator:
                 bot_id=session.bot_id,
                 user_id=session.user_id,
                 group_id=session.group_id,
-                relationship_profile_id="",
+                relationship_profile_id=session.relationship_profile_id,
             )
         except asyncio.CancelledError:
             raise
@@ -391,21 +394,46 @@ class TurnOrchestrator:
             return None
         return await self.environment.read()
 
+    async def refresh_runtime_diagnostics(self) -> dict[str, Any]:
+        if self.runtime is None:
+            return {
+                "contract": "update_manager.series_runtime@1.0",
+                "status": "disabled",
+                "reason": "",
+                "members": [],
+                "healthy": 0,
+                "total": 0,
+            }
+        return await self.runtime.refresh()
+
     def integration_status(self) -> dict[str, Any]:
         return {
-            "identity": self.identity.status
+            "identity": self.identity.status_snapshot()
             if self.identity is not None
-            else "disabled",
-            "knowledge": self.knowledge.status
+            else {
+                "configured": False,
+                "status": "adapter_unavailable",
+                "default_access": "denied",
+            },
+            "knowledge": self.knowledge.status_snapshot()
             if self.knowledge is not None
-            else "disabled",
-            "relationship": "authorization_gated",
-            "environment": self.environment.status
+            else {"enabled": False, "status": "disabled", "scope": "global"},
+            "relationship": self.relationship.status_snapshot(),
+            "environment": self.environment.status_snapshot()
             if self.environment is not None
-            else "disabled",
+            else {"enabled": False, "status": "disabled", "mode": "cached_only"},
+            "voice_audio_output": self.voice_audio.status_snapshot()
+            if self.voice_audio is not None
+            else {"enabled": False, "available": False, "status": "disabled"},
             "runtime": self.runtime.snapshot
             if self.runtime is not None
             else {"status": "disabled"},
+            "not_consumed": {
+                "conversation_proactive_delivery": True,
+                "orchestration_hub_resolver": True,
+                "knowledge_private_scope": True,
+                "environment_realtime_private_methods": True,
+            },
         }
 
     async def _emit(

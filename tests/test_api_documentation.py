@@ -51,6 +51,18 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         "tts_failed",
     ):
         assert f"`{error_code}`" in document
+    for integration_contract in (
+        "identity.quest_session_authorization@1.0",
+        "active_learner.knowledge@1.0",
+        "relationship.snapshot@1.0",
+        "environment.opportunity@1.0",
+        "voice.audio_output@1.0",
+        "update_manager.series_runtime@1.0",
+    ):
+        assert integration_contract in document
+    assert '"protected_context"' in document
+    assert '"unity_trusted_source_fields": false' in document
+    assert "不消费带事件/投递副作用的 `voice.delivery@1.0`" in document
 
 
 def test_local_integration_document_keeps_security_and_fixture_contract() -> None:
@@ -66,5 +78,17 @@ def test_local_integration_document_keeps_security_and_fixture_contract() -> Non
         "fixtures/protocol_v1/manifest.json",
         "不启用宽泛 CORS",
         "fake 只替代外部 LLM/STT/TTS",
+        "voice.audio_output@1.0",
+        "trusted_client_id",
+        "trusted_platform_id",
+        "pairing_exchange_proxy_url",
+        "pairing_trusted_proxy_ip",
+        "allow_private_http_pairing",
     ):
         assert required_text in document
+
+    bootstrap_audit = (
+        PLUGIN_ROOT / "docs" / "PAIRING_BOOTSTRAP_AUDIT_CN.md"
+    ).read_text(encoding="utf-8")
+    assert "request.client_host" in bootstrap_audit
+    assert "register_web_api(..., auth=False)" in bootstrap_audit

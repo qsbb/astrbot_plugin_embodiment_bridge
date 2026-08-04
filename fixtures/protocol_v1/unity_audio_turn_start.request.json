@@ -1,0 +1,8 @@
+{
+  "type": "turn.start",
+  "protocol_version": "1.0",
+  "session_id": "unity-session",
+  "turn_id": "unity-audio-turn",
+  "text": null,
+  "cancel_previous": true
+}

@@ -3,7 +3,14 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 
 PROTOCOL_VERSION = "1.0"
@@ -83,6 +90,13 @@ class SessionStartRequest(StrictModel):
     group_id: OptionalScope = ""
     relationship_profile_id: OptionalScope = ""
 
+    @field_validator("group_id", mode="before")
+    @classmethod
+    def reject_whitespace_only_group_id(cls, value: object) -> object:
+        if isinstance(value, str) and value and not value.strip():
+            raise ValueError("group_id must be an exact empty string or a real scope")
+        return value
+
     @model_validator(mode="after")
     def require_relationship_scope(self) -> SessionStartRequest:
         if not self.user_id or not self.bot_id:
@@ -95,8 +109,18 @@ class TurnStartRequest(StrictModel):
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     session_id: Identifier
     turn_id: Identifier
-    text: str | None = Field(default=None, min_length=1, max_length=8000)
+    text: str | None = Field(default=None, min_length=1, max_length=8192)
     cancel_previous: bool = True
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def normalize_unity_audio_turn_text(cls, value: object) -> object:
+        # Unity JsonUtility versions differ on whether a null string is omitted,
+        # emitted as null, or represented as an empty string. All three shapes
+        # mean "await PCM audio"; whitespace-only user text remains invalid.
+        if value == "":
+            return None
+        return value
 
 
 class AudioChunkRequest(StrictModel):

@@ -1,4 +1,3 @@
-const STORAGE_KEY = "quest-avatar-pairing-form-v1";
 let bridge = null;
 let pairing = null;
 let countdownTimer = null;
@@ -6,53 +5,11 @@ let statusTimer = null;
 let statusFailCount = 0;
 let statusInFlight = false;
 
-function readStoredForm() {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "{}");
-    return value && typeof value === "object" ? value : {};
-  } catch (_error) {
-    return {};
-  }
-}
-
-function storeNonSecretForm() {
-  const value = {
-    public_url: document.getElementById("public-url").value.trim(),
-    port: document.getElementById("port").value.trim(),
-    client_id: document.getElementById("client-id").value.trim(),
-    user_id: document.getElementById("user-id").value.trim(),
-    bot_id: document.getElementById("bot-id").value.trim(),
-    group_id: document.getElementById("group-id").value.trim(),
-    relationship_profile_id: document.getElementById("relationship-profile-id").value.trim(),
-    ttl_seconds: document.getElementById("ttl").value
-  };
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-  } catch (_error) {
-    // Pairing still works when the iframe blocks storage.
-  }
-}
-
-function restoreForm() {
-  const stored = readStoredForm();
-  const fields = {
-    "public-url": stored.public_url,
-    port: stored.port,
-    "client-id": stored.client_id,
-    "user-id": stored.user_id,
-    "bot-id": stored.bot_id,
-    "group-id": stored.group_id,
-    "relationship-profile-id": stored.relationship_profile_id,
-    ttl: stored.ttl_seconds
-  };
-  Object.entries(fields).forEach(([id, value]) => {
-    if (typeof value === "string" && value) document.getElementById(id).value = value;
-  });
-}
-
 async function resolveBridge(timeout = 3000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
-  if (typeof window.waitForAstrBotBridge === "function") return window.waitForAstrBotBridge(timeout);
+  if (typeof window.waitForAstrBotBridge === "function") {
+    return window.waitForAstrBotBridge(timeout);
+  }
   const started = Date.now();
   while (Date.now() - started < timeout) {
     await new Promise((resolve) => window.setTimeout(resolve, 50));
@@ -64,7 +21,9 @@ async function resolveBridge(timeout = 3000) {
 function parseResponse(value) {
   const data = typeof value === "string" ? JSON.parse(value) : value;
   if (data?.success === false || data?.status === "error") {
-    throw new Error(data.message || data.detail || data.error || data?.data?.code || "请求失败");
+    throw new Error(
+      data.message || data.detail || data.error || data?.data?.code || "请求失败"
+    );
   }
   return data;
 }
@@ -106,7 +65,7 @@ function showStartupError(error) {
 function setButtonBusy(button, busy, busyText) {
   if (busy) {
     if (button.getAttribute("aria-busy") === "true") return false;
-    button.dataset.idleText = button.textContent;
+    button.dataset.idleText = button.textContent.trim();
     button.textContent = busyText;
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
@@ -114,35 +73,14 @@ function setButtonBusy(button, busy, busyText) {
   }
   button.textContent = button.dataset.idleText || button.textContent;
   button.setAttribute("aria-busy", "false");
-  button.disabled = !pairing || pairing.state !== "waiting";
   return true;
-}
-
-function normalizePublicUrl() {
-  const node = document.getElementById("public-url");
-  const value = node.value.trim();
-  if (value && !value.includes("://")) node.value = `https://${value}`;
-}
-
-function requestPayload() {
-  const portValue = document.getElementById("port").value.trim();
-  return {
-    protocol_version: "1.0",
-    public_url: document.getElementById("public-url").value.trim(),
-    port: portValue ? Number(portValue) : null,
-    astrbot_api_key: document.getElementById("astrbot-api-key").value,
-    client_id: document.getElementById("client-id").value.trim(),
-    user_id: document.getElementById("user-id").value.trim(),
-    bot_id: document.getElementById("bot-id").value.trim(),
-    group_id: document.getElementById("group-id").value.trim(),
-    relationship_profile_id: document.getElementById("relationship-profile-id").value.trim(),
-    ttl_seconds: Number(document.getElementById("ttl").value)
-  };
 }
 
 function formatRemaining(seconds) {
   const remaining = Math.max(0, Math.ceil(seconds));
-  return `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(remaining % 60).padStart(2, "0")}`;
+  return `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(
+    remaining % 60
+  ).padStart(2, "0")}`;
 }
 
 function renderState(state) {
@@ -164,9 +102,8 @@ function renderState(state) {
   document.getElementById("copy-code").disabled = !active;
   document.getElementById("revoke").disabled = !active;
   if (normalizedState === "consumed") {
-    const clientId = document.getElementById("client-id").value.trim() || "Quest";
-    document.getElementById("recent-binding").textContent = `${clientId} · 已连接`;
-    toast("Quest 已获取配置并完成一次性兑换");
+    document.getElementById("recent-binding").textContent = "Quest · 已连接";
+    toast("Quest 已获取配置并完成绑定");
   }
   if (!active) stopPolling();
 }
@@ -183,8 +120,10 @@ function showPairing(result) {
   document.getElementById("pairing-empty").hidden = true;
   document.getElementById("pairing-result").hidden = false;
   document.getElementById("qr-image").src = result.qr_svg_data_uri;
-  document.getElementById("short-code").textContent = `${result.short_code.slice(0, 3)} ${result.short_code.slice(3)}`;
-  document.getElementById("exchange-url").textContent = result.exchange_url;
+  document.getElementById("short-code").textContent = `${result.short_code.slice(
+    0,
+    3
+  )} ${result.short_code.slice(3)}`;
   renderState(result.state || "waiting");
   updateCountdown();
   window.clearInterval(countdownTimer);
@@ -194,7 +133,9 @@ function showPairing(result) {
 
 async function refreshStatus() {
   if (!pairing || pairing.state !== "waiting") return;
-  const response = await apiPost("pairing/status", { pairing_id: pairing.pairing_id });
+  const response = await apiPost("pairing/status", {
+    pairing_id: pairing.pairing_id
+  });
   const current = response.pairing;
   pairing.expires_at = current.expires_at;
   if (current.state !== pairing.state) renderState(current.state);
@@ -211,7 +152,9 @@ function startPolling() {
       })
       .catch((error) => {
         statusFailCount += 1;
-        if (statusFailCount === 3) toast(`状态读取连续失败：${error.message}（仍在自动重试）`, true);
+        if (statusFailCount === 3) {
+          toast(`状态读取连续失败：${error.message}（仍在自动重试）`, true);
+        }
       })
       .finally(() => {
         statusInFlight = false;
@@ -226,23 +169,19 @@ function stopPolling() {
 
 async function createPairing(event) {
   event.preventDefault();
-  normalizePublicUrl();
-  const form = event.currentTarget;
-  if (!form.reportValidity()) return;
   const button = document.getElementById("generate-button");
-  button.disabled = true;
-  button.textContent = "正在生成…";
+  if (!setButtonBusy(button, true, "正在生成…")) return;
   try {
-    storeNonSecretForm();
-    const response = await apiPost("pairing/create", requestPayload());
-    document.getElementById("astrbot-api-key").value = "";
+    const response = await apiPost("pairing/create", {
+      protocol_version: "1.0"
+    });
     showPairing(response.pairing);
     toast("一次性配对码已生成");
   } catch (error) {
     toast(`生成失败：${error.message}`, true);
   } finally {
+    setButtonBusy(button, false);
     button.disabled = false;
-    button.textContent = "生成配对";
   }
 }
 
@@ -251,13 +190,16 @@ async function revokePairing() {
   const button = document.getElementById("revoke");
   if (!setButtonBusy(button, true, "正在撤销…")) return;
   try {
-    const response = await apiPost("pairing/revoke", { pairing_id: pairing.pairing_id });
+    const response = await apiPost("pairing/revoke", {
+      pairing_id: pairing.pairing_id
+    });
     renderState(response.pairing.state);
     toast("配对已撤销");
   } catch (error) {
     toast(`撤销失败：${error.message}`, true);
   } finally {
     setButtonBusy(button, false);
+    button.disabled = !pairing || pairing.state !== "waiting";
   }
 }
 
@@ -272,31 +214,44 @@ async function copyCode() {
     window.prompt("复制 6 位配对码", pairing.short_code);
   } finally {
     setButtonBusy(button, false);
+    button.disabled = !pairing || pairing.state !== "waiting";
   }
+}
+
+function readinessMessage(reason) {
+  const messages = {
+    bridge_key_missing: "Bridge 长期密钥尚未配置",
+    quick_pairing_defaults_missing: "快速绑定服务端配置尚未完成",
+    pairing_listener_public_url_missing: "快速绑定公开入口尚未配置",
+    pairing_bootstrap_unavailable: "快速绑定交换入口不可用"
+  };
+  return messages[reason] || "快速绑定服务当前不可用";
 }
 
 async function loadOverview() {
   const overview = await apiGet("pairing/overview");
-  if (!overview.bridge_key_configured) {
-    setRuntimeState("error", "Bridge 长期密钥尚未配置");
-    document.getElementById("generate-button").disabled = true;
-    document.getElementById("form-hint").textContent = "请先在插件配置中设置至少 32 字符的 Bridge API Key。";
+  const button = document.getElementById("generate-button");
+  if (overview.quick_pairing_ready !== true) {
+    const message = readinessMessage(overview.quick_pairing_reason);
+    setRuntimeState("error", message);
+    document.getElementById("form-hint").textContent =
+      "请先在 Bridge 插件配置中完成快速绑定服务设置。";
+    button.disabled = true;
     return;
   }
   setRuntimeState("ready", "Bridge 配对服务已就绪");
-  if (overview.trusted_client_id) document.getElementById("client-id").value = overview.trusted_client_id;
-  document.getElementById("trusted-platform").textContent = overview.trusted_platform_id || "未配置（受保护关系上下文将关闭）";
+  document.getElementById("form-hint").textContent =
+    "在 Quest 菜单中选择 PAIR BACKEND，然后扫描生成的二维码。";
+  button.disabled = false;
 }
 
 function bindEvents() {
   document.getElementById("pairing-form").addEventListener("submit", createPairing);
-  document.getElementById("public-url").addEventListener("blur", normalizePublicUrl);
   document.getElementById("copy-code").addEventListener("click", copyCode);
   document.getElementById("revoke").addEventListener("click", revokePairing);
 }
 
 async function init() {
-  restoreForm();
   bridge = await resolveBridge();
   if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
   await bridge.ready();

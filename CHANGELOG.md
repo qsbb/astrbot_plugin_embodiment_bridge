@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-04
+
+### Added
+
+- 新增 Bridge 插件独立 MiMo STT，可直接使用插件专属配置调用 `mimo-v2.5-asr`，不读取、不启用也不修改 AstrBot 全局 STT Provider。
+- 新增服务端快速绑定默认值：连接地址、Quest 专用 API Key、客户端与会话身份、TTL 均由本插件专属配置注入，不进入 Page、二维码、状态响应或日志。
+
+### Changed
+
+- 新增默认关闭的内置 aiohttp Quest listener，可在 `initialize()` 中监听容器 8520，并在 `terminate()` 中幂等释放 site、runner、client session、活动流和端口。
+- 内置 listener 只匿名接受精确 `POST pairing/exchange`，并直接复用现有 `PairingManager` 的 token/短码、IP 绑定、TTL、撤销、单次消费与双重限速状态。
+- 配对后的 health/session/SSE/turn/audio/interaction/interrupt/close 仅按 method+path allowlist 流式代理到固定 loopback HTTP 上游；不代理 Dashboard、其他插件或配对管理接口。
+- 配对交换现在按 AstrBot 4.26.8 公开请求接口读取 `request.client_host`，不再使用不存在的 `request.remote_addr`；可信代理来源和 Quest IP 绑定因此能在真实插件路由中正常工作。
+- 首次配对不再假设 `register_web_api` 支持匿名 exchange；内置 listener 是私网首选入口，旧精确反向代理配置保留为兼容 fallback；两者都不可用时 Page 失败关闭。
+- 快速绑定 Page 精简为生成二维码、短码、状态、倒计时、复制和撤销；不再显示或采集 Quest IP、长期密钥、平台/客户端身份、会话 ID、角色设置或有效期选项。
+- 私网 HTTP 配对要求服务端显式开关和私网 IP 字面量，成功配置才返回 `allow_insecure_http=true`；公网地址和域名仍强制 HTTPS。
+- 加固“知、序、情、境、声、核”consumer：契约版本格式、能力、方法、安全元数据和返回 schema 均显式校验；缺失、超时和畸形响应按契约降级。
+- `session/start` 响应新增不含身份值的 `protected_context` 授权状态；未配置服务端可信客户端/平台来源时默认失败关闭，基础 Quest 对话保持可用。
+- `GET /health` 现在显式刷新“核”的只读运行态快照，并公开 global-only、cached-only、关系授权门控及 Voice Hub PCM 可用性。
+
+### Security
+
+- 一次性配对保留每来源和全局双重限速；快速绑定依靠高熵单次 token、短 TTL 和单次消费，兼容创建请求仍可显式绑定 Quest IP。内置 exchange 使用直连 peer IP，官方注册路由仍要求 AstrBot 身份，旧外部代理路径仅在可信直连代理时接受来源覆盖。
+- 内置 listener 不持有、不注入 Dashboard JWT 或代理服务 Key，不信任任何 Forwarded/X-Forwarded/X-Real-IP 来源头，也不记录认证头、token、短码、请求体或完整查询参数。
+- listener 端口占用、配置错误或 loopback 上游不可达只产生脱敏 degraded 状态，不阻止插件其余官方路由加载。
+- 拒绝空白群作用域、跨平台 private knowledge、实时环境私有方法、主动消息投递和未注册枢服务；不信任 Unity 自报的 API 主体或平台身份。
+
 ## 0.1.1 - 2026-08-03
 
 ### Added

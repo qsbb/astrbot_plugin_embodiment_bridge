@@ -42,13 +42,42 @@ class QuestSessionAuthorizationAdapter:
         self.logger = logger
         self.trusted_client_id = trusted_client_id.strip()
         self.trusted_platform_id = trusted_platform_id.strip()
-        self.status = "not_checked"
+        self.status = (
+            "ready_for_authorization" if self.configured else self.configuration_reason
+        )
         self._missing_logged = False
         self._incompatible_logged = False
 
     @property
     def configured(self) -> bool:
-        return bool(self.trusted_client_id and self.trusted_platform_id)
+        return self.configuration_reason == "configured"
+
+    @property
+    def configuration_reason(self) -> str:
+        if not self.trusted_client_id:
+            return "trusted_client_id_missing"
+        if not self.trusted_platform_id:
+            return "trusted_platform_id_missing"
+        if (
+            "|" in self.trusted_client_id
+            or "|" in self.trusted_platform_id
+            or len(self.trusted_client_id) > 128
+            or len(self.trusted_platform_id) > 128
+        ):
+            return "trusted_identity_config_invalid"
+        return "configured"
+
+    def status_snapshot(self) -> dict[str, Any]:
+        return {
+            "contract": f"{IDENTITY_CONTRACT_NAME}@1.0",
+            "configured": self.configured,
+            "status": self.status,
+            "default_access": "denied",
+            "api_principal_source": "astrbot_authenticated_request",
+            "client_id_source": "bridge_server_config",
+            "platform_id_source": "bridge_server_config",
+            "unity_trusted_source_fields": False,
+        }
 
     async def authorize(
         self,
@@ -61,7 +90,7 @@ class QuestSessionAuthorizationAdapter:
     ) -> ProtectedContextDecision:
         principal = str(api_principal or "").strip()
         if not self.configured:
-            self.status = "consumer_not_configured"
+            self.status = self.configuration_reason
             return ProtectedContextDecision(False, self.status)
         if not principal:
             self.status = "api_principal_missing"
@@ -80,17 +109,7 @@ class QuestSessionAuthorizationAdapter:
                 self._missing_logged = True
             return ProtectedContextDecision(False, self.status)
 
-        try:
-            contract = provider.quest_session_authorization_contract()
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            contract = None
-        if not contract_matches(
-            contract,
-            name=IDENTITY_CONTRACT_NAME,
-            major=IDENTITY_CONTRACT_MAJOR,
-            capability=IDENTITY_CAPABILITY,
-            method=IDENTITY_METHOD,
-        ):
+        if not self._contract_compatible(provider):
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
@@ -157,6 +176,34 @@ class QuestSessionAuthorizationAdapter:
 
         self.status = "authorized"
         return ProtectedContextDecision(True, "authorized_private_owner_identity")
+
+    @staticmethod
+    def _contract_compatible(provider: Any) -> bool:
+        try:
+            contract = provider.quest_session_authorization_contract()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+        identity_fields = (
+            contract.get("permission_identity_fields")
+            if isinstance(contract, dict)
+            else None
+        )
+        return bool(
+            contract_matches(
+                contract,
+                name=IDENTITY_CONTRACT_NAME,
+                major=IDENTITY_CONTRACT_MAJOR,
+                capability=IDENTITY_CAPABILITY,
+                method=IDENTITY_METHOD,
+            )
+            and contract.get("timeout_ms") == 1000
+            and contract.get("permission_identity_mode")
+            == "raw_platform_identity_tuple"
+            and isinstance(identity_fields, (list, tuple))
+            and tuple(identity_fields) == ("platform_id", "bot_id", "user_id")
+            and contract.get("cross_platform_inheritance") is False
+            and contract.get("grants_platform_action") is False
+        )
 
     async def close(self) -> None:
         return None

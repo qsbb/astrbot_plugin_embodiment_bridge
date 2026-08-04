@@ -93,6 +93,10 @@ class BoundRequest:
     def headers(self) -> Any:
         return self.value.headers
 
+    @property
+    def client_host(self) -> str:
+        return str(self.value.remote or "")
+
     async def body(self) -> bytes:
         return await self.value.read()
 
@@ -127,6 +131,10 @@ class RequestProxy:
     def headers(self) -> Any:
         return self._bound().headers
 
+    @property
+    def client_host(self) -> str:
+        return self._bound().client_host
+
     async def body(self) -> bytes:
         return await self._bound().body()
 
@@ -134,6 +142,8 @@ class RequestProxy:
 class ContextStub:
     def __init__(self) -> None:
         self.routes: list[tuple[str, Any, list[str], str]] = []
+        self.providers = [ChatProviderStub()]
+        self.stars: list[Any] = []
 
     def register_web_api(
         self,
@@ -145,7 +155,26 @@ class ContextStub:
         self.routes.append((route, handler, methods, description))
 
     def get_all_stars(self) -> list[Any]:
-        return []
+        return self.stars
+
+    def get_all_providers(self) -> list[Any]:
+        return self.providers
+
+
+class ChatProviderStub:
+    def meta(self) -> Any:
+        return types.SimpleNamespace(
+            id="fake-provider",
+            model="contract-model",
+            type="openai",
+            provider_type="chat_completion",
+        )
+
+
+class NativeConfigStub(dict[str, Any]):
+    async def save_config_async(self, changes: dict[str, Any]) -> bool:
+        self.update(changes)
+        return True
 
 
 class FakeLLMAdapter:
@@ -188,6 +217,7 @@ class FakeLLMAdapter:
 class FakeSTTAdapter:
     def __init__(self) -> None:
         self.fail_next = False
+        self.expected_pcm16 = b"\x00\x00\x01\x00"
         self.closed = False
 
     @property
@@ -195,7 +225,7 @@ class FakeSTTAdapter:
         return True
 
     async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
-        assert pcm16 == b"\x00\x00\x01\x00"
+        assert pcm16 == self.expected_pcm16
         assert sample_rate == 16_000
         if self.fail_next:
             self.fail_next = False
@@ -254,7 +284,12 @@ class HarnessBundle:
     tts: FakeTTSAdapter
 
 
-def build_plugin(monkeypatch: Any, tmp_path: Path) -> HarnessBundle:
+def build_plugin(
+    monkeypatch: Any,
+    tmp_path: Path,
+    *,
+    config_overrides: dict[str, Any] | None = None,
+) -> HarnessBundle:
     request_proxy = RequestProxy()
     api = types.ModuleType("astrbot.api")
     api.AstrBotConfig = dict
@@ -314,14 +349,22 @@ def build_plugin(monkeypatch: Any, tmp_path: Path) -> HarnessBundle:
 
     main_module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
     context = ContextStub()
-    plugin = main_module.QuestAvatarBridgePlugin(
-        context,
+    config: NativeConfigStub = NativeConfigStub(
         {
             "bridge_api_key": BRIDGE_API_KEY,
             "chat_provider_id": "fake-provider",
             "gesture_cooldown_ms": 0,
-        },
+            "pairing_exchange_proxy_url": (
+                "https://pair.example.com/quest/pairing/exchange"
+            ),
+            "pairing_public_url": "https://bot.example.com",
+            "pairing_astrbot_api_key": "quick-pair-plugin-scope-key",
+            "pairing_user_id": "1483904397",
+            "pairing_bot_id": "2058141897",
+        }
     )
+    config.update(config_overrides or {})
+    plugin = main_module.QuestAvatarBridgePlugin(context, config)
     llm = FakeLLMAdapter()
     stt = FakeSTTAdapter()
     tts = FakeTTSAdapter()

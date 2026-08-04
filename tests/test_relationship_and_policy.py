@@ -32,6 +32,7 @@ class RelationshipProviderStub:
     def __init__(self, version: str = "1.0") -> None:
         self.version = version
         self.calls = 0
+        self.requests: list[dict[str, Any]] = []
 
     def relationship_snapshot_contract(self) -> dict[str, Any]:
         return {
@@ -50,16 +51,29 @@ class RelationshipProviderStub:
         relationship_profile_id: str | None,
         person_id: str,
     ) -> dict[str, Any]:
-        del bot_id, user_id, group_id, relationship_profile_id, person_id
         self.calls += 1
+        self.requests.append(
+            {
+                "bot_id": bot_id,
+                "user_id": user_id,
+                "group_id": group_id,
+                "relationship_profile_id": relationship_profile_id,
+                "person_id": person_id,
+            }
+        )
         return {
             "version": "1.0",
             "mood": "normal",
             "willingness": 80,
             "relationship_tier": "familiar",
-            "behavior": {"boundary": "normal"},
-            "silence": {"suggested": False},
-            "raw_affinity": 99,
+            "behavior": {
+                "tone": "warm",
+                "length": "short",
+                "initiative": "normal",
+                "boundary": "normal",
+                "followup": "natural",
+            },
+            "silence": {"suggested": False, "reason": "", "strength": 0},
         }
 
 
@@ -80,17 +94,29 @@ class ContextStub:
 def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
     async def scenario() -> None:
         provider = RelationshipProviderStub()
-        adapter = RelationshipSnapshotAdapter(ContextStub(provider), LoggerStub())
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(provider),
+            LoggerStub(),
+            person_id="person-a",
+        )
         snapshot = await adapter.read(
             bot_id="bot",
             user_id="user",
             group_id="",
-            relationship_profile_id="",
+            relationship_profile_id="persona-a",
         )
         assert snapshot is not None
         assert snapshot["relationship_tier"] == "familiar"
-        assert "raw_affinity" not in snapshot
         assert provider.calls == 1
+        assert provider.requests == [
+            {
+                "bot_id": "bot",
+                "user_id": "user",
+                "group_id": None,
+                "relationship_profile_id": "persona-a",
+                "person_id": "person-a",
+            }
+        ]
 
         incompatible = RelationshipProviderStub(version="2.0")
         logger = LoggerStub()
@@ -106,6 +132,90 @@ def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
         )
         assert incompatible.calls == 0
         assert logger.warnings
+
+        malformed = RelationshipProviderStub()
+
+        async def malformed_snapshot(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            payload = await RelationshipProviderStub.get_relationship_snapshot(
+                malformed, *args, **kwargs
+            )
+            payload["raw_affinity"] = 99
+            return payload
+
+        malformed.get_relationship_snapshot = malformed_snapshot  # type: ignore[method-assign]
+        adapter = RelationshipSnapshotAdapter(ContextStub(malformed), LoggerStub())
+        assert (
+            await adapter.read(
+                bot_id="bot",
+                user_id="user",
+                group_id="",
+                relationship_profile_id="",
+            )
+            is None
+        )
+        assert adapter.status == "invalid_response"
+
+        unhashable = RelationshipProviderStub()
+
+        async def unhashable_snapshot(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            payload = await RelationshipProviderStub.get_relationship_snapshot(
+                unhashable, *args, **kwargs
+            )
+            payload["relationship_tier"] = {"not": "a string"}
+            return payload
+
+        unhashable.get_relationship_snapshot = unhashable_snapshot  # type: ignore[method-assign]
+        adapter = RelationshipSnapshotAdapter(ContextStub(unhashable), LoggerStub())
+        assert (
+            await adapter.read(
+                bot_id="bot",
+                user_id="user",
+                group_id="",
+                relationship_profile_id="",
+            )
+            is None
+        )
+        assert adapter.status == "invalid_response"
+
+    asyncio.run(scenario())
+
+
+def test_relationship_timeout_degrades_to_neutral_context() -> None:
+    class SlowRelationshipProvider(RelationshipProviderStub):
+        async def get_relationship_snapshot(
+            self,
+            bot_id: str,
+            user_id: str,
+            group_id: str | None,
+            *,
+            relationship_profile_id: str | None,
+            person_id: str,
+        ) -> dict[str, Any]:
+            await asyncio.sleep(0.05)
+            return await super().get_relationship_snapshot(
+                bot_id,
+                user_id,
+                group_id,
+                relationship_profile_id=relationship_profile_id,
+                person_id=person_id,
+            )
+
+    async def scenario() -> None:
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(SlowRelationshipProvider()),
+            LoggerStub(),
+            timeout_seconds=0.01,
+        )
+        assert (
+            await adapter.read(
+                bot_id="bot",
+                user_id="user",
+                group_id="",
+                relationship_profile_id="",
+            )
+            is None
+        )
+        assert adapter.status == "timeout"
 
     asyncio.run(scenario())
 

@@ -15,6 +15,9 @@ def test_pairing_page_is_discoverable_and_uses_page_bridge() -> None:
         )
     )
     assert metadata["pages"]["pairing"]["title"] == "Quest 快速绑定"
+    assert metadata["pages"]["pairing"]["description"] == (
+        "生成一次性二维码或 6 位配对码，在 Quest 中完成绑定"
+    )
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
@@ -32,15 +35,6 @@ def test_pairing_page_contains_complete_safe_workflow() -> None:
     css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
 
     for element_id in (
-        "public-url",
-        "port",
-        "astrbot-api-key",
-        "client-id",
-        "user-id",
-        "bot-id",
-        "group-id",
-        "relationship-profile-id",
-        "ttl",
         "generate-button",
         "qr-image",
         "short-code",
@@ -50,21 +44,53 @@ def test_pairing_page_contains_complete_safe_workflow() -> None:
     ):
         assert f'id="{element_id}"' in html
 
-    assert 'autocomplete="new-password"' in html
+    for removed_id in (
+        "chat-provider-id",
+        "relationship-person-select",
+        "public-url",
+        "port",
+        "expected-remote-ip",
+        "allow-insecure-http",
+        "astrbot-api-key",
+        "trusted-platform",
+        "client-id",
+        "user-id",
+        "bot-id",
+        "group-id",
+        "relationship-profile-id",
+        "ttl",
+    ):
+        assert f'id="{removed_id}"' not in html
+
+    for removed_label in (
+        "Quest IP",
+        "AstrBot API Key",
+        "平台身份",
+        "客户端 ID",
+        "用户 ID",
+        "机器人 ID",
+        "群组 ID",
+        "关系档案 ID",
+        "有效期",
+    ):
+        assert removed_label not in html
+
     assert "二维码不包含长期密钥，兑换后立即失效" in html
-    assert "PAIR BACKEND" in html
-    assert 'apiPost("pairing/create", requestPayload())' in js
+    assert "PAIR BACKEND" in html + js
+    assert 'apiPost("pairing/create", {' in js
+    assert 'protocol_version: "1.0"' in js
     assert 'apiPost("pairing/status"' in js
     assert 'apiPost("pairing/revoke"' in js
     assert "pairing/exchange" not in js
-    assert 'document.getElementById("astrbot-api-key").value = ""' in js
-
-    storage_function = js[
-        js.index("function storeNonSecretForm()") : js.index("function restoreForm()")
-    ]
-    assert "astrbot-api-key" not in storage_function
-    assert "astrbot_api_key" not in storage_function
-    assert "localStorage" in storage_function
+    assert "pairing/operator-settings" not in js
+    assert "pairing/identity-candidates" not in js
+    assert "pairing/identity-selection" not in js
+    assert "astrbot_api_key" not in html + js
+    assert "expected_remote_ip" not in html + js
+    assert "trusted_client_id" not in html + js
+    assert "trusted_platform_id" not in html + js
+    assert "localStorage" not in js
+    assert "quick_pairing_ready" in js
     assert "qr_svg_data_uri" in js
     assert "window.setInterval" in js
     assert "function setButtonBusy" in js
@@ -89,6 +115,14 @@ def test_pairing_page_has_no_external_runtime_assets_or_embedded_secrets() -> No
     assert "bridge_api_key" not in html
     assert "token=" not in html
     assert "console.log" not in js
+    for forbidden in (
+        "provider_config",
+        "/api/v1/providers",
+        "identity_registry",
+        "_page_identities",
+        "/astrbot_plugin_relationship/identities",
+    ):
+        assert forbidden not in html + js
 
 
 def test_pairing_page_documentation_explains_busy_and_unknown_states() -> None:

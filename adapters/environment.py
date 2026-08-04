@@ -86,69 +86,109 @@ class CachedEnvironmentAdapter:
             )
             self.status = "error"
             return None
-        normalized = self._normalize(raw)
+        try:
+            normalized = self._normalize(raw)
+        except (TypeError, ValueError):
+            normalized = None
         self.status = "ok" if normalized is not None else "empty_or_invalid"
         return normalized
+
+    def status_snapshot(self) -> dict[str, Any]:
+        return {
+            "contract": f"{ENVIRONMENT_CONTRACT_NAME}@1.0",
+            "enabled": self.enabled,
+            "status": self.status,
+            "mode": "cached_only",
+            "request_hook_network": False,
+            "realtime_private_methods_enabled": False,
+        }
 
     @classmethod
     def _normalize(cls, payload: Any) -> dict[str, Any] | None:
         if not isinstance(payload, dict):
             return None
-        version = str(payload.get("version") or "")
+        version = payload.get("version")
+        severity = payload.get("severity")
         if (
             payload.get("contract") != ENVIRONMENT_CONTRACT_NAME
+            or not isinstance(version, str)
             or version.split(".", 1)[0] != ENVIRONMENT_CONTRACT_MAJOR
-            or payload.get("severity") not in _SEVERITIES
+            or not isinstance(severity, str)
+            or severity not in _SEVERITIES
+            or not isinstance(payload.get("event_key"), str)
+            or not isinstance(payload.get("revision"), str)
+            or not isinstance(payload.get("kind"), str)
             or cls._expired(payload.get("valid_until"))
         ):
             return None
         location = payload.get("location")
         provenance = payload.get("provenance")
         facts = payload.get("facts")
-        if not isinstance(location, dict) or not isinstance(provenance, dict):
+        if (
+            not isinstance(location, dict)
+            or set(location) != {"key", "name", "timezone"}
+            or not all(isinstance(value, str) for value in location.values())
+            or not isinstance(provenance, dict)
+            or set(provenance) != {"authority", "provider", "local_assessment"}
+            or not all(isinstance(value, str) for value in provenance.values())
+        ):
             return None
         if not isinstance(facts, dict):
-            facts = {}
+            return None
         try:
             encoded_facts = json.dumps(
                 facts,
+                allow_nan=False,
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
             )
         except (TypeError, ValueError):
             encoded_facts = "{}"
+            facts = {}
         if len(encoded_facts.encode("utf-8")) > 4096:
             facts = {}
         basis = payload.get("severity_basis")
-        try:
-            severity_rank = max(0, min(3, int(payload.get("severity_rank") or 0)))
-        except (TypeError, ValueError):
+        observed_at = payload.get("observed_at")
+        fetched_at = payload.get("fetched_at")
+        if (
+            not isinstance(basis, (list, tuple))
+            or not all(isinstance(item, str) for item in basis)
+            or not isinstance(payload.get("stale"), bool)
+            or (observed_at is not None and not isinstance(observed_at, str))
+            or (fetched_at is not None and not isinstance(fetched_at, str))
+            or cls._parse_datetime(payload.get("valid_from")) is None
+        ):
+            return None
+        severity_rank_raw = payload.get("severity_rank")
+        if isinstance(severity_rank_raw, bool) or not isinstance(
+            severity_rank_raw, int
+        ):
+            return None
+        if severity_rank_raw < 0 or severity_rank_raw > 3:
             return None
         return {
             "contract": ENVIRONMENT_CONTRACT_NAME,
             "version": version,
-            "event_key": str(payload.get("event_key") or "")[:128],
-            "revision": str(payload.get("revision") or "")[:128],
-            "kind": str(payload.get("kind") or "")[:128],
-            "severity": str(payload.get("severity")),
-            "severity_rank": severity_rank,
-            "severity_basis": [str(item)[:256] for item in basis[:16]]
-            if isinstance(basis, list)
-            else [],
+            "event_key": payload["event_key"][:128],
+            "revision": payload["revision"][:128],
+            "kind": payload["kind"][:128],
+            "severity": severity,
+            "severity_rank": severity_rank_raw,
+            "severity_basis": [item[:256] for item in basis[:16]],
             "facts": facts,
             "location": {
-                "key": str(location.get("key") or "")[:128],
-                "name": str(location.get("name") or "")[:128],
-                "timezone": str(location.get("timezone") or "")[:64],
+                "key": location["key"][:128],
+                "name": location["name"][:128],
+                "timezone": location["timezone"][:64],
             },
-            "observed_at": payload.get("observed_at"),
-            "fetched_at": payload.get("fetched_at"),
+            "observed_at": observed_at[:64] if observed_at is not None else None,
+            "fetched_at": fetched_at[:64] if fetched_at is not None else None,
             "stale": payload.get("stale") is True,
             "provenance": {
-                "authority": str(provenance.get("authority") or "")[:256],
-                "provider": str(provenance.get("provider") or "")[:128],
-                "local_assessment": str(provenance.get("local_assessment") or "")[:256],
+                "authority": provenance["authority"][:256],
+                "provider": provenance["provider"][:128],
+                "local_assessment": provenance["local_assessment"][:256],
             },
             "valid_from": str(payload.get("valid_from") or "")[:64],
             "valid_until": str(payload.get("valid_until") or "")[:64],
@@ -156,15 +196,20 @@ class CachedEnvironmentAdapter:
 
     @staticmethod
     def _expired(value: Any) -> bool:
+        parsed = CachedEnvironmentAdapter._parse_datetime(value)
+        return parsed is None or parsed <= datetime.now(timezone.utc)
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
         if not isinstance(value, str) or not value.strip():
-            return True
+            return None
         try:
             parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
         except ValueError:
-            return True
+            return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed <= datetime.now(timezone.utc)
+        return parsed
 
     async def close(self) -> None:
         return None

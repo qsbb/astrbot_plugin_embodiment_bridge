@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 
 from .provider_utils import contract_matches, find_active_provider
@@ -92,6 +93,15 @@ class GlobalKnowledgeAdapter:
         self.status = "ok"
         return evidence
 
+    def status_snapshot(self) -> dict[str, Any]:
+        return {
+            "contract": f"{KNOWLEDGE_CONTRACT_NAME}@1.0",
+            "enabled": self.enabled,
+            "status": self.status,
+            "scope": "global",
+            "private_scope_enabled": False,
+        }
+
     @staticmethod
     def _normalize_item(item: Any) -> dict[str, Any] | None:
         if not isinstance(item, dict):
@@ -99,7 +109,16 @@ class GlobalKnowledgeAdapter:
         required = {"content", "source", "score", "topic", "verified", "confidence"}
         if not required.issubset(item):
             return None
-        content = str(item.get("content") or "").strip()
+        if (
+            not isinstance(item.get("content"), str)
+            or not isinstance(item.get("source"), str)
+            or not isinstance(item.get("topic"), str)
+            or not isinstance(item.get("verified"), bool)
+            or isinstance(item.get("score"), bool)
+            or isinstance(item.get("confidence"), bool)
+        ):
+            return None
+        content = item["content"].strip()
         if not content:
             return None
         try:
@@ -107,12 +126,14 @@ class GlobalKnowledgeAdapter:
             confidence = float(item.get("confidence"))
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(score) or not math.isfinite(confidence):
+            return None
         return {
             "content": content[:2000],
-            "source": str(item.get("source") or "")[:256],
+            "source": item["source"][:256],
             "score": max(0.0, min(1.0, score)),
-            "topic": str(item.get("topic") or "")[:128],
-            "verified": item.get("verified") is True,
+            "topic": item["topic"][:128],
+            "verified": item["verified"],
             "confidence": max(0.0, min(1.0, confidence)),
         }
 

@@ -40,6 +40,9 @@ class AstrBotLLMAdapter:
     def available(self) -> bool:
         return bool(self.chat_provider_id)
 
+    def configure_provider(self, chat_provider_id: str) -> None:
+        self.chat_provider_id = str(chat_provider_id or "").strip()
+
     async def generate(
         self,
         *,

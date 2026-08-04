@@ -18,9 +18,9 @@ Unity 只上报事实、播放音频并执行模型无关的语义意图。角�
 
 ### 1.1 语音适配器可用性
 
-语音适配器默认关闭。管理员需要先在 AstrBot 的 Provider 设置中启用并选定默认 STT/TTS Provider，再打开本插件的 `enable_astrbot_stt` 或 `enable_astrbot_tts`。本插件使用 AstrBot 4.26.8 的 `Context.get_using_stt_provider()` / `Context.get_using_tts_provider()`，不通过 `hasattr()` 猜测接口，也不调用 voice_hub 未声明的内部方法。
+STT 与 AstrBot Core TTS 默认关闭；“声”的 `voice.audio_output@1.0` 默认作为首选 TTS，但缺插件或契约不兼容时安全降级。管理员若要使用 Core fallback，需要先在 AstrBot Provider 设置中选定默认 STT/TTS，再打开 `enable_astrbot_stt` 或 `enable_astrbot_tts`。本插件不通过 `hasattr()`/`getattr()` 猜测跨插件接口，也不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
-STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS 是文件式整轮调用：`TTSProvider.get_audio(text)` 完成后，本插件严格读取并规范化 Provider 返回的 WAV，才开始发送 24000 Hz 单声道 PCM16 SSE 块。
+STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS 同样整轮生成：Bridge 优先调用“声”的 `render_pcm_wav()`，严格校验 provider 管理的 PCM16 WAV；必要时回退 `TTSProvider.get_audio(text)`。最终都转换为 24000 Hz 单声道 PCM16 SSE 块。
 
 AstrBot 的 TTS Provider 基类只承诺“返回音频文件路径”，不承诺采样率、声道或编码。本插件接受未压缩 PCM16 WAV（单声道或立体声、8000-192000 Hz），立体声会下混，采样率会转换到 24000 Hz；MP3、压缩/浮点 WAV、截断或超限文件产生 `tts_failed`，文字仍会保留。`emotion` 只参与角色意图决策，不会被猜测性地传给没有该参数的 Provider。
 
@@ -38,7 +38,15 @@ http://192.168.1.10:6185
 http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
 ```
 
-所有请求，包括 SSE 和 health，都必须携带：
+启用内置 listener 后，Quest 私网统一入口可改为：
+
+```text
+http://192.168.5.88:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+```
+
+两者的 Protocol 1.0 请求和 SSE 字段完全一致。8520 只是严格白名单入口，不是 Dashboard 或通用反向代理。
+
+配对完成后的所有正常请求，包括 SSE 和 health，都必须携带：
 
 ```http
 Authorization: Bearer <ASTRBOT_API_KEY_WITH_PLUGIN_SCOPE>
@@ -56,7 +64,12 @@ Content-Type: application/json
 - AstrBot API Key 必须具有 `plugin` scope。
 - `bridge_api_key` 必须与插件配置一致，且配置值至少 32 字符。
 - 创建会话和后续访问必须使用同一个 AstrBot API Key 身份。
-- 正式网络应通过 HTTPS 反向代理访问，不应把 Dashboard 直接暴露到公网。
+- 内置 listener 上只有精确 `POST .../pairing/exchange` 不要求 `Authorization` 或 `X-Quest-Avatar-Key`；它只接受一次性 token/6 位短码，成功后下发两把长期密钥。
+- 8520 上的 health/session/events/turn/audio/interaction/interrupt/close 不属于匿名能力，listener 不自动添加或替换任何认证头。
+- 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing`、Page 本次 `allow_insecure_http`，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
+- 公网必须使用 Quest 信任的 HTTPS；内置 listener 不提供公网 TLS 终止。不要把 Dashboard 暴露到公网。
+- `pairing_listener_public_url` 可填写主机 base URL、插件 base URL 或精确 exchange URL，服务端会规范化到精确路径；不会猜测宿主机 IP。
+- 内置 listener 不读取 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 或 `X-Quest-Pairing-Source`，exchange 来源只使用直接 TCP peer IP。
 
 ## 3. 推荐调用顺序
 
@@ -142,6 +155,53 @@ sequenceDiagram
 | POST | `/session/close` | 200 | 关闭会话 |
 | GET | `/health` | 200 | 查询协议和适配器状态 |
 
+
+内置 8520 listener 仅代理上表九个正常接口，并额外直接处理：
+
+| 方法 | 完整路径 | 认证 | 用途 |
+|---|---|---|---|
+| POST | `/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/exchange` | 一次性 token 或 6 位短码 | 首次匿名兑换 |
+
+以下路径在 8520 上一律拒绝，不能作为 Unity API：
+
+- Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
+- `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
+- `pairing/operator-settings`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
+
+匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
+
+```json
+{
+  "protocol_version": "1.0",
+  "token": "一次性 QR token"
+}
+```
+
+也可以只提交 `code`（6 位数字），但 `token` 与 `code` 必须二选一。错误凭据、过期、撤销和重放统一返回 `pairing_not_available`，前端不得根据响应猜测凭据状态。
+插件仍保留以下 Dashboard 管理端点，供显式管理工具兼容调用。当前快速绑定 Page 不调用它们；这些端点经过 AstrBot 的 Dashboard/plugin-scope 外层认证，不接受 Unity 的 Bridge 身份替代：
+
+| 方法 | 路径 | 成功状态 | 用途 |
+|---|---|---:|---|
+| GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
+| POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
+| GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
+| POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
+
+模型枚举只返回 `id`、`model`、`adapter_type` 和固定的 `provider_type=chat_completion`，绝不返回 Provider 原始配置、API Key、`base_url`、headers。保存请求只允许：
+
+```json
+{"chat_provider_id":"provider-instance-id"}
+```
+
+自然人候选只接受 `relationship.identity_candidates@1.0` 的 `admin_labels_only` 响应，每项仅含 `person_id`、`display_name`、`account_count`。当前“情”未提供兼容契约时返回空候选和 `contract_unavailable`；Bridge 不读取其私有 registry，也不转发 identities Page。保存请求只允许：
+
+```json
+{"person_id":"person-a"}
+```
+
+空字符串表示清除选择。非空 ID 必须仍出现在本次候选目录中。`relationship_person_id` 只选择授权后的关系快照对象，不能替代 `platform_id/bot_id/user_id`，不能授予 owner、白名单或管理权限；`protected_context_authorized=false` 时仍不得注入关系上下文。
+
 下面路径均相对于接口基地址。
 
 ## 6. 创建会话
@@ -170,11 +230,11 @@ POST /session/start
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `session_id` | 是 | Unity 生成的会话唯一 ID |
-| `client_id` | 是 | Quest 设备或应用实例 ID |
-| `user_id` | 是 | 用于可选关系快照的用户作用域，最长 128 字符 |
-| `bot_id` | 是 | AstrBot Bot 作用域，最长 128 字符 |
-| `group_id` | 否 | 群作用域；私聊传空字符串 |
-| `relationship_profile_id` | 否 | 可选关系档案 ID |
+| `client_id` | 是 | Unity 声明值；仅当精确匹配服务端 `trusted_client_id` 才可能开启受保护上下文 |
+| `user_id` | 是 | 原始用户 ID 声明；必须由“序”的服务端五段白名单再次验证，最长 128 字符 |
+| `bot_id` | 是 | 原始 Bot ID 声明；必须由“序”的服务端五段白名单再次验证，最长 128 字符 |
+| `group_id` | 否 | 私聊必须传精确空字符串；空白字符串或非空群值不能获得受保护上下文 |
+| `relationship_profile_id` | 否 | 仅为协议兼容保留；Bridge 不把 Unity 声明值传给受保护关系快照 |
 
 响应：
 
@@ -184,12 +244,16 @@ POST /session/start
   "data": {
     "protocol_version": "1.0",
     "session_id": "s1",
-    "events_url": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/events/s1"
+    "events_url": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/events/s1",
+    "protected_context": {
+      "authorized": false,
+      "reason": "trusted_client_id_missing"
+    }
   }
 }
 ```
 
-重复 `session_id` 返回 `409 session_conflict`。
+`protected_context` 只描述服务端只读上下文门控，不影响基础 Quest 对话。`authorized=false` 时不得自行读取或推断关系数据；常见原因包括可信配置缺失、客户端不匹配、提供方缺失/不兼容、超时、群聊、owner 未配置或五段绑定未命中。重复 `session_id` 返回 `409 session_conflict`。
 
 ## 7. SSE 事件流
 
@@ -249,9 +313,11 @@ POST /turn/start
 
 响应中的 `state` 为 `processing`。
 
+`text` 最长为 8192 个 UTF-8 字符，与当前 Unity `ConversationController` 的截断上限一致；超出上限返回 `422 schema_validation_failed`。
+
 ### 8.2 语音轮次
 
-省略 `text`：
+省略 `text`、传 `null`，或传精确空字符串都表示语音轮次。Unity `JsonUtility` 在不同运行时可能选择其中一种形状，Bridge 会统一归一为等待音频；空白字符串仍然不是有效语音占位符。
 
 ```json
 {
@@ -259,6 +325,7 @@ POST /turn/start
   "protocol_version": "1.0",
   "session_id": "s1",
   "turn_id": "t4",
+  "text": null,
   "cancel_previous": true
 }
 ```
@@ -460,6 +527,14 @@ GET /health
     "transport": "http+sse",
     "input_audio": {
       "format": "pcm16",
+    "pairing_listener": {
+      "enabled": true,
+      "ready": true,
+      "bind_host": "0.0.0.0",
+      "port": 8520,
+      "upstream_kind": "loopback_http",
+      "reason": "ready"
+    },
       "sample_rate": 16000,
       "channels": 1,
       "stt_available": false
@@ -470,12 +545,72 @@ GET /health
       "channels": 1,
       "tts_available": false
     },
+    "series_integrations": {
+      "identity": {
+        "contract": "identity.quest_session_authorization@1.0",
+        "configured": false,
+        "status": "trusted_client_id_missing",
+        "default_access": "denied",
+        "api_principal_source": "astrbot_authenticated_request",
+        "client_id_source": "bridge_server_config",
+        "platform_id_source": "bridge_server_config",
+        "unity_trusted_source_fields": false
+      },
+      "knowledge": {
+        "contract": "active_learner.knowledge@1.0",
+        "enabled": true,
+        "status": "enabled",
+        "scope": "global",
+        "private_scope_enabled": false
+      },
+      "relationship": {
+        "contract": "relationship.snapshot@1.0",
+        "status": "authorization_gated",
+        "access": "identity_authorized_sessions_only",
+        "privacy": "derived_only"
+      },
+      "environment": {
+        "contract": "environment.opportunity@1.0",
+        "enabled": true,
+        "status": "enabled",
+        "mode": "cached_only",
+        "request_hook_network": false,
+        "realtime_private_methods_enabled": false
+      },
+      "voice_audio_output": {
+        "contract": "voice.audio_output@1.0",
+        "enabled": true,
+        "available": false,
+        "status": "provider_unavailable",
+        "preferred": true,
+        "sends_message": false,
+        "provider_managed_files": true
+      },
+      "runtime": {
+        "contract": "update_manager.series_runtime@1.0",
+        "status": "unavailable",
+        "reason": "provider_unavailable",
+        "members": [],
+        "healthy": 0,
+        "total": 0
+      },
+      "not_consumed": {
+        "conversation_proactive_delivery": true,
+        "orchestration_hub_resolver": true,
+        "knowledge_private_scope": true,
+        "environment_realtime_private_methods": true
+      }
+    },
     "active_sessions": 1,
     "attached_streams": 1,
     "queued_events": 0
   }
 }
 ```
+
+每次显式 `GET /health` 都会在 2 秒预算内刷新“核”的只读运行态快照。缺少任何系列插件不会让 health 或基础聊天失败；前端只用这些状态控制提示和功能可用性，不应据此自行生成关系、动作或情绪。
+
+`pairing_listener` 只公开脱敏状态。`enabled=false` 是默认兼容状态；`enabled=true, ready=false` 表示配置、绑定或启动降级。`ready=true` 只表示 socket 已监听；若 `reason` 仍为 public URL 缺失/非法，Page 的 `bootstrap_ready` 可能仍为 false。字段不包含完整上游 URL、认证头或任何密钥。
 
 ## 15. 下行 SSE 事件
 
@@ -631,6 +766,8 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 ## 17. Unity 实现检查表
 
 - 使用一个长期 HTTP GET 读取 SSE；Unity 侧需要自行解析 SSE frame 并设置两个认证头。
+- 文本轮 `turn.start.text` 最长 8192 个字符；语音轮可省略 `text` 或发送 `null`/`""`，然后按 `sequence=0` 开始上传 PCM16。
+- Quest 当前建议每 80 ms 上传一块，即 2560 字节（16000 Hz、单声道、16-bit）；网络背压时暂停采集或进入本地有界缓冲，不要并行开启第二轮上传。
 - 以 `(session_id, turn_id)` 作为文字、音频和动作的路由键。
 - 发起新轮或交互前停止本地旧轮播放；同时调用 `interrupt` 或使用 `cancel_previous=true`。
 - 收到旧 `turn_id` 的迟到网络数据时直接丢弃。
@@ -643,9 +780,10 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 
 ## 18. 首版能力限制
 
-- 默认 STT/TTS adapter 关闭；文本轮次和角色意图链可用。启用后仍是文件式整轮 Provider，不是流式 STT/TTS。
+- STT 与 Core TTS adapter 默认关闭；`voice.audio_output@1.0` 默认优先但可安全缺失。文本轮次和角色意图链始终独立可用。
 - AstrBot 4.26.8 的公开 TTS Provider 没有结构化 emotion 或固定输出 PCM 契约；本插件通过 WAV 解析和重采样建立输出约束，无法解析的 Provider 音频会 `tts_failed`。
-- `astrbot_plugin_voice_hub` 的 `voice.delivery@1.0` 只声明 `plan_delivery` 和 `consume_delivery_plan`，没有原始 PCM STT/TTS 能力；本插件不会猜测或调用其内部 `synthesize_text()`。
+- 本插件只消费 `astrbot_plugin_voice_hub` 的 `voice.audio_output@1.0`；明确不消费带事件/投递副作用的 `voice.delivery@1.0`。
 - 没有公开 WebSocket 接口，前端不得尝试连接猜测的 WebSocket 路径。
 - 未完成 Quest 真机网络、麦克风回声、嘴型和具体模型动作验收。
+- 实时文字/语音链路已由真实 TCP HTTP/SSE contract harness 覆盖；尚未完成 Unity/Quest 真机端的 `avatar.intent` 动作执行验收，动作联调列入 [TODO_CN.md](TODO_CN.md)。
 - 协议只返回语义意图，不会返回 PMX 骨骼、Morph、Unity 对象或本地动画路径。

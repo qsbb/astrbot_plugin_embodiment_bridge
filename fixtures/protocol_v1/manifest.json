@@ -27,10 +27,14 @@
   },
   "routes": [
     {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "GET", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "GET", "path": "/pairing/identity-candidates", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/identity-selection", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/status", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/revoke", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "one_time_pairing_credential"},
+    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "reverse_proxy_plugin_scope+one_time_pairing_credential"},
     {"method": "POST", "path": "/session/start", "success_status": 201},
     {"method": "GET", "path": "/events/<session_id>", "success_status": 200},
     {"method": "POST", "path": "/turn/start", "success_status": 202},
@@ -101,6 +105,16 @@
       "reply.end"
     ]
   },
+  "unity_conversation_controller": {
+    "text_max_characters": 8192,
+    "audio_turn_text_forms_accepted": ["omitted", "null", "empty_string"],
+    "recommended_capture_chunk_ms": 80,
+    "recommended_capture_chunk_bytes": 2560,
+    "input_sequence_first": 0,
+    "input_sequence_step": 1,
+    "interrupt_before_new_turn": true,
+    "stale_events_after_interrupt_ack": "discard_by_session_and_turn"
+  },
   "critical_events": [
     "asr.final",
     "avatar.intent",
@@ -144,6 +158,34 @@
     "last_event_id_replay": false,
     "already_consumed_events_replayed": false,
     "queued_unconsumed_critical_events_retained": true
+  },
+  "session_start_semantics": {
+    "protected_context_status_in_response": true,
+    "protected_context_default_access": "denied",
+    "api_principal_source": "astrbot_authenticated_request",
+    "trusted_client_id_source": "bridge_server_config",
+    "trusted_platform_id_source": "bridge_server_config",
+    "unity_trusted_source_fields": false
+  },
+  "pairing_bootstrap_semantics": {
+    "register_web_api_anonymous_supported": false,
+    "page_create_authentication": "astrbot_dashboard",
+    "exchange_core_authentication": "reverse_proxy_plugin_scope",
+    "exchange_credential": "single_use_token_or_six_digit_code",
+    "expected_remote_ip_bound_per_session": true,
+    "per_source_rate_limit": true,
+    "global_rate_limit": true,
+    "private_http_requires_server_and_session_opt_in": true,
+    "public_network_requires_https": true
+  },
+  "series_integration_semantics": {
+    "knowledge_scope": "global_only",
+    "relationship_requires_identity_authorization": true,
+    "environment_mode": "cached_only",
+    "voice_contract": "voice.audio_output@1.0",
+    "runtime_refresh": "startup_and_explicit_health",
+    "conversation_proactive_delivery_consumed": false,
+    "orchestration_hub_resolver_consumed": false
   },
   "sse_error_codes": [
     "stt_empty",

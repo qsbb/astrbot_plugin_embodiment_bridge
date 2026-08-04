@@ -8,6 +8,8 @@ import types
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from astrbot_plugin_quest_avatar_bridge.core.models import SessionStartRequest
 
 
@@ -47,6 +49,7 @@ class RequestStub:
     content_type = "application/json"
     headers: dict[str, str] = {}
     body_bytes = b""
+    client_host = "127.0.0.1"
 
     async def body(self) -> bytes:
         return self.body_bytes
@@ -140,12 +143,19 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
             {
                 "bridge_api_key": "x" * 32,
                 "chat_provider_id": "provider-1",
+                "pairing_exchange_proxy_url": (
+                    "https://pair.example.com/quest/pairing/exchange"
+                ),
             },
         )
+        await plugin.initialize()
+        health = plugin.plugin_health()
+        assert health["version"] == module.__version__
+        assert health["checks"]["pairing_bootstrap_ready"] is True
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 14
+        assert len(registered) == 18
         assert (
             "/astrbot_plugin_quest_avatar_bridge/events/<session_id>",
             ("GET",),
@@ -160,6 +170,22 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         ) in registered
         assert (
             "/astrbot_plugin_quest_avatar_bridge/pairing/exchange",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            ("GET",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/identity-candidates",
+            ("GET",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/identity-selection",
             ("POST",),
         ) in registered
 
@@ -181,7 +207,33 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         assert "register_websocket" not in source
         assert "@register" not in source
 
+        pairing_source = (
+            Path(module.__file__).parent / "transport" / "pairing.py"
+        ).read_text(encoding="utf-8")
+        assert "request.client_host" in pairing_source
+        assert "request.remote_addr" not in pairing_source
+
     asyncio.run(scenario())
+
+
+def test_component_construction_failure_does_not_leave_registered_routes(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    install_astrbot_stubs(monkeypatch, tmp_path)
+    module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+    context = ContextStub()
+
+    class FailingPairingHttpApi:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+            raise RuntimeError("pairing API construction failed")
+
+    monkeypatch.setattr(module, "PairingHttpApi", FailingPairingHttpApi)
+    with pytest.raises(RuntimeError, match="pairing API construction failed"):
+        module.QuestAvatarBridgePlugin(context, {"bridge_api_key": "x" * 32})
+
+    assert context.routes == []
 
 
 def test_http_layer_requires_both_astrbot_and_bridge_auth(
@@ -196,8 +248,13 @@ def test_http_layer_requires_both_astrbot_and_bridge_auth(
             {
                 "bridge_api_key": "s" * 32,
                 "chat_provider_id": "provider-1",
+                "pairing_exchange_proxy_url": "http://public.example/pairing/exchange",
             },
         )
+        await plugin.initialize()
+        health = plugin.plugin_health()
+        assert health["checks"]["pairing_bootstrap_ready"] is False
+        assert "PAIRING_BOOTSTRAP_READY" in health["reasons"]
 
         request_stub.headers = {}
         denied = await plugin.transport.health()
@@ -274,5 +331,59 @@ def test_http_session_schema_and_owner_are_enforced(
         invalid = await plugin.transport.turn_start()
         assert invalid.status_code == 422
         await plugin.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_port(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        install_astrbot_stubs(monkeypatch, tmp_path)
+        module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+
+        probe = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+        port = int(probe.sockets[0].getsockname()[1])
+        probe.close()
+        await probe.wait_closed()
+
+        context = ContextStub()
+        plugin = module.QuestAvatarBridgePlugin(
+            context,
+            {
+                "bridge_api_key": "x" * 32,
+                "chat_provider_id": "provider-1",
+                "pairing_listener_enabled": True,
+                "pairing_listener_host": "127.0.0.1",
+                "pairing_listener_port": port,
+                "pairing_listener_upstream_url": "http://127.0.0.1:9",
+                "pairing_listener_public_url": (
+                    "https://pair.example.com"
+                    "/api/v1/plugins/extensions/"
+                    "astrbot_plugin_quest_avatar_bridge/pairing/exchange"
+                ),
+            },
+        )
+        assert plugin.pairing_listener.ready is False
+        assert len(context.routes) == 18
+
+        constructor_probe = await asyncio.start_server(
+            lambda _r, _w: None,
+            "127.0.0.1",
+            port,
+        )
+        constructor_probe.close()
+        await constructor_probe.wait_closed()
+
+        await plugin.initialize()
+        assert plugin.pairing_listener.ready is True
+        assert plugin.pairing.bootstrap_ready is True
+        await plugin.terminate()
+        assert plugin.pairing_listener.ready is False
+
+        rebound = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", port)
+        rebound.close()
+        await rebound.wait_closed()
 
     asyncio.run(scenario())

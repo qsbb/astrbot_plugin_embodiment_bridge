@@ -11,19 +11,29 @@ from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
 from .adapters.relationship import RelationshipSnapshotAdapter
+from .adapters.relationship_candidates import RelationshipIdentityCandidatesAdapter
 from .adapters.runtime import SeriesRuntimeAdapter
-from .adapters.stt import AstrBotSTTAdapter
+from .adapters.stt import (
+    AstrBotSTTAdapter,
+    ConfiguredMiMoSTTAdapter,
+    select_stt_adapter,
+)
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.interaction_policy import InteractionPolicy
-from .core.pairing import PairingManager
+from .core.operator_settings import OperatorSettings
+from .core.pairing import PairingExchangeService, PairingManager
 from .core.session_manager import SessionManager
 from .core.turn_orchestrator import TurnOrchestrator
+from .transport.builtin_listener import (
+    BuiltinListenerConfig,
+    BuiltinQuestListener,
+)
 from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -43,8 +53,19 @@ class QuestAvatarBridgePlugin(Star):
         bridge_api_key = str(config.get("bridge_api_key", "") or "")
         trusted_client_id = str(config.get("trusted_client_id", "") or "")
         trusted_platform_id = str(config.get("trusted_platform_id", "") or "")
+        relationship_person_id = str(config.get("relationship_person_id", "") or "")
+        pairing_exchange_proxy_url = str(
+            config.get("pairing_exchange_proxy_url", "") or ""
+        )
+        pairing_trusted_proxy_ip = str(config.get("pairing_trusted_proxy_ip", "") or "")
+        allow_private_http_pairing = self._bool_config(
+            "allow_private_http_pairing", False
+        )
         max_json_body_bytes = self._int_config(
             "max_json_body_bytes", 65_536, 4_096, 262_144
+        )
+        max_audio_request_bytes = self._int_config(
+            "max_audio_request_bytes", 32_768, 8_192, 131_072
         )
 
         max_audio_seconds = self._int_config("max_audio_seconds", 60, 1, 120)
@@ -64,12 +85,23 @@ class QuestAvatarBridgePlugin(Star):
             chat_provider_id=str(config.get("chat_provider_id", "") or ""),
             persona_prompt=str(config.get("persona_prompt", "") or ""),
         )
-        self.stt = AstrBotSTTAdapter(
+        self.astrbot_stt = AstrBotSTTAdapter(
             context,
             data_dir=self.data_dir / "stt_input",
             enabled=self._bool_config("enable_astrbot_stt", False),
             timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
         )
+        self.plugin_stt = ConfiguredMiMoSTTAdapter(
+            enabled=self._bool_config("enable_plugin_mimo_stt", False),
+            api_base=str(
+                config.get("plugin_mimo_stt_api_base", "https://api.xiaomimimo.com/v1")
+                or ""
+            ),
+            api_key=str(config.get("plugin_mimo_stt_api_key", "") or ""),
+            model=str(config.get("plugin_mimo_stt_model", "mimo-v2.5-asr") or ""),
+            timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
+        )
+        self.stt = select_stt_adapter(self.plugin_stt, self.astrbot_stt)
         max_tts_audio_seconds = self._int_config("max_tts_audio_seconds", 120, 1, 300)
         self.astrbot_tts = AstrBotTTSAdapter(
             context,
@@ -111,7 +143,15 @@ class QuestAvatarBridgePlugin(Star):
             logger,
             enabled=self._bool_config("enable_runtime_diagnostics", True),
         )
-        self.relationship = RelationshipSnapshotAdapter(context, logger)
+        self.relationship = RelationshipSnapshotAdapter(
+            context,
+            logger,
+            person_id=relationship_person_id,
+        )
+        self.relationship_candidates = RelationshipIdentityCandidatesAdapter(
+            context,
+            logger,
+        )
         self.policy = InteractionPolicy(
             max_intensity=self._float_config("max_intensity", 0.85, 0.1, 1.0),
             max_duration_ms=self._int_config(
@@ -136,41 +176,122 @@ class QuestAvatarBridgePlugin(Star):
             knowledge=self.knowledge,
             environment=self.environment,
             runtime=self.runtime,
+            voice_audio=self.voice_hub_tts,
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
+        )
+        self.pairing = PairingManager(
+            bridge_api_key=bridge_api_key,
+            exchange_url=pairing_exchange_proxy_url,
+            allow_private_http=allow_private_http_pairing,
+        )
+        self._fallback_exchange_url = self.pairing.exchange_url
+        self._fallback_exchange_reason = self.pairing.bootstrap_reason
+        self.pairing_exchange_service = PairingExchangeService(self.pairing)
+        listener_config = BuiltinListenerConfig.from_mapping(
+            config,
+            allow_private_http=allow_private_http_pairing,
+            max_json_body_bytes=max_json_body_bytes,
+            max_audio_request_bytes=max_audio_request_bytes,
+        )
+        pairing_public_url = str(config.get("pairing_public_url", "") or "").strip()
+        if not pairing_public_url and listener_config.public_exchange_url.endswith(
+            "/pairing/exchange"
+        ):
+            pairing_public_url = listener_config.public_exchange_url[
+                : -len("/pairing/exchange")
+            ]
+        self.pairing_listener = BuiltinQuestListener(
+            config=listener_config,
+            exchange_service=self.pairing_exchange_service,
+            logger=logger,
         )
         self.transport = HttpSseTransport(
             context=context,
             sessions=self.sessions,
             orchestrator=self.orchestrator,
+            listener=self.pairing_listener,
             config=TransportConfig(
                 bridge_api_key=bridge_api_key,
                 max_json_body_bytes=max_json_body_bytes,
-                max_audio_request_bytes=self._int_config(
-                    "max_audio_request_bytes", 32_768, 8_192, 131_072
-                ),
+                max_audio_request_bytes=max_audio_request_bytes,
                 sse_heartbeat_seconds=self._int_config(
                     "sse_heartbeat_seconds", 15, 5, 60
                 ),
             ),
             logger=logger,
         )
-        self.transport.register()
-        self.pairing = PairingManager(bridge_api_key=bridge_api_key)
+        self.operator_settings = OperatorSettings(
+            context=context,
+            config=config,
+            llm=self.llm,
+            relationship=self.relationship,
+            logger=logger,
+        )
         self.pairing_api = PairingHttpApi(
             context=context,
             manager=self.pairing,
+            exchange_service=self.pairing_exchange_service,
+            listener=self.pairing_listener,
             logger=logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
+            trusted_proxy_ip=pairing_trusted_proxy_ip,
+            operator_settings=self.operator_settings,
+            relationship_candidates=self.relationship_candidates,
+            pairing_defaults={
+                "public_url": pairing_public_url,
+                "astrbot_api_key": str(config.get("pairing_astrbot_api_key", "") or ""),
+                "client_id": trusted_client_id or "quest-living-room",
+                "user_id": str(config.get("pairing_user_id", "") or ""),
+                "bot_id": str(config.get("pairing_bot_id", "") or ""),
+                "group_id": str(config.get("pairing_group_id", "") or ""),
+                "relationship_profile_id": str(
+                    config.get("pairing_relationship_profile_id", "") or ""
+                ),
+                "allow_insecure_http": allow_private_http_pairing,
+                "ttl_seconds": self._int_config("pairing_ttl_seconds", 120, 60, 300),
+            },
             max_json_body_bytes=min(max_json_body_bytes, 65_536),
         )
+
+        # AstrBot 4.26.8 does not expose a Web API unregister operation. Keep
+        # every potentially failing component construction above the first
+        # registration so a constructor failure cannot leave bound methods
+        # from a half-initialized plugin in the process-global route registry.
+        # From this point onward, registration must remain the final action.
+        self.transport.register()
         self.pairing_api.register()
 
     async def initialize(self) -> None:
+        await self.pairing_listener.start()
+        listener_status = self.pairing_listener.status_snapshot()
+        if self.pairing_listener.ready and self.pairing_listener.public_exchange_url:
+            self.pairing.configure_exchange_url(
+                self.pairing_listener.public_exchange_url,
+                missing_reason="pairing_listener_public_url_missing",
+            )
+        elif self._fallback_exchange_url:
+            self.pairing.configure_exchange_url(
+                self._fallback_exchange_url,
+                missing_reason=self._fallback_exchange_reason,
+            )
+        else:
+            self.pairing.configure_exchange_url(
+                "",
+                missing_reason=str(
+                    listener_status.get("reason") or self._fallback_exchange_reason
+                ),
+            )
+        if not self.pairing.bootstrap_ready:
+            logger.warning(
+                "[quest-avatar] pairing bootstrap disabled: reason=%s",
+                self.pairing.bootstrap_reason,
+            )
         runtime = await self.runtime.refresh()
         logger.info(
-            "[quest-avatar] bridge initialized: version=%s transport=http+sse llm=%s stt=%s tts=%s runtime=%s",
+            "[quest-avatar] bridge initialized: version=%s transport=http+sse listener=%s llm=%s stt=%s tts=%s runtime=%s",
             __version__,
+            listener_status.get("reason"),
             self.llm.available,
             self.stt.available,
             self.tts.available,
@@ -181,6 +302,10 @@ class QuestAvatarBridgePlugin(Star):
         checks = {
             "transport_registered": self.transport is not None,
             "pairing_registered": self.pairing_api is not None,
+            "pairing_bootstrap_ready": self.pairing.bootstrap_ready,
+            "pairing_listener_ready": (
+                not self.pairing_listener.config.enabled or self.pairing_listener.ready
+            ),
             "bridge_api_key_configured": len(self.transport.config.bridge_api_key)
             >= 32,
             "chat_provider_configured": self.llm.available,
@@ -201,8 +326,10 @@ class QuestAvatarBridgePlugin(Star):
         if self._terminated:
             return
         self._terminated = True
+        await self.pairing_listener.close()
         self.pairing.close()
         await self.orchestrator.close()
+        await self.relationship_candidates.close()
         logger.info("[quest-avatar] bridge terminated")
 
     def _int_config(self, key: str, default: int, minimum: int, maximum: int) -> int:
