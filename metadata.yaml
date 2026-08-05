@@ -4,7 +4,7 @@ short_desc: 凝心溯溪系列具身交互模块：让 AI 化身进入 Quest 与
 desc: >
   凝心溯溪系列具身交互模块：通过 HTTP POST 与 SSE 连接 Unity，
   让 AstrBot 统一决定回复、触碰边界、动作、表情、注视和语音意图。
-version: 0.5.0
+version: 0.4.2
 author: qsbb
 repo: https://github.com/qsbb/astrbot_plugin_quest_avatar_bridge
 astrbot_version: ">=4.26,<5"
