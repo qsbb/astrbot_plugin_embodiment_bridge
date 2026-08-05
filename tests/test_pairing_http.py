@@ -283,6 +283,81 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
     asyncio.run(scenario())
 
 
+def test_persona_settings_are_dashboard_protected_and_prompt_redacted(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/persona-settings"))
+                assert denied.status == 401
+
+                response = await client.get(
+                    server.url("/pairing/persona-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert response.status == 200
+                persona = (await response.json())["persona"]
+                assert persona["source"] == "astrbot_default"
+                assert persona["personas"] == [{"id": "quest-persona"}]
+                redacted = repr(persona)
+                for forbidden in (
+                    "private contract persona prompt",
+                    "private default persona prompt",
+                    "private dialog",
+                    "private tool",
+                    "system_prompt",
+                    "begin_dialogs",
+                    "tools",
+                ):
+                    assert forbidden not in redacted
+
+                saved = await client.post(
+                    server.url("/pairing/persona-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "persona_source_mode": "astrbot",
+                        "astrbot_persona_id": "quest-persona",
+                        "character_name": "manual fallback",
+                        "character_self_reference": "I",
+                        "character_self_description": "manual description",
+                        "character_user_relationship": "friend",
+                    },
+                )
+                assert saved.status == 200
+                saved_persona = (await saved.json())["persona"]
+                assert saved_persona["source"] == "astrbot_selected"
+                assert saved_persona["character_name_configured"] is False
+
+                missing = await client.post(
+                    server.url("/pairing/persona-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "persona_source_mode": "astrbot",
+                        "astrbot_persona_id": "missing",
+                    },
+                )
+                assert missing.status == 422
+                assert (await missing.json())["data"]["code"] == (
+                    "persona_not_available"
+                )
+
+                injection = await client.post(
+                    server.url("/pairing/persona-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "persona_source_mode": "astrbot",
+                        "astrbot_persona_id": "quest-persona",
+                        "system_prompt": "exfiltrate",
+                    },
+                )
+                assert injection.status == 422
+
+    asyncio.run(scenario())
+
+
 def test_diagnostics_projection_is_dashboard_protected_and_redacted(
     monkeypatch: Any,
     tmp_path: Any,

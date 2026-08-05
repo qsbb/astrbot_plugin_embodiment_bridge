@@ -110,28 +110,45 @@
     "obvious_hint": true,
     "default": ""
   },
+  "persona_source_mode": {
+    "description": "Quest 角色人格来源",
+    "type": "string",
+    "options": [
+      "astrbot",
+      "manual_override"
+    ],
+    "hint": "默认继承 AstrBot 正式人格。只有明确选择 manual_override 时，下方四个兼容字段才会覆盖 AstrBot 人格。",
+    "default": "astrbot"
+  },
+  "astrbot_persona_id": {
+    "description": "Quest 会话使用的 AstrBot 人格",
+    "type": "string",
+    "_special": "select_persona",
+    "hint": "留空时继承 AstrBot 明确默认人格；选择值只由服务端配置，Unity 不能提交人格或任意人格 ID。",
+    "default": ""
+  },
   "character_name": {
     "description": "Quest 角色姓名",
     "type": "string",
-    "hint": "角色自我身份的一部分；留空时角色不得自行编造姓名。",
+    "hint": "仅在 persona_source_mode=manual_override 时生效；留空时角色不得自行编造姓名。",
     "default": ""
   },
   "character_self_reference": {
     "description": "Quest 角色自称",
     "type": "string",
-    "hint": "例如“我”或角色固定自称；留空时安全默认使用“我”。",
+    "hint": "仅在 manual_override 时生效。例如“我”或角色固定自称；留空时安全默认使用“我”。",
     "default": ""
   },
   "character_self_description": {
     "description": "Quest 角色自我描述",
     "type": "text",
-    "hint": "描述角色是谁、性格与已知背景；不知道的经历不得编造。",
+    "hint": "仅在 manual_override 时生效。描述角色是谁、性格与已知背景；不知道的经历不得编造。",
     "default": ""
   },
   "character_user_relationship": {
     "description": "Quest 角色与用户的关系定位",
     "type": "string",
-    "hint": "只定义角色如何理解双方关系；不会替代身份授权或 relationship_person_id。",
+    "hint": "仅在 manual_override 时生效；不会替代身份授权或 relationship_person_id。",
     "default": ""
   },
   "enable_astrbot_stt": {

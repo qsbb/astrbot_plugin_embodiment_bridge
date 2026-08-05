@@ -1,12 +1,12 @@
-# AstrBot 4.26.8 本地加载失败审计
+# AstrBot 本地加载失败审计
 
 审计日期：2026-08-04。范围只包括本地 `astrbot_plugin_quest_avatar_bridge`；没有连接、上传、重载或重装远端 AstrBot。
 
 ## 已验证事实
 
-- `metadata.yaml` 是无 BOM 的 UTF-8，插件名为 `astrbot_plugin_quest_avatar_bridge`，作者为 `qsbb`，版本为 `0.2.0`；与 `main.py` 的 `__version__` 一致。
+- `metadata.yaml` 是无 BOM 的 UTF-8，插件名为 `astrbot_plugin_quest_avatar_bridge`，作者为 `qsbb`；发布版本由版本一致性测试固定，必须与 `main.py` 的 `__version__` 和 CHANGELOG 一致。
 - 主类 `QuestAvatarBridgePlugin` 继承 `Star`，构造参数是 `Context` 与 `AstrBotConfig`，类名符合 AstrBot 4.26.8 的插件发现规则。
-- 所有 21 个 HTTP/SSE、配对与 Dashboard 管理接口均只使用 `Context.register_web_api(route, handler, methods, desc)` 四参数公开签名；没有 `register_websocket`、匿名路由参数或旧装饰器。
+- 所有 21 个 HTTP/SSE、配对与 Dashboard 管理接口均只使用 `Context.register_web_api(route, handler, methods, desc)` 四参数公开签名；人格接入直接使用 AstrBot 4.27.1 正式 `context.persona_manager`，没有读取 Core 私有配置、`register_websocket`、匿名路由参数或旧装饰器。
 - Page 位于 `pages/pairing/` 和 `pages/operator/`，标题资源位于 `.astrbot-plugin/i18n/zh-CN.json`。AstrBot Pages 按该目录结构自动发现，不需要 `page.json` 或额外注册方法。
 - 运行时依赖为 `pydantic`、`qrcode`、兼容范围 `aiohttp>=3.11.18,<4`，以及 Python 3.13+ 条件依赖 `audioop-lts`。AstrBot 4.26.8 本身要求 Python 3.12+；本地审计环境为 Python 3.12。
 - 未安装“知、序、情、境、声、核”任一提供方、未配置配对代理或提供方返回畸形契约时，初始化均降级，不抛出加载异常。`terminate()` 会关闭一次性配对状态，取消会话/轮次，关闭 SSE 队列并释放 LLM、STT、TTS 与只读适配器。

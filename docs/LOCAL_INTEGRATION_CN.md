@@ -55,11 +55,10 @@ $bridgeBytes = New-Object byte[] 32
 | `pairing_user_id` / `pairing_bot_id` | 服务端固定的 Quest 会话身份；群组和关系档案字段可按需配置 |
 | `pairing_ttl_seconds` | 服务端固定的一次性凭证 TTL，默认 120 秒；Page 只显示剩余时间 |
 | `chat_provider_id` | 明确选择聊天模型 Provider |
+| `persona_source_mode` | 默认 `astrbot`，继承 AstrBot 正式人格；仅兼容旧手动设定时选 `manual_override` |
+| `astrbot_persona_id` | 可选的服务端 Quest 人格；留空继承 AstrBot 明确默认人格，不允许 Unity 提交 |
 | `relationship_person_id` | 可选；由管理员在插件专属配置中管理，不改变平台授权 |
-| `persona_prompt` | 只写角色设定和边界，不写骨骼、Morph 或动画路径 |
-| `character_name` / `character_self_reference` | 可选角色姓名与自称；留空时不臆造姓名，只使用第一人称“我” |
-| `character_self_description` | 可选角色明确知道的自我描述；未知经历必须明确不知道 |
-| `character_user_relationship` | 可选与用户的关系定位；不由 `relationship_person_id` 推断 |
+| `persona_prompt` / 四个 `character_*` 字段 | 仅 `manual_override` 兼容模式生效；未知经历必须明确不知道，且不由 `relationship_person_id` 推断 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |
 | `enable_astrbot_stt` | 真实 STT 联调时设为 `true`，否则 `audio/end` 返回 SSE `stt_unavailable` |
@@ -73,7 +72,7 @@ $bridgeBytes = New-Object byte[] 32
 | `stt_timeout_seconds` / `tts_timeout_seconds` | 按 Provider 延迟设置，保持有界，不要设为无限 |
 | `max_tts_audio_seconds` | 限制单轮 Provider WAV 读入和输出时长 |
 
-「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、角色、连接或身份设置。聊天模型和自然人范围均由管理员在本插件专属配置中管理；Bridge 仍只接受公开契约并在缺失、超时或畸形响应时安全降级，不访问其他插件私有接口。
+「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、人格、连接或身份设置。聊天模型、AstrBot 人格和自然人范围均由管理员在「Quest 角色设置」Page 或本插件专属配置中管理；Bridge 仍只接受公开 API/契约并在缺失、超时或畸形响应时安全降级，不访问 Core 或其他插件私有配置。
 
 还需要在 AstrBot 中创建一个具有 `plugin` scope 的 API Key。Unity 的每个请求必须同时携带：
 

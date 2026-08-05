@@ -2,7 +2,7 @@
 
 凝心溯溪系列 Quest 角色桥接模块。它把 Meta Quest 3 上 Unity MMD/VRM 前端上报的对话与交互事实交给 AstrBot 决策，再通过 SSE 返回模型无关的文字、音频和角色意图。
 
-插件基于 AstrBot `v4.26.8` 已公开的 `Context.register_web_api()`、`astrbot.api.web.request`、`json_response()`、`error_response()`、`stream_response()`、`Context.llm_generate()`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。不注册 WebSocket，也不依赖 AstrBot Core、service hub 或 orchestration hub 的修改。
+插件基于 AstrBot 当前公开的 `Context.register_web_api()`、`astrbot.api.web.request`、`json_response()`、`error_response()`、`stream_response()`、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。人格接入按 AstrBot 4.27.1 的公开 `get_persona()`、`get_all_personas()` 与 `get_default_persona_v3(None)` 实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
 
 ## 项目信息
 
@@ -14,6 +14,7 @@
 - AstrBot 4.26.8 本地加载失败审计：[docs/LOAD_FAILURE_AUDIT_CN.md](docs/LOAD_FAILURE_AUDIT_CN.md)
 - Unity 可复用协议样本：[fixtures/protocol_v1/](fixtures/protocol_v1/)
 - 实时异步审计：[docs/ASYNC_AUDIT_CN.md](docs/ASYNC_AUDIT_CN.md)
+- AstrBot 人格继承审计：[docs/PERSONA_INTEGRATION_CN.md](docs/PERSONA_INTEGRATION_CN.md)
 - 后续动作/设备联调待办：[docs/TODO_CN.md](docs/TODO_CN.md)
 
 ## 职责边界
@@ -77,11 +78,14 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 插件另提供「Quest 角色设置」管理员 Page，与快速绑定页分离：
 
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
-- “自我身份”可设置角色姓名、自称、自我描述及与用户的关系定位；字段只持久化到“临”的插件专属配置。空配置会使用通用 Quest 角色定位，但不会臆造姓名、身世、职业或共同经历。
+- “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
+- Quest 没有可信的 AstrBot UMO/Conversation ID 映射，因此不会伪造消息平台会话人格；管理员保存的 `astrbot_persona_id` 是服务端受控的 Quest 会话人格。显式人格被删除或失效时回退通用 MR 身份，不会自动改用默认或其他人格。
+- 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
 - 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
 - 自然人选择只决定授权后的关系快照范围，不能替代原始 platform_id/bot_id/user_id，也不授予 owner、白名单或管理权限。
 - `relationship_person_id` 绝不用于推断角色姓名、自称或身份；关系快照只影响语气、主动性和边界。
+- 每个 turn 在调用 LLM 前异步取得一次、1 秒超时的人格稳定快照。人格正文被限定为身份/性格/表达数据，不能覆盖 Protocol 1.0 JSON schema、认证授权、安全边界、动作白名单或模型无关边界。
 
 模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点，不向浏览器写入长期密钥或本地存储。
 ## 生产 STT/TTS 配置

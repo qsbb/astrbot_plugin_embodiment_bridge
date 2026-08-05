@@ -55,6 +55,11 @@ class RelationshipPersonSelectionRequest(BaseModel):
 class CharacterPersonaSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    persona_source_mode: str = Field(
+        default="astrbot",
+        pattern=r"^(?:astrbot|manual_override)$",
+    )
+    astrbot_persona_id: str = Field(default="", max_length=255)
     character_name: str = Field(default="", max_length=64)
     character_self_reference: str = Field(default="", max_length=64)
     character_self_description: str = Field(default="", max_length=2_000)
@@ -205,7 +210,7 @@ class PairingHttpApi:
             return _json_no_store(
                 {
                     "success": True,
-                    "persona": self.operator_settings.persona_snapshot(),
+                    "persona": await self.operator_settings.persona_overview(),
                 }
             )
         except Exception as exc:
@@ -216,6 +221,8 @@ class PairingHttpApi:
             self._dashboard_owner()
             payload = await self._read_model(CharacterPersonaSettingsRequest)
             persona = await self.operator_settings.save_character_persona(
+                persona_source_mode=payload.persona_source_mode,
+                astrbot_persona_id=payload.astrbot_persona_id,
                 character_name=payload.character_name,
                 character_self_reference=payload.character_self_reference,
                 character_self_description=payload.character_self_description,

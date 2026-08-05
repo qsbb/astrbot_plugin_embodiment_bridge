@@ -143,6 +143,7 @@ class ContextStub:
     def __init__(self) -> None:
         self.routes: list[tuple[str, Any, list[str], str]] = []
         self.providers = [ChatProviderStub()]
+        self.persona_manager = PersonaManagerStub()
         self.stars: list[Any] = []
 
     def register_web_api(
@@ -169,6 +170,30 @@ class ChatProviderStub:
             type="openai",
             provider_type="chat_completion",
         )
+
+
+class PersonaManagerStub:
+    def __init__(self) -> None:
+        self.personas = {
+            "quest-persona": types.SimpleNamespace(
+                persona_id="quest-persona",
+                system_prompt="private contract persona prompt",
+                begin_dialogs=["private dialog"],
+                tools=["private tool"],
+            )
+        }
+
+    async def get_persona(self, persona_id: str) -> Any:
+        if persona_id not in self.personas:
+            raise ValueError("missing persona")
+        return self.personas[persona_id]
+
+    async def get_default_persona_v3(self, umo: Any = None) -> dict[str, str]:
+        assert umo is None
+        return {"name": "default", "prompt": "private default persona prompt"}
+
+    async def get_all_personas(self) -> list[Any]:
+        return list(self.personas.values())
 
 
 class NativeConfigStub(dict[str, Any]):

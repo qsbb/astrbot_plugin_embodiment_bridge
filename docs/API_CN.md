@@ -187,8 +187,8 @@ sequenceDiagram
 |---|---|---:|---|
 | GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
-| GET | `/pairing/persona-settings` | 200 | 读取插件专属角色身份安全字段与布尔配置状态 |
-| POST | `/pairing/persona-settings` | 200 | 原子持久化角色姓名、自称、自我描述和关系定位 |
+| GET | `/pairing/persona-settings` | 200 | 读取 AstrBot 人格安全 ID、来源、状态和手动兼容字段 |
+| POST | `/pairing/persona-settings` | 200 | 原子持久化人格来源、服务端人格选择和手动兼容字段 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
@@ -199,10 +199,12 @@ sequenceDiagram
 {"chat_provider_id":"provider-instance-id"}
 ```
 
-角色身份保存请求只允许以下四个字段，额外字段按 schema 拒绝：
+人格列表每项只包含 `id`；响应不含 system prompt、预设对话、工具、技能或错误模板。角色身份保存请求只允许以下字段，额外字段按 schema 拒绝：
 
 ```json
 {
+  "persona_source_mode": "astrbot",
+  "astrbot_persona_id": "quest-persona-id-or-empty",
   "character_name": "角色姓名",
   "character_self_reference": "我",
   "character_self_description": "角色明确知道的自我描述",
@@ -210,7 +212,9 @@ sequenceDiagram
 }
 ```
 
-这些字段只定义角色自身。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。字段为空时后端明确使用通用 Quest 混合现实角色定位，不臆造姓名、身世、职业、过去经历或共同记忆。
+`persona_source_mode=astrbot` 时，非空 `astrbot_persona_id` 必须由管理员 Page 从 AstrBot 公开人格目录选择并由后端重新校验；空值继承 AstrBot 明确默认人格。删除或失效的显式人格失败关闭到通用 MR 身份，不会自动切换默认或其他人格。`manual_override` 才会启用后四个兼容字段。
+
+Unity 的任何 Protocol 1.0 请求都不接受 persona 内容或 persona ID。Quest 当前没有可信 AstrBot UMO/Conversation ID 映射，故服务端保存的 `astrbot_persona_id` 是 Quest 会话人格选择；不得信任客户端自报。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。
 
 诊断端点只返回 `event/component/code/error_type/duration_ms/status`，不返回时间戳、路径、正文、音频、Provider ID、会话或身份标识、配置值和密钥。它只存在于 AstrBot 认证后的 Dashboard/plugin-scope 路由，内置 8520 listener 不代理。
 

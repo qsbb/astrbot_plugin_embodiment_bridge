@@ -13,7 +13,7 @@
     <header class="page-header">
       <div>
         <h1>Quest 角色设置</h1>
-        <p>凝心溯溪-临 · 管理对话模型与关系自然人</p>
+        <p>凝心溯溪-临 · 继承 AstrBot 人格并管理对话模型与关系自然人</p>
       </div>
       <div class="runtime-state" role="status" aria-live="polite" aria-atomic="true">
         <span class="state-dot" aria-hidden="true"></span>
@@ -37,6 +37,19 @@
       <section class="setting-panel persona-panel" aria-labelledby="persona-title">
         <span class="section-label">角色</span>
         <h2 id="persona-title">自我身份</h2>
+        <p>AstrBot 人格正文只在后端使用；本页只显示安全 ID、来源和状态。</p>
+        <label for="persona-source-mode">人格来源</label>
+        <select id="persona-source-mode" disabled>
+          <option value="astrbot">继承 AstrBot 人格</option>
+          <option value="manual_override">手动兼容覆盖</option>
+        </select>
+        <div id="astrbot-persona-fields" class="persona-source-fields">
+          <label for="astrbot-persona-id">AstrBot 人格</label>
+          <select id="astrbot-persona-id" disabled>
+            <option value="">AstrBot 明确默认人格</option>
+          </select>
+        </div>
+        <div id="manual-persona-fields" class="manual-persona-fields" hidden>
         <label for="character-name">姓名</label>
         <input id="character-name" type="text" maxlength="64" autocomplete="off" />
         <label for="character-self-reference">自称</label>
@@ -45,8 +58,9 @@
         <input id="character-user-relationship" type="text" maxlength="256" autocomplete="off" />
         <label for="character-self-description">自我描述</label>
         <textarea id="character-self-description" maxlength="2000" rows="6"></textarea>
+        </div>
         <p id="persona-status" class="field-status" role="status">尚未读取</p>
-        <button id="save-persona-button" class="primary" type="button" aria-busy="false" disabled>保存角色身份</button>
+        <button id="save-persona-button" class="primary" type="button" aria-busy="false" disabled>保存人格来源</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="identity-title">
@@ -67,7 +81,7 @@
 
     <section class="boundary-note" aria-label="权限边界">
       <strong>自然人绑定不会授予权限</strong>
-      <span>Quest 会话仍按服务端固定的平台、机器人和用户身份授权；候选不可用时关系上下文关闭，不会自动换人。</span>
+      <span>Quest 会话仍按服务端固定身份授权；relationship_person_id 只读取关系快照，绝不会决定角色人格。</span>
     </section>
 
     <div id="startup-error" class="startup-error" role="alert" hidden></div>

@@ -6,6 +6,9 @@ from typing import Any
 
 import pytest
 
+from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_persona import (
+    AstrBotPersonaAdapter,
+)
 from astrbot_plugin_quest_avatar_bridge.core.operator_settings import (
     OperatorSettings,
     OperatorSettingsError,
@@ -34,6 +37,7 @@ class ProviderStub:
 class ContextStub:
     def __init__(self, providers: list[Any]) -> None:
         self.providers = providers
+        self.persona_manager = PersonaManagerStub()
 
     def get_all_providers(self) -> list[Any]:
         return self.providers
@@ -92,21 +96,47 @@ class RelationshipStub:
         self.person_id = person_id
 
 
+class PersonaManagerStub:
+    def __init__(self) -> None:
+        self.personas = {
+            "persona-a": SimpleNamespace(
+                persona_id="persona-a",
+                system_prompt="private persona prompt",
+                tools=["private-tool"],
+                begin_dialogs=["private-dialog"],
+            )
+        }
+
+    async def get_persona(self, persona_id: str) -> Any:
+        if persona_id not in self.personas:
+            raise ValueError("missing")
+        return self.personas[persona_id]
+
+    async def get_default_persona_v3(self, umo: Any = None) -> dict[str, str]:
+        assert umo is None
+        return {"name": "default", "prompt": "private default prompt"}
+
+    async def get_all_personas(self) -> list[Any]:
+        return list(self.personas.values())
+
+
 def build_settings(
     *,
     config: NativeConfigStub | dict[str, Any],
     selected: str = "",
 ) -> OperatorSettings:
+    context = ContextStub(
+        [
+            ProviderStub("model-b", "gpt-b", "secret-b"),
+            ProviderStub("model-a", "gpt-a", "secret-a"),
+        ]
+    )
     return OperatorSettings(
-        context=ContextStub(
-            [
-                ProviderStub("model-b", "gpt-b", "secret-b"),
-                ProviderStub("model-a", "gpt-a", "secret-a"),
-            ]
-        ),
+        context=context,
         config=config,
         llm=LlmStub(selected),
         relationship=RelationshipStub(),
+        persona=AstrBotPersonaAdapter(context),
         logger=LoggerStub(),
     )
 
@@ -182,6 +212,8 @@ def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
         settings.llm.character_name = "Before"
 
         saved = await settings.save_character_persona(
+            persona_source_mode="manual_override",
+            astrbot_persona_id="",
             character_name="Lingxi",
             character_self_reference="I",
             character_self_description="A Quest companion",
@@ -190,6 +222,8 @@ def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
         assert saved["character_name"] == "Lingxi"
         assert saved["persona_configured"] is True
         assert config.saves[-1] == {
+            "persona_source_mode": "manual_override",
+            "astrbot_persona_id": "",
             "character_name": "Lingxi",
             "character_self_reference": "I",
             "character_self_description": "A Quest companion",
@@ -199,6 +233,8 @@ def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
         config.fail = True
         with pytest.raises(OperatorSettingsError) as failed:
             await settings.save_character_persona(
+                persona_source_mode="manual_override",
+                astrbot_persona_id="",
                 character_name="After",
                 character_self_reference="me",
                 character_self_description="changed",
@@ -207,6 +243,69 @@ def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
         assert failed.value.code == "config_save_failed"
         assert settings.llm.character_name == "Lingxi"
         assert config["character_name"] == "Lingxi"
+
+    asyncio.run(scenario())
+
+
+def test_astrbot_persona_selection_is_safe_and_prompt_is_never_projected() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub()
+        settings = build_settings(config=config)
+
+        overview = await settings.persona_overview()
+        assert overview["source"] == "astrbot_default"
+        assert overview["personas"] == [{"id": "persona-a"}]
+        assert "private persona prompt" not in repr(overview)
+        assert "private default prompt" not in repr(overview)
+        assert "private-tool" not in repr(overview)
+
+        saved = await settings.save_character_persona(
+            persona_source_mode="astrbot",
+            astrbot_persona_id="persona-a",
+            character_name="manual fallback",
+            character_self_reference="I",
+            character_self_description="manual description",
+            character_user_relationship="friend",
+        )
+        assert saved["source"] == "astrbot_selected"
+        assert saved["astrbot_persona_id"] == "persona-a"
+        assert saved["character_name_configured"] is False
+        assert config["persona_source_mode"] == "astrbot"
+
+        with pytest.raises(OperatorSettingsError) as missing:
+            await settings.save_character_persona(
+                persona_source_mode="astrbot",
+                astrbot_persona_id="missing",
+                character_name="",
+                character_self_reference="",
+                character_self_description="",
+                character_user_relationship="",
+            )
+        assert missing.value.code == "persona_not_available"
+
+    asyncio.run(scenario())
+
+
+def test_persona_source_save_failure_keeps_runtime_selection() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {"persona_source_mode": "astrbot", "astrbot_persona_id": ""},
+            fail=True,
+        )
+        settings = build_settings(config=config)
+
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_character_persona(
+                persona_source_mode="astrbot",
+                astrbot_persona_id="persona-a",
+                character_name="",
+                character_self_reference="",
+                character_self_description="",
+                character_user_relationship="",
+            )
+        assert failed.value.code == "config_save_failed"
+        assert settings.persona.persona_id == ""
+        assert settings.persona.source_mode == "astrbot"
 
     asyncio.run(scenario())
 

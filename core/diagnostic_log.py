@@ -37,6 +37,9 @@ _SAFE_FIELD_NAMES = frozenset(
         "rotated",
         "persona_configured",
         "character_name_configured",
+        "name_configured",
+        "persona_source",
+        "persona_status",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
@@ -45,7 +48,23 @@ _SENSITIVE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
-    {"persona_configured", "character_name_configured"}
+    {"persona_configured", "character_name_configured", "name_configured"}
+)
+_SAFE_PERSONA_ENUM_FIELDS = frozenset({"persona_source", "persona_status"})
+_SAFE_PERSONA_ENUM_VALUES = frozenset(
+    {
+        "astrbot_selected",
+        "astrbot_default",
+        "manual_override",
+        "generic",
+        "ready",
+        "not_checked",
+        "selected_missing",
+        "default_missing",
+        "timeout",
+        "unavailable",
+        "configuration_invalid",
+    }
 )
 
 PLUGIN_ID = "astrbot_plugin_quest_avatar_bridge"
@@ -120,6 +139,7 @@ class DiagnosticLog:
             if name not in _SAFE_FIELD_NAMES or (
                 _SENSITIVE_NAME_RE.search(name)
                 and name not in _SAFE_BOOLEAN_STATUS_FIELDS
+                and name not in _SAFE_PERSONA_ENUM_FIELDS
             ):
                 continue
             safe = self._safe_value(name, value)
@@ -329,6 +349,8 @@ class DiagnosticLog:
     def _safe_value(cls, name: str, value: Any) -> Any:
         if name in _SAFE_BOOLEAN_STATUS_FIELDS:
             return value if isinstance(value, bool) else None
+        if name in _SAFE_PERSONA_ENUM_FIELDS:
+            return value if value in _SAFE_PERSONA_ENUM_VALUES else None
         if isinstance(value, bool):
             return value
         if isinstance(value, int) and not isinstance(value, bool):

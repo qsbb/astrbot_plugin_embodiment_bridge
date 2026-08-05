@@ -4,9 +4,17 @@ import asyncio
 import re
 from typing import Any
 
+from ..adapters.astrbot_persona import (
+    PersonaSelectionError,
+    normalize_persona_id,
+    normalize_source_mode,
+)
+
 
 _PERSON_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _PERSONA_KEYS = (
+    "persona_source_mode",
+    "astrbot_persona_id",
     "character_name",
     "character_self_reference",
     "character_self_description",
@@ -32,6 +40,7 @@ class OperatorSettings:
         config: Any,
         llm: Any,
         relationship: Any,
+        persona: Any,
         logger: Any,
         diagnostic_log: Any | None = None,
     ) -> None:
@@ -39,6 +48,7 @@ class OperatorSettings:
         self.config = config
         self.llm = llm
         self.relationship = relationship
+        self.persona = persona
         self.logger = logger
         self.diagnostic_log = diagnostic_log
         self._save_lock = asyncio.Lock()
@@ -68,7 +78,13 @@ class OperatorSettings:
         }
 
     def persona_snapshot(self) -> dict[str, Any]:
+        inherited = self.persona.status_snapshot()
+        manual_mode = inherited["source_mode"] == "manual_override"
         return {
+            **inherited,
+            "astrbot_persona_id": self.persona.persona_id,
+            "personas_status": "not_loaded",
+            "personas": [],
             "character_name": str(getattr(self.llm, "character_name", "") or ""),
             "character_self_reference": str(
                 getattr(self.llm, "character_self_reference", "") or ""
@@ -79,14 +95,49 @@ class OperatorSettings:
             "character_user_relationship": str(
                 getattr(self.llm, "character_user_relationship", "") or ""
             ),
-            "persona_configured": bool(getattr(self.llm, "persona_configured", False)),
+            "persona_configured": (
+                bool(getattr(self.llm, "persona_configured", False))
+                if manual_mode
+                else inherited["status"] == "ready"
+            ),
             "character_name_configured": bool(
                 getattr(self.llm, "character_name_configured", False)
+                if manual_mode
+                else False
+            ),
+            "name_configured": bool(
+                getattr(self.llm, "character_name_configured", False)
+                if manual_mode
+                else inherited["name_configured"]
             ),
             "config_writable": callable(
                 getattr(self.config, "save_config_async", None)
             ),
         }
+
+    async def persona_overview(self) -> dict[str, Any]:
+        resolved, catalog = await asyncio.gather(
+            self.persona.resolve(),
+            self.persona.list_safe_personas(),
+        )
+        snapshot = self.persona_snapshot()
+        snapshot.update(
+            source=resolved.source,
+            status=resolved.status,
+            name_configured=(
+                self.llm.character_name_configured
+                if resolved.source == "manual_override"
+                else resolved.name_configured
+            ),
+            persona_configured=(
+                self.llm.persona_configured
+                if resolved.source == "manual_override"
+                else resolved.status == "ready"
+            ),
+            personas_status=catalog["status"],
+            personas=catalog["personas"],
+        )
+        return snapshot
 
     async def save_chat_provider_id(self, value: str) -> dict[str, Any]:
         provider_id = str(value or "").strip()
@@ -122,12 +173,45 @@ class OperatorSettings:
     async def save_character_persona(
         self,
         *,
+        persona_source_mode: str,
+        astrbot_persona_id: str,
         character_name: str,
         character_self_reference: str,
         character_self_description: str,
         character_user_relationship: str,
     ) -> dict[str, Any]:
+        source_mode = normalize_source_mode(persona_source_mode)
+        if str(persona_source_mode or "").strip().lower() not in {
+            "astrbot",
+            "manual_override",
+        }:
+            raise OperatorSettingsError(
+                "invalid_persona_source_mode",
+                422,
+                "人格来源模式无效",
+            )
+        try:
+            persona_id = normalize_persona_id(astrbot_persona_id)
+        except ValueError as exc:
+            raise OperatorSettingsError(
+                "invalid_astrbot_persona_id",
+                422,
+                "AstrBot 人格 ID 无效",
+            ) from exc
+        if source_mode == "astrbot" and persona_id:
+            try:
+                persona_id = await self.persona.validate_selection(persona_id)
+            except PersonaSelectionError as exc:
+                status = 503 if str(exc) == "persona_lookup_timeout" else 422
+                raise OperatorSettingsError(
+                    str(exc),
+                    status,
+                    "所选 AstrBot 人格不存在或当前不可用",
+                ) from exc
+
         values = {
+            "persona_source_mode": source_mode,
+            "astrbot_persona_id": persona_id,
             "character_name": _single_line(character_name, 64),
             "character_self_reference": _single_line(character_self_reference, 64),
             "character_self_description": _multi_line(
@@ -138,15 +222,40 @@ class OperatorSettings:
             ),
         }
         await self._persist_many(values)
-        self.llm.configure_persona(**values)
+        self.persona.configure(
+            source_mode=source_mode,
+            persona_id=persona_id,
+        )
+        self.llm.configure_persona(
+            character_name=values["character_name"],
+            character_self_reference=values["character_self_reference"],
+            character_self_description=values["character_self_description"],
+            character_user_relationship=values["character_user_relationship"],
+        )
+        resolved = await self.persona.resolve()
         self._diagnostic(
             "persona.updated",
             component="persona",
-            status="configured" if any(values.values()) else "default",
-            persona_configured=bool(any(values.values())),
-            character_name_configured=bool(values["character_name"]),
+            status=resolved.status,
+            persona_source=resolved.source,
+            persona_status=resolved.status,
+            persona_configured=(
+                bool(any(values[key] for key in _PERSONA_KEYS[2:]))
+                if source_mode == "manual_override"
+                else resolved.status == "ready"
+            ),
+            character_name_configured=(
+                bool(values["character_name"])
+                if source_mode == "manual_override"
+                else False
+            ),
+            name_configured=(
+                bool(values["character_name"])
+                if source_mode == "manual_override"
+                else resolved.name_configured
+            ),
         )
-        return self.persona_snapshot()
+        return await self.persona_overview()
 
     def _list_chat_providers(self) -> list[dict[str, str]]:
         try:

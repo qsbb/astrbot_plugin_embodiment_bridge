@@ -68,6 +68,14 @@ def test_session_schema_rejects_whitespace_only_group_scope() -> None:
     assert SessionStartRequest.model_validate(payload).group_id == ""
     with pytest.raises(ValidationError):
         SessionStartRequest.model_validate({**payload, "group_id": "   "})
+    with pytest.raises(ValidationError):
+        SessionStartRequest.model_validate(
+            {**payload, "persona_id": "client-selected-persona"}
+        )
+    with pytest.raises(ValidationError):
+        SessionStartRequest.model_validate(
+            {**payload, "persona": {"system_prompt": "client content"}}
+        )
 
 
 def test_turn_start_accepts_unity_text_and_audio_shapes() -> None:

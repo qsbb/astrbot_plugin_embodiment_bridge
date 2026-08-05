@@ -260,11 +260,15 @@ def test_persona_diagnostics_only_write_boolean_configuration_state(
         diagnostic.record(
             "persona.status",
             component="persona",
-            status="configured",
+            status="ready",
+            persona_source="astrbot_selected",
+            persona_status="ready",
             persona_configured=True,
             character_name_configured=False,
+            name_configured=False,
             character_name="name-secret",
             persona_text="persona-secret",
+            astrbot_persona_id="persona-secret-id",
         )
         assert await diagnostic.flush()
         assert diagnostic.status_snapshot() == {
@@ -277,8 +281,12 @@ def test_persona_diagnostics_only_write_boolean_configuration_state(
         payload = json.loads(line)
         assert payload["persona_configured"] is True
         assert payload["character_name_configured"] is False
+        assert payload["name_configured"] is False
+        assert payload["persona_source"] == "astrbot_selected"
+        assert payload["persona_status"] == "ready"
         assert "name-secret" not in line
         assert "persona-secret" not in line
+        assert "persona-secret-id" not in line
         await diagnostic.close()
 
     asyncio.run(scenario())

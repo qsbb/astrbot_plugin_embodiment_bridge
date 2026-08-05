@@ -136,6 +136,33 @@ function renderOperatorSettings(settings) {
 function renderPersonaSettings(persona) {
   personaSettings = persona || {};
   const writable = personaSettings.config_writable === true;
+  const sourceMode = personaSettings.source_mode === "manual_override"
+    ? "manual_override"
+    : "astrbot";
+  const sourceSelect = document.getElementById("persona-source-mode");
+  sourceSelect.value = sourceMode;
+  sourceSelect.disabled = !writable;
+
+  const personaSelect = document.getElementById("astrbot-persona-id");
+  const personas = Array.isArray(personaSettings.personas)
+    ? personaSettings.personas
+    : [];
+  personaSelect.replaceChildren(new Option("AstrBot 明确默认人格", ""));
+  personas.forEach((item) => {
+    personaSelect.add(new Option(String(item.id || ""), String(item.id || "")));
+  });
+  const selectedPersona = String(personaSettings.persona_selected
+    ? personaSettings.astrbot_persona_id || ""
+    : "");
+  if (
+    selectedPersona &&
+    !personas.some((item) => String(item.id || "") === selectedPersona)
+  ) {
+    personaSelect.add(new Option("已选择但不可用", selectedPersona));
+  }
+  personaSelect.value = selectedPersona;
+  personaSelect.disabled = !writable || sourceMode !== "astrbot";
+
   const fields = {
     "character-name": personaSettings.character_name,
     "character-self-reference": personaSettings.character_self_reference,
@@ -145,13 +172,28 @@ function renderPersonaSettings(persona) {
   Object.entries(fields).forEach(([id, value]) => {
     const input = document.getElementById(id);
     input.value = String(value || "");
-    input.disabled = !writable;
+    input.disabled = !writable || sourceMode !== "manual_override";
   });
+  document.getElementById("astrbot-persona-fields").hidden =
+    sourceMode !== "astrbot";
+  document.getElementById("manual-persona-fields").hidden =
+    sourceMode !== "manual_override";
   const status = document.getElementById("persona-status");
+  const statusMessages = {
+    ready: sourceMode === "manual_override"
+      ? "手动兼容身份已启用"
+      : personaSettings.source === "astrbot_selected"
+        ? "正在继承管理员选择的 AstrBot 人格"
+        : "正在继承 AstrBot 明确默认人格",
+    selected_missing: "所选人格已删除或失效；当前安全回退通用 MR 身份，不会自动换人格",
+    default_missing: "AstrBot 默认人格不可用；当前安全回退通用 MR 身份",
+    timeout: "AstrBot 人格读取超时；当前安全回退通用 MR 身份",
+    unavailable: "AstrBot 人格接口当前不可用；当前安全回退通用 MR 身份",
+    configuration_invalid: "已保存的人格 ID 无效；当前安全回退通用 MR 身份",
+    not_checked: "人格尚未完成读取"
+  };
   status.textContent = writable
-    ? personaSettings.persona_configured
-      ? "角色自我身份已配置"
-      : "尚未配置姓名与背景，将使用不臆造身份的通用定位"
+    ? statusMessages[personaSettings.status] || "当前使用通用 MR 身份"
     : "当前 AstrBot 配置对象不支持异步保存";
   document.getElementById("save-persona-button").disabled = !writable;
 }
@@ -171,6 +213,8 @@ async function savePersonaSettings() {
   if (!setButtonBusy(button, true, "正在保存…")) return;
   try {
     const response = await apiPost("pairing/persona-settings", {
+      persona_source_mode: document.getElementById("persona-source-mode").value,
+      astrbot_persona_id: document.getElementById("astrbot-persona-id").value,
       character_name: document.getElementById("character-name").value,
       character_self_reference: document.getElementById(
         "character-self-reference"
@@ -183,7 +227,7 @@ async function savePersonaSettings() {
       ).value
     });
     renderPersonaSettings(response.persona);
-    toast("角色自我身份已保存并立即生效");
+    toast("人格来源已保存并立即生效");
   } catch (error) {
     toast("角色身份保存失败：" + error.message, true);
   } finally {
@@ -312,6 +356,14 @@ function bindEvents() {
   document
     .getElementById("save-persona-button")
     .addEventListener("click", savePersonaSettings);
+  document
+    .getElementById("persona-source-mode")
+    .addEventListener("change", () => {
+      renderPersonaSettings({
+        ...personaSettings,
+        source_mode: document.getElementById("persona-source-mode").value
+      });
+    });
   document
     .getElementById("load-identity-candidates")
     .addEventListener("click", loadIdentityCandidates);

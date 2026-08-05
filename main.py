@@ -7,6 +7,7 @@ from astrbot.api import AstrBotConfig
 from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
+from .adapters.astrbot_persona import AstrBotPersonaAdapter
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
@@ -40,7 +41,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -97,6 +98,11 @@ class QuestAvatarBridgePlugin(Star):
                 "interaction_debounce_ms", 250, 0, 2_000
             ),
         )
+        self.persona = AstrBotPersonaAdapter(
+            context,
+            source_mode=str(config.get("persona_source_mode", "astrbot") or "astrbot"),
+            persona_id=str(config.get("astrbot_persona_id", "") or ""),
+        )
         self.llm = AstrBotLLMAdapter(
             context,
             chat_provider_id=str(config.get("chat_provider_id", "") or ""),
@@ -111,6 +117,7 @@ class QuestAvatarBridgePlugin(Star):
             character_user_relationship=str(
                 config.get("character_user_relationship", "") or ""
             ),
+            persona_adapter=self.persona,
         )
         self.astrbot_stt = AstrBotSTTAdapter(
             context,
@@ -255,6 +262,7 @@ class QuestAvatarBridgePlugin(Star):
             config=config,
             llm=self.llm,
             relationship=self.relationship,
+            persona=self.persona,
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
         )
@@ -321,6 +329,7 @@ class QuestAvatarBridgePlugin(Star):
                 self.pairing.bootstrap_reason,
             )
         runtime = await self.runtime.refresh()
+        persona = await self.persona.resolve()
         self._component_logger.info(
             "[quest-avatar] bridge initialized: version=%s transport=http+sse listener=%s llm=%s stt=%s tts=%s runtime=%s",
             __version__,
@@ -349,9 +358,24 @@ class QuestAvatarBridgePlugin(Star):
         self.diagnostic_log.record(
             "persona.status",
             component="persona",
-            status="configured" if self.llm.persona_configured else "default",
-            persona_configured=self.llm.persona_configured,
-            character_name_configured=self.llm.character_name_configured,
+            status=persona.status,
+            persona_source=persona.source,
+            persona_status=persona.status,
+            persona_configured=(
+                self.llm.persona_configured
+                if persona.source == "manual_override"
+                else persona.status == "ready"
+            ),
+            character_name_configured=(
+                self.llm.character_name_configured
+                if persona.source == "manual_override"
+                else False
+            ),
+            name_configured=(
+                self.llm.character_name_configured
+                if persona.source == "manual_override"
+                else persona.name_configured
+            ),
         )
 
     def plugin_health(self) -> dict[str, object]:

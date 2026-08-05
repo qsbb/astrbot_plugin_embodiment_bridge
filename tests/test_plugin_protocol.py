@@ -279,6 +279,15 @@ def test_persona_api_schema_rejects_extra_or_secret_fields(
             }
         )
 
+    with pytest.raises(ValidationError):
+        pairing.CharacterPersonaSettingsRequest.model_validate(
+            {
+                "persona_source_mode": "astrbot",
+                "astrbot_persona_id": "persona-a",
+                "system_prompt": "client supplied persona",
+            }
+        )
+
 
 def test_http_layer_requires_both_astrbot_and_bridge_auth(
     monkeypatch: Any,

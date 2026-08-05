@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-08-05
+
+### Added
+
+- Quest 角色身份默认从 AstrBot 4.27.1 公开 `persona_manager` 读取：管理员可为 Quest 显式选择人格，未选择时继承 AstrBot 明确默认人格；人格删除、读取超时或响应畸形时安全回退通用 MR 身份。
+- 「Quest 角色设置」Page 只列出脱敏人格 ID 与来源、状态、布尔标签，不返回人格正文、预设对话、工具、技能或错误模板。
+
+### Changed
+
+- 现有四个手动角色字段保留为兼容配置，但仅在管理员明确启用 `manual_override` 时生效；默认 `astrbot` 模式不会让旧手动字段覆盖 AstrBot 人格。
+- 每个 LLM turn 异步读取一个有界超时的人格快照。AstrBot 人格作为受限的身份与表达数据注入，不能覆盖 Protocol 1.0 JSON schema、认证授权、安全边界、动作白名单或模型无关边界。
+
+### Security
+
+- Unity 的 `session/start` 及其他 Protocol 1.0 请求不接受 persona 内容或 persona ID；`relationship_person_id` 仍只用于关系快照，不能参与人格选择或身份推断。
+- 独立诊断日志只记录 `persona_source`、`persona_status` 和配置布尔值，不记录人格 ID、姓名或正文。
+
 ## 0.4.1 - 2026-08-05
 
 ### Fixed
