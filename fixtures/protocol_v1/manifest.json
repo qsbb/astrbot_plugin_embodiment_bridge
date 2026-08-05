@@ -31,6 +31,7 @@
     {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "GET", "path": "/pairing/diagnostics", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/identity-candidates", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/identity-selection", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
@@ -103,6 +104,14 @@
     "tts_failed_after_text": [
       "avatar.intent",
       "reply.text.delta",
+      "error",
+      "reply.end"
+    ],
+    "turn_failed": [
+      "error",
+      "reply.end"
+    ],
+    "interaction_failed": [
       "error",
       "reply.end"
     ]

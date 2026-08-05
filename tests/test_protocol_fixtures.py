@@ -203,8 +203,8 @@ def test_audio_flow_cases_reference_stable_fixtures_and_errors() -> None:
         if fixture_name:
             assert (FIXTURES / fixture_name).is_file()
     assert cases["sse_event_order"] == {
-        "stt_unavailable": ["error"],
-        "stt_failed": ["error"],
+        "stt_unavailable": ["error", "reply.end"],
+        "stt_failed": ["error", "reply.end"],
         "tts_failed_after_text": [
             "avatar.intent",
             "reply.text.delta",

@@ -168,7 +168,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/operator-settings`、`pairing/persona-settings`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/operator-settings`、`pairing/persona-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -189,6 +189,7 @@ sequenceDiagram
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
 | GET | `/pairing/persona-settings` | 200 | 读取插件专属角色身份安全字段与布尔配置状态 |
 | POST | `/pairing/persona-settings` | 200 | 原子持久化角色姓名、自称、自我描述和关系定位 |
+| GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
 
@@ -210,6 +211,8 @@ sequenceDiagram
 ```
 
 这些字段只定义角色自身。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。字段为空时后端明确使用通用 Quest 混合现实角色定位，不臆造姓名、身世、职业、过去经历或共同记忆。
+
+诊断端点只返回 `event/component/code/error_type/duration_ms/status`，不返回时间戳、路径、正文、音频、Provider ID、会话或身份标识、配置值和密钥。它只存在于 AstrBot 认证后的 Dashboard/plugin-scope 路由，内置 8520 listener 不代理。
 
 自然人候选只接受 `relationship.identity_candidates@1.0` 的 `admin_labels_only` 响应，每项仅含 `person_id`、`display_name`、`account_count`。当前“情”未提供兼容契约时返回空候选和 `contract_unavailable`；Bridge 不读取其私有 registry，也不转发 identities Page。保存请求只允许：
 
@@ -732,7 +735,7 @@ Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降�
 }
 ```
 
-前端收到后才能把该轮标记为正常完成。被打断的旧轮不会收到 `reply.end`。
+`status=completed` 表示正常完成；`status=failed` 表示前序 `error` 已终止该轮，此时 `text_sent=false` 且 `audio_sent=false`。被显式打断的旧轮仍不会收到 `reply.end`。
 
 ### 15.7 `error`
 
@@ -747,7 +750,7 @@ Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降�
 }
 ```
 
-SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分别处理。
+SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分别处理。LLM、STT 或 interaction 决策失败时，事件顺序固定为 `error` 后跟 `reply.end(status=failed)`，前端必须结束 Thinking。TTS 在文字已送达后失败仍按既有语义发送 `error` 和 `reply.end(status=completed,audio_sent=false)`。
 
 稳定的 SSE 错误码：
 

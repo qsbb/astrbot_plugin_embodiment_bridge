@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from aiohttp import ClientSession
@@ -278,6 +279,54 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                     json={"person_id": ""},
                 )
                 assert cleared.status == 200
+
+    asyncio.run(scenario())
+
+
+def test_diagnostics_projection_is_dashboard_protected_and_redacted(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        bundle.plugin.diagnostic_log.enabled = True
+        bundle.plugin.diagnostic_log.record(
+            "llm.error",
+            component="llm",
+            code="llm_failed",
+            error_type="ProviderNotFoundError",
+            duration_ms=12.5,
+            status="failed",
+            user_id="identity-secret",
+            reply_text="reply-secret",
+        )
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/diagnostics"))
+                assert denied.status == 401
+
+                response = await client.get(
+                    server.url("/pairing/diagnostics"), headers=PAGE_AUTH
+                )
+                assert response.status == 200
+                body = await response.json()
+                assert body["diagnostics"]["status"] == "ready"
+                llm_error = next(
+                    event
+                    for event in body["diagnostics"]["events"]
+                    if event["event"] == "llm.error"
+                )
+                assert llm_error == {
+                    "event": "llm.error",
+                    "component": "llm",
+                    "code": "llm_failed",
+                    "error_type": "ProviderNotFoundError",
+                    "duration_ms": 12.5,
+                    "status": "failed",
+                }
+                serialized = json.dumps(body, ensure_ascii=False)
+                assert "identity-secret" not in serialized
+                assert "reply-secret" not in serialized
 
     asyncio.run(scenario())
 

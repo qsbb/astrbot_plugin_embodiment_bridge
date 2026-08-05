@@ -6,7 +6,7 @@
 
 - `metadata.yaml` 是无 BOM 的 UTF-8，插件名为 `astrbot_plugin_quest_avatar_bridge`，作者为 `qsbb`，版本为 `0.2.0`；与 `main.py` 的 `__version__` 一致。
 - 主类 `QuestAvatarBridgePlugin` 继承 `Star`，构造参数是 `Context` 与 `AstrBotConfig`，类名符合 AstrBot 4.26.8 的插件发现规则。
-- 所有 20 个 HTTP/SSE、配对与 Dashboard 管理接口均只使用 `Context.register_web_api(route, handler, methods, desc)` 四参数公开签名；没有 `register_websocket`、匿名路由参数或旧装饰器。
+- 所有 21 个 HTTP/SSE、配对与 Dashboard 管理接口均只使用 `Context.register_web_api(route, handler, methods, desc)` 四参数公开签名；没有 `register_websocket`、匿名路由参数或旧装饰器。
 - Page 位于 `pages/pairing/` 和 `pages/operator/`，标题资源位于 `.astrbot-plugin/i18n/zh-CN.json`。AstrBot Pages 按该目录结构自动发现，不需要 `page.json` 或额外注册方法。
 - 运行时依赖为 `pydantic`、`qrcode`、兼容范围 `aiohttp>=3.11.18,<4`，以及 Python 3.13+ 条件依赖 `audioop-lts`。AstrBot 4.26.8 本身要求 Python 3.12+；本地审计环境为 Python 3.12。
 - 未安装“知、序、情、境、声、核”任一提供方、未配置配对代理或提供方返回畸形契约时，初始化均降级，不抛出加载异常。`terminate()` 会关闭一次性配对状态，取消会话/轮次，关闭 SSE 队列并释放 LLM、STT、TTS 与只读适配器。
@@ -22,7 +22,7 @@ Bridge 已改为只读取 `request.client_host`，HTTP harness 也只暴露该�
 
 AstrBot 4.26.8 的 `Context.registered_web_apis` 是进程级注册表，公开 API 只有注册，没有注销。旧构造顺序在 9 条 Bridge 路由注册之后才创建配对管理器与配对 API；一旦后续构造失败，已经注册的绑定方法会继续引用半初始化对象，插件删除或失败清理也不能撤销这些路由。
 
-Bridge 现已先完成所有组件构造和配对 bootstrap 校验，再把 20 条路由注册作为构造函数最后的动作。回归测试会强制配对 API 构造抛错，并验证 Context 中没有留下任何路由。该修复消除了插件自身后续构造失败造成的残留；如果 AstrBot 的 `register_web_api` 本身在第 N 条注册时异常，插件侧仍无法原子回滚，这需要 Core 提供 unregister 或事务式注册能力，本插件不会修改 Core。
+Bridge 现已先完成所有组件构造和配对 bootstrap 校验，再把 21 条路由注册作为构造函数最后的动作。回归测试会强制配对 API 构造抛错，并验证 Context 中没有留下任何路由。该修复消除了插件自身后续构造失败造成的残留；如果 AstrBot 的 `register_web_api` 本身在第 N 条注册时异常，插件侧仍无法原子回滚，这需要 Core 提供 unregister 或事务式注册能力，本插件不会修改 Core。
 
 ## 目前无法证实的远端根因
 
@@ -42,6 +42,6 @@ Bridge 现已先完成所有组件构造和配对 bootstrap 校验，再把 20 �
 - 端口占用时 `initialize()` 不抛出导致插件加载失败，health/overview 仅公开 `bind_failed` 等脱敏 reason。
 - `terminate()` 可重复调用，且关闭后同一端口能被新 listener 立即重新绑定。
 - 活动 SSE 在下游断线或 terminate 时释放上游连接，不残留 `ClientSession`、runner 或后台任务。
-- 内置 listener 不增加 `register_web_api` 路由；AstrBot 注册路由数现为 20（包含两个 persona 管理路由）。
+- 内置 listener 不增加 `register_web_api` 路由；AstrBot 注册路由数现为 21（包含两个 persona 管理路由和一个脱敏诊断路由）。
 
 生产白名单必须新增 `transport/builtin_listener.py`，并包含本次接线修改的 `main.py`、`core/pairing.py`、`transport/pairing.py`、`transport/http_sse.py`、`requirements.txt`、`_conf_schema.json`、专项测试及配套文档。打包时不得包含本地测试缓存或真实配置/密钥。

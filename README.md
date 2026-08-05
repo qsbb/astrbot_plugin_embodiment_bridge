@@ -287,10 +287,12 @@ data: {"type":"reply.end","protocol_version":"1.0","session_id":"s1","turn_id":"
 | `reply.text.delta` | 可重建的回复文本增量 |
 | `reply.audio.chunk` | Base64 PCM16、单声道、24000 Hz 音频 |
 | `avatar.intent` | 必须保留的模型无关角色意图 |
-| `reply.end` | 必须保留的正常轮次结束标记 |
+| `reply.end` | 必须保留的轮次终止标记；`completed` 为完成，`failed` 为错误终止 |
 | `error` | 必须保留的轮次错误 |
 
 慢客户端导致队列满时，插件可以合并 `asr.partial`，并优先丢弃可重建的 partial 或文字增量。`asr.final`、`reply.audio.chunk`、`avatar.intent`、`reply.end` 和 `error` 不会被主动丢弃；当队列只剩这些受保护事件时，生产任务等待客户端消费。interrupt 会取消等待并清除旧轮事件，因此背压不会让旧音频越过 generation 边界。
+
+LLM、STT 或 interaction 决策失败会固定发送 `error`，随后发送 `reply.end(status=failed,text_sent=false,audio_sent=false)`，Unity 不应继续停留在 Thinking。显式 interrupt 保持严格取消语义，确认后不发送旧 turn 的 `reply.end`。
 
 ## 意图白名单
 

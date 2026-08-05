@@ -88,6 +88,12 @@ class DecisionStub:
         pass
 
 
+class FailingDecisionStub(DecisionStub):
+    async def generate(self, **kwargs: Any) -> ModelDecision:
+        del kwargs
+        raise RuntimeError("provider failed")
+
+
 class LateDecisionStub(DecisionStub):
     def __init__(self, decision: ModelDecision) -> None:
         super().__init__(decision)
@@ -256,6 +262,56 @@ def test_invalid_llm_structure_has_safe_neutral_fallback() -> None:
         assert events[0]["gesture"] == "idle"
         assert events[0]["look_at"] == "none"
         assert events[-1]["type"] == "reply.end"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_text_and_interaction_failures_emit_terminal_reply_end() -> None:
+    async def collect_failure(session: Any) -> list[dict[str, Any]]:
+        return [
+            (await asyncio.wait_for(session.queue.get(), timeout=1)).payload
+            for _ in range(2)
+        ]
+
+    async def scenario() -> None:
+        failed = decision(Emotion.NEUTRAL, Gesture.IDLE, LookAt.NONE, "unused", "")
+        sessions, session, orchestrator = await build_orchestrator(
+            FailingDecisionStub(failed)
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t1", text="hello"),
+        )
+        text_events = await collect_failure(session)
+        assert [event["type"] for event in text_events] == ["error", "reply.end"]
+        assert text_events[0]["code"] == "turn_failed"
+        assert text_events[1] == {
+            "type": "reply.end",
+            "protocol_version": "1.0",
+            "session_id": "s1",
+            "turn_id": "t1",
+            "status": "failed",
+            "text_sent": False,
+            "audio_sent": False,
+        }
+
+        interaction = InteractionEvent(
+            session_id="s1",
+            event_id="e1",
+            name="head_pat",
+            phase="start",
+            strength=0.5,
+            hand="right",
+        )
+        await orchestrator.submit_interaction(session, interaction)
+        interaction_events = await collect_failure(session)
+        assert [event["type"] for event in interaction_events] == [
+            "error",
+            "reply.end",
+        ]
+        assert interaction_events[0]["code"] == "interaction_failed"
+        assert interaction_events[1]["status"] == "failed"
         await orchestrator.close()
 
     asyncio.run(scenario())

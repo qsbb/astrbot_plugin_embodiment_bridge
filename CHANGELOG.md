@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.4.1 - 2026-08-05
+
+### Fixed
+
+- LLM、STT 和 interaction 决策失败现在固定发送 `error` 后再发送 `reply.end(status=failed)`，避免 Unity 永久停留在 Thinking。
+- 新增 Dashboard 认证下的脱敏诊断投影，不依赖“核”的动态发现即可读取阶段、错误类型、耗时和状态；不暴露正文、标识、路径或密钥。
+
 ## 0.4.0 - 2026-08-05
 
 ### Added

@@ -472,6 +472,9 @@ def test_real_http_stt_unavailable_and_tts_failure_orders(
                 error = await read_sse_frame(events)
                 assert error.event == "error"
                 assert error.data == load_json("stt_unavailable.event.json")
+                terminal = await read_sse_frame(events)
+                assert terminal.event == "reply.end"
+                assert terminal.data == load_json("reply_end.failed.event.json")
                 events.close()
 
     async def tts_scenario() -> None:
@@ -552,6 +555,9 @@ def test_real_http_stt_unavailable_and_tts_failure_orders(
                 error = await read_sse_frame(events)
                 assert error.event == "error"
                 assert error.data == load_json("stt_failed.event.json")
+                terminal = await read_sse_frame(events)
+                assert terminal.event == "reply.end"
+                assert terminal.data == load_json("reply_end.failed.event.json")
                 events.close()
 
     asyncio.run(stt_scenario())

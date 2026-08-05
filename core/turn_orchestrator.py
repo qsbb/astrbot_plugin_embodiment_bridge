@@ -170,7 +170,7 @@ class TurnOrchestrator:
                 bytes=len(pcm16),
             )
             if not text.strip():
-                await self._emit_error(
+                await self._emit_terminal_error(
                     session, turn, "stt_empty", "Speech was not recognized"
                 )
                 return
@@ -195,7 +195,7 @@ class TurnOrchestrator:
                 error_type="AdapterUnavailable",
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
-            await self._emit_error(
+            await self._emit_terminal_error(
                 session,
                 turn,
                 "stt_unavailable",
@@ -212,7 +212,7 @@ class TurnOrchestrator:
             self.logger.warning(
                 "[quest-avatar] STT turn failed: error_type=%s", type(exc).__name__
             )
-            await self._emit_error(
+            await self._emit_terminal_error(
                 session, turn, "stt_failed", "Speech recognition failed"
             )
 
@@ -230,7 +230,7 @@ class TurnOrchestrator:
             self.logger.warning(
                 "[quest-avatar] text turn failed: error_type=%s", type(exc).__name__
             )
-            await self._emit_error(
+            await self._emit_terminal_error(
                 session, turn, "turn_failed", "Turn generation failed"
             )
 
@@ -259,7 +259,7 @@ class TurnOrchestrator:
                 "[quest-avatar] interaction turn failed: error_type=%s",
                 type(exc).__name__,
             )
-            await self._emit_error(
+            await self._emit_terminal_error(
                 session,
                 turn,
                 "interaction_failed",
@@ -526,6 +526,26 @@ class TurnOrchestrator:
             session,
             turn,
             {"type": "error", "code": code, "message": message},
+        )
+
+    async def _emit_terminal_error(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        code: str,
+        message: str,
+    ) -> bool:
+        if not await self._emit_error(session, turn, code, message):
+            return False
+        return await self._emit(
+            session,
+            turn,
+            {
+                "type": "reply.end",
+                "status": "failed",
+                "text_sent": False,
+                "audio_sent": False,
+            },
         )
 
     async def _normalized_audio_chunks(

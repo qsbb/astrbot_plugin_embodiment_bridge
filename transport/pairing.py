@@ -120,6 +120,12 @@ class PairingHttpApi:
                 "Save Quest character persona settings",
             ),
             (
+                "pairing/diagnostics",
+                self.diagnostics_overview,
+                ["GET"],
+                "Read redacted Quest Bridge diagnostics",
+            ),
+            (
                 "pairing/identity-candidates",
                 self.identity_candidates,
                 ["GET"],
@@ -218,6 +224,45 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "persona": persona})
         except Exception as exc:
             return self._error(exc, "save_persona_settings")
+
+    async def diagnostics_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            if self.diagnostic_log is None:
+                return _json_no_store(
+                    {
+                        "success": True,
+                        "diagnostics": {"status": "disabled", "events": []},
+                    }
+                )
+            snapshot = self.diagnostic_log.diagnostic_events(after_seq=0, limit=200)
+            projected: list[dict[str, Any]] = []
+            for event in snapshot.get("events", []):
+                if not isinstance(event, dict):
+                    continue
+                details = event.get("details")
+                details = details if isinstance(details, dict) else {}
+                projected.append(
+                    {
+                        "event": str(event.get("code") or "")[:80],
+                        "component": str(details.get("component") or "")[:64],
+                        "code": str(details.get("code") or "")[:80],
+                        "error_type": str(details.get("error_type") or "")[:80],
+                        "duration_ms": details.get("duration_ms"),
+                        "status": str(details.get("status") or "")[:32],
+                    }
+                )
+            return _json_no_store(
+                {
+                    "success": True,
+                    "diagnostics": {
+                        "status": str(snapshot.get("status") or "unavailable")[:32],
+                        "events": projected,
+                    },
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "diagnostics_overview")
 
     async def identity_candidates(self) -> Any:
         try:
