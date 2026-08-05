@@ -19,6 +19,72 @@ def test_disabled_logger_does_not_create_file(tmp_path: Path) -> None:
     assert not diagnostic.path.exists()
 
 
+def test_diagnostics_provider_reports_fixed_disabled_contract(tmp_path: Path) -> None:
+    diagnostic = DiagnosticLog(tmp_path)
+
+    payload = diagnostic.diagnostic_events()
+
+    assert payload["contract"] == "series.diagnostics@1.0"
+    assert payload["plugin_id"] == "astrbot_plugin_quest_avatar_bridge"
+    assert payload["plugin_name"] == "临"
+    assert payload["status"] == "disabled"
+    assert payload["reason"] == "DIAGNOSTIC_DISABLED"
+    assert payload["events"] == []
+
+
+def test_diagnostics_provider_exposes_bounded_safe_events_and_clear_cursor(
+    tmp_path: Path,
+) -> None:
+    diagnostic = DiagnosticLog(tmp_path, enabled=True)
+    diagnostic.record(
+        "http.request",
+        component="transport",
+        status=200,
+        operation="session_start",
+        user_id="user-secret",
+        reply_text="reply-secret",
+    )
+
+    payload = diagnostic.diagnostic_events(after_seq=0, limit=10)
+    event = payload["events"][0]
+
+    assert payload["status"] == "ready"
+    assert payload["reason"] == "READY"
+    assert event["seq"] == 1
+    assert event["plugin_name"] == "临"
+    assert event["level"] == "INFO"
+    assert event["code"] == "http.request"
+    assert event["details"] == {
+        "component": "transport",
+        "status": 200,
+        "operation": "session_start",
+    }
+    old_stream_id = payload["stream_id"]
+
+    diagnostic.diagnostic_clear()
+    cleared = diagnostic.diagnostic_events()
+    assert cleared["events"] == []
+    assert cleared["stream_id"] != old_stream_id
+
+
+def test_diagnostics_provider_reports_unavailable_after_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    diagnostic = DiagnosticLog(tmp_path, enabled=True)
+
+    monkeypatch.setattr(
+        diagnostic,
+        "_write_line",
+        lambda _line: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    diagnostic.record("listener.start_error", component="listener", code="bind_failed")
+
+    payload = diagnostic.diagnostic_events()
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "DIAGNOSTIC_UNAVAILABLE"
+    assert payload["events"] == []
+
+
 def test_logger_does_not_attach_root_handler(tmp_path: Path) -> None:
     root = logging.getLogger()
     handlers_before = tuple(root.handlers)

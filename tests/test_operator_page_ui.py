@@ -58,7 +58,9 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "prefers-reduced-motion" in css
 
 
-def test_operator_page_does_not_expose_secrets_or_private_relationship_storage() -> None:
+def test_operator_page_does_not_expose_secrets_or_private_relationship_storage() -> (
+    None
+):
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
     combined = html + js

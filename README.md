@@ -35,7 +35,7 @@ Unity 负责感知、播放和执行：
 
 ## 运行要求
 
-- AstrBot `>=4.26.8,<5`。
+- AstrBot `>=4.26,<5`。
 - 一个已启用的聊天模型 Provider，并把其 ID 写入 `chat_provider_id`。
 - 一个至少 32 字符的随机 `bridge_api_key`。
 - 一个具有 `plugin` scope 的 AstrBot API Key，供 Unity 调用 `/api/v1/plugins/extensions/...`。
@@ -335,5 +335,7 @@ python -m compileall .
 
 
 ## Series plugin integrations
+
+“临”还提供完整自声明的只读 `series.diagnostics@1.0` 诊断契约，供“核”根据 `series_id=ningxin_suxi`、插件 ID 和官方仓库元数据自动发现，无需在“核”里登记。契约用于统一显示插件自己的初始化、传输、配对、健康和会话状态；诊断默认关闭，关闭时显示“已关闭”，写入失败时显示“不可用”，不会阻塞其他系列日志。该契约不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会改变现有 JSONL 轮转与失败关闭行为。
 
 Quest calls only this Bridge. Backend reuse of knowledge, identity authorization, relationship snapshots, cached environment facts, Voice Hub PCM output, and runtime diagnostics is documented in [docs/SERIES_INTEGRATIONS_CN.md](docs/SERIES_INTEGRATIONS_CN.md). Conversation proactive delivery and orchestration-hub resolution are intentionally not consumed in normal Quest turns.

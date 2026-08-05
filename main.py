@@ -20,8 +20,14 @@ from .adapters.stt import (
 )
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
+from .core.diagnostic_log import (
+    DIAGNOSTIC_SERIES_ID,
+    PLUGIN_ID as DIAGNOSTIC_PLUGIN_ID,
+    PLUGIN_NAME as DIAGNOSTIC_PLUGIN_NAME,
+    DiagnosticLog,
+    DiagnosticLogSink,
+)
 from .core.interaction_policy import InteractionPolicy
-from .core.diagnostic_log import DiagnosticLog, DiagnosticLogSink
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
 from .core.session_manager import SessionManager
@@ -34,7 +40,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -360,6 +366,27 @@ class QuestAvatarBridgePlugin(Star):
             available=bool(checks["chat_provider_configured"]),
         )
         return result
+
+    def diagnostic_log_contract(self) -> dict[str, object]:
+        """Expose a self-declared provider discoverable by the series manager."""
+        return {
+            "name": "series.diagnostics",
+            "version": "1.0",
+            "series_id": DIAGNOSTIC_SERIES_ID,
+            "plugin_id": DIAGNOSTIC_PLUGIN_ID,
+            "plugin_name": DIAGNOSTIC_PLUGIN_NAME,
+            "capabilities": ("read_events", "clear_events"),
+            "storage": "memory_only",
+            "astrbot_log_propagation": False,
+        }
+
+    def diagnostic_events(
+        self, *, after_seq: int = 0, limit: int = 200
+    ) -> dict[str, Any]:
+        return self.diagnostic_log.diagnostic_events(after_seq=after_seq, limit=limit)
+
+    def diagnostic_clear(self) -> None:
+        self.diagnostic_log.diagnostic_clear()
 
     async def terminate(self) -> None:
         if self._terminated:

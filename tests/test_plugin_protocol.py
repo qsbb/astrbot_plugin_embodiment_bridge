@@ -152,6 +152,16 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         health = plugin.plugin_health()
         assert health["version"] == module.__version__
         assert health["checks"]["pairing_bootstrap_ready"] is True
+        assert plugin.diagnostic_log_contract() == {
+            "name": "series.diagnostics",
+            "version": "1.0",
+            "series_id": "ningxin_suxi",
+            "plugin_id": "astrbot_plugin_quest_avatar_bridge",
+            "plugin_name": "临",
+            "capabilities": ("read_events", "clear_events"),
+            "storage": "memory_only",
+            "astrbot_log_propagation": False,
+        }
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }

@@ -4,6 +4,8 @@ import json
 import os
 import re
 import threading
+import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,12 @@ _SENSITIVE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+PLUGIN_ID = "astrbot_plugin_quest_avatar_bridge"
+PLUGIN_NAME = "临"
+DIAGNOSTIC_CONTRACT = "series.diagnostics@1.0"
+DIAGNOSTIC_SERIES_ID = "ningxin_suxi"
+_MAX_EVENTS = 1000
+
 
 class DiagnosticLog:
     """Small plugin-owned JSONL logger with no logging-module integration."""
@@ -62,6 +70,9 @@ class DiagnosticLog:
         self._lock = threading.RLock()
         self._write_failures = 0
         self._disabled_due_error = False
+        self._events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
+        self._stream_id = uuid.uuid4().hex
+        self._sequence = 0
 
     @property
     def write_failures(self) -> int:
@@ -87,6 +98,7 @@ class DiagnosticLog:
         try:
             line = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
             self._write_line(line)
+            self._append_event(payload)
         except Exception:
             # Diagnostics must never change plugin or request behavior.
             self._write_failures += 1
@@ -129,6 +141,70 @@ class DiagnosticLog:
 
     def _backup_path(self, index: int) -> Path:
         return self.path.with_name(f"{self.path.name}.{index}")
+
+    def _append_event(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._sequence += 1
+            details = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"ts", "event"}
+            }
+            self._events.append(
+                {
+                    "seq": self._sequence,
+                    "timestamp": str(payload.get("ts") or ""),
+                    "plugin_id": PLUGIN_ID,
+                    "plugin_name": PLUGIN_NAME,
+                    "level": self._event_level(str(payload.get("event") or "")),
+                    "code": str(payload.get("event") or "diagnostic"),
+                    "summary": str(payload.get("event") or "diagnostic"),
+                    "details": details,
+                }
+            )
+
+    @staticmethod
+    def _event_level(event: str) -> str:
+        lowered = event.lower()
+        if "error" in lowered or "failed" in lowered:
+            return "ERROR"
+        if "warning" in lowered or "warn" in lowered:
+            return "WARNING"
+        return "INFO"
+
+    def diagnostic_events(
+        self, *, after_seq: int = 0, limit: int = 200
+    ) -> dict[str, Any]:
+        after = max(0, int(after_seq or 0))
+        size = min(_MAX_EVENTS, max(1, int(limit or 200)))
+        with self._lock:
+            first = self._events[0]["seq"] if self._events else self._sequence + 1
+            base = {
+                "contract": DIAGNOSTIC_CONTRACT,
+                "plugin_id": PLUGIN_ID,
+                "plugin_name": PLUGIN_NAME,
+                "stream_id": self._stream_id,
+                "events": [],
+                "next_seq": self._sequence,
+                "dropped_before": max(0, first - 1),
+            }
+            if not self.enabled:
+                base.update(status="disabled", reason="DIAGNOSTIC_DISABLED")
+                return base
+            if self._disabled_due_error:
+                base.update(status="unavailable", reason="DIAGNOSTIC_UNAVAILABLE")
+                return base
+            base["status"] = "ready"
+            base["reason"] = "READY"
+            base["events"] = [
+                dict(event) for event in self._events if event["seq"] > after
+            ][-size:]
+            return base
+
+    def diagnostic_clear(self) -> None:
+        with self._lock:
+            self._events.clear()
+            self._stream_id = uuid.uuid4().hex
 
     @classmethod
     def _safe_value(cls, name: str, value: Any) -> Any:
