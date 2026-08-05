@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-04
+
+### Added
+
+- 新增独立「Quest 角色设置」Page：管理员可以从安全投影中选择 Chat Completion Provider，并点击读取“情”的 relationship.identity_candidates@1.0 脱敏自然人候选后保存。
+- 新增 Page 发现、响应式布局、JavaScript 语法、脱敏字段和权限边界测试。
+
+### Security
+
+- 快速绑定 Page 继续只生成一次性二维码/短码，不承载模型、自然人或长期密钥管理。
+- 角色设置 Page 只显示 id/model/adapter_type/provider_type 与 person_id/display_name/account_count；不读取 Provider 原始配置、平台 UID、Bot ID、UMO 或关系私有存储。
+- 自然人保存仍由后端重新读取正式候选契约并校验；绑定不替代原始平台身份，也不授予 owner、白名单或管理权限。
+
 ## 0.2.0 - 2026-08-04
 
 ### Added

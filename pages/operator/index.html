@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <link rel="icon" href="data:," />
+  <title>凝心溯溪-临｜Quest 角色设置</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="page-header">
+      <div>
+        <h1>Quest 角色设置</h1>
+        <p>凝心溯溪-临 · 管理对话模型与关系自然人</p>
+      </div>
+      <div class="runtime-state" role="status" aria-live="polite" aria-atomic="true">
+        <span class="state-dot" aria-hidden="true"></span>
+        <span id="runtime-label">正在读取设置</span>
+      </div>
+    </header>
+
+    <section class="settings-grid" aria-label="Quest 角色设置">
+      <section class="setting-panel" aria-labelledby="model-title">
+        <span class="section-label">对话</span>
+        <h2 id="model-title">聊天模型</h2>
+        <p>只显示 AstrBot 已实例化的 Chat Completion Provider，不读取密钥或原始配置。</p>
+        <label for="chat-provider-id">Provider</label>
+        <select id="chat-provider-id" disabled>
+          <option value="">正在读取可用模型</option>
+        </select>
+        <p id="model-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-model-button" class="primary" type="button" aria-busy="false" disabled>保存模型</button>
+      </section>
+
+      <section class="setting-panel" aria-labelledby="identity-title">
+        <span class="section-label">关系</span>
+        <h2 id="identity-title">自然人绑定</h2>
+        <p>候选来自“情”的正式只读契约，只包含管理员标签，不包含平台 UID、Bot ID 或 UMO。</p>
+        <div class="inline-actions">
+          <button id="load-identity-candidates" type="button" aria-busy="false">从“情”读取</button>
+        </div>
+        <label for="relationship-person-select">自然人</label>
+        <select id="relationship-person-select" disabled>
+          <option value="">请先读取候选</option>
+        </select>
+        <p id="identity-status" class="field-status" role="status">尚未读取候选</p>
+        <button id="save-identity-button" class="primary" type="button" aria-busy="false" disabled>保存自然人</button>
+      </section>
+    </section>
+
+    <section class="boundary-note" aria-label="权限边界">
+      <strong>自然人绑定不会授予权限</strong>
+      <span>Quest 会话仍按服务端固定的平台、机器人和用户身份授权；候选不可用时关系上下文关闭，不会自动换人。</span>
+    </section>
+
+    <div id="startup-error" class="startup-error" role="alert" hidden></div>
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  </main>
+
+  <script src="/api/plugin/page/bridge-sdk.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

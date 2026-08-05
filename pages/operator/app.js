@@ -1,0 +1,274 @@
+let bridge = null;
+let operatorSettings = null;
+
+async function resolveBridge(timeout = 3000) {
+  if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
+  if (typeof window.waitForAstrBotBridge === "function") {
+    return window.waitForAstrBotBridge(timeout);
+  }
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
+  }
+  throw new Error("请从 AstrBot 插件管理页面打开此页面");
+}
+
+function parseResponse(value) {
+  const data = typeof value === "string" ? JSON.parse(value) : value;
+  if (data?.success === false || data?.status === "error") {
+    throw new Error(
+      data.message || data.detail || data.error || data?.data?.code || "请求失败"
+    );
+  }
+  return data;
+}
+
+async function apiGet(name) {
+  if (!bridge) throw new Error("页面 Bridge 尚未初始化");
+  return parseResponse(await bridge.apiGet(name));
+}
+
+async function apiPost(name, payload) {
+  if (!bridge) throw new Error("页面 Bridge 尚未初始化");
+  return parseResponse(await bridge.apiPost(name, payload));
+}
+
+function setRuntimeState(kind, label) {
+  const node = document.querySelector(".runtime-state");
+  node.classList.toggle("ready", kind === "ready");
+  node.classList.toggle("error", kind === "error");
+  document.getElementById("runtime-label").textContent = label;
+}
+
+function toast(message, error = false) {
+  const node = document.getElementById("toast");
+  node.textContent = message;
+  node.classList.toggle("error", error);
+  node.classList.add("visible");
+  window.clearTimeout(toast.timer);
+  toast.timer = window.setTimeout(() => node.classList.remove("visible"), 2800);
+}
+
+function showStartupError(error) {
+  const message = "页面启动失败：" + (error?.message || error);
+  const node = document.getElementById("startup-error");
+  node.textContent = message;
+  node.hidden = false;
+  setRuntimeState("error", "角色设置不可用");
+}
+
+function setButtonBusy(button, busy, busyText) {
+  if (busy) {
+    if (button.getAttribute("aria-busy") === "true") return false;
+    button.dataset.idleText = button.textContent.trim();
+    button.textContent = busyText;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    return true;
+  }
+  button.textContent = button.dataset.idleText || button.textContent;
+  button.setAttribute("aria-busy", "false");
+  return true;
+}
+
+function providerLabel(provider) {
+  const id = String(provider?.id || "");
+  const model = String(provider?.model || "");
+  return model ? id + " · " + model : id;
+}
+
+function renderOperatorSettings(settings) {
+  operatorSettings = settings || {};
+  const select = document.getElementById("chat-provider-id");
+  const providers = Array.isArray(operatorSettings.providers)
+    ? operatorSettings.providers
+    : [];
+  select.replaceChildren();
+  if (!providers.length) {
+    select.add(new Option("没有可用的 Chat Completion Provider", ""));
+    select.disabled = true;
+  } else {
+    select.add(new Option("请选择聊天模型", ""));
+    providers.forEach((provider) => {
+      select.add(new Option(providerLabel(provider), provider.id));
+    });
+    if (
+      operatorSettings.selected_id &&
+      !providers.some((provider) => provider.id === operatorSettings.selected_id)
+    ) {
+      select.add(
+        new Option(
+          "已配置但不可用 · " + operatorSettings.selected_id,
+          operatorSettings.selected_id
+        )
+      );
+    }
+    select.value = operatorSettings.selected_id || "";
+    select.disabled = operatorSettings.config_writable !== true;
+  }
+
+  const status = document.getElementById("model-status");
+  if (operatorSettings.config_writable !== true) {
+    status.textContent = "当前 AstrBot 配置对象不支持异步保存。";
+  } else if (operatorSettings.status === "selected_missing") {
+    status.textContent = "已配置模型当前不可用，请重新选择。";
+  } else if (operatorSettings.selected_available) {
+    status.textContent = "当前模型：" + operatorSettings.selected_id;
+  } else {
+    status.textContent = "尚未选择聊天模型，实时对话不可用。";
+  }
+  document.getElementById("save-model-button").disabled =
+    select.disabled || !select.value;
+
+  const selectedPerson = String(operatorSettings.relationship_person_id || "");
+  const personSelect = document.getElementById("relationship-person-select");
+  if (
+    selectedPerson &&
+    ![...personSelect.options].some((option) => option.value === selectedPerson)
+  ) {
+    personSelect.add(new Option("已选择 · " + selectedPerson, selectedPerson));
+  }
+  personSelect.value = selectedPerson;
+}
+
+async function loadOperatorSettings() {
+  const response = await apiGet("pairing/operator-settings");
+  renderOperatorSettings(response.settings);
+}
+
+async function saveModelSelection() {
+  const button = document.getElementById("save-model-button");
+  const selected = document.getElementById("chat-provider-id").value;
+  if (!selected || !setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const response = await apiPost("pairing/operator-settings", {
+      chat_provider_id: selected
+    });
+    renderOperatorSettings(response.settings);
+    toast("聊天模型已保存并立即生效");
+  } catch (error) {
+    toast("模型保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = !document.getElementById("chat-provider-id").value;
+  }
+}
+
+function identityUnavailableMessage(status) {
+  const messages = {
+    provider_unavailable: "未检测到“情”插件。",
+    contract_unavailable: "“情”当前版本未提供候选读取契约。",
+    timeout: "读取“情”自然人候选超时。",
+    error: "“情”读取自然人候选失败。",
+    invalid_response: "“情”返回了不兼容的候选数据。"
+  };
+  return messages[status] || "自然人候选当前不可用。";
+}
+
+function renderIdentityCandidates(catalog) {
+  const select = document.getElementById("relationship-person-select");
+  const saveButton = document.getElementById("save-identity-button");
+  const status = document.getElementById("identity-status");
+  const candidates = Array.isArray(catalog?.candidates) ? catalog.candidates : [];
+  const selected = String(operatorSettings?.relationship_person_id || "");
+  select.replaceChildren(new Option("不绑定自然人", ""));
+
+  if (catalog?.status !== "ok") {
+    if (selected) select.add(new Option("已选择 · " + selected, selected));
+    select.value = selected;
+    select.disabled = true;
+    saveButton.disabled = true;
+    status.textContent = identityUnavailableMessage(catalog?.status);
+    return;
+  }
+
+  candidates.forEach((candidate) => {
+    const count = Number(candidate.account_count || 0);
+    select.add(
+      new Option(
+        candidate.display_name +
+          " · " +
+          candidate.person_id +
+          " · " +
+          count +
+          " 个账号",
+        candidate.person_id
+      )
+    );
+  });
+  if (selected && !candidates.some((candidate) => candidate.person_id === selected)) {
+    select.add(new Option("已选择但已不可用 · " + selected, selected));
+  }
+  select.value = selected;
+  select.disabled = false;
+  saveButton.disabled = false;
+  status.textContent = candidates.length
+    ? "已读取 " + candidates.length + " 个自然人，只包含管理员标签。"
+    : "“情”中尚无可选自然人。";
+}
+
+async function loadIdentityCandidates() {
+  const button = document.getElementById("load-identity-candidates");
+  if (!setButtonBusy(button, true, "正在读取…")) return;
+  try {
+    const response = await apiGet("pairing/identity-candidates");
+    renderIdentityCandidates(response.identity_catalog);
+    if (response.identity_catalog?.status === "ok") {
+      toast("已从“情”读取自然人候选");
+    }
+  } catch (error) {
+    renderIdentityCandidates({ status: "error", candidates: [] });
+    toast("读取自然人失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = false;
+  }
+}
+
+async function saveIdentitySelection() {
+  const button = document.getElementById("save-identity-button");
+  const personId = document.getElementById("relationship-person-select").value;
+  if (!setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const response = await apiPost("pairing/identity-selection", {
+      person_id: personId
+    });
+    renderOperatorSettings(response.settings);
+    toast(personId ? "关系自然人已保存" : "已清除关系自然人绑定");
+  } catch (error) {
+    toast("自然人保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = document.getElementById(
+      "relationship-person-select"
+    ).disabled;
+  }
+}
+
+function bindEvents() {
+  document.getElementById("chat-provider-id").addEventListener("change", (event) => {
+    document.getElementById("save-model-button").disabled =
+      !event.currentTarget.value;
+  });
+  document
+    .getElementById("save-model-button")
+    .addEventListener("click", saveModelSelection);
+  document
+    .getElementById("load-identity-candidates")
+    .addEventListener("click", loadIdentityCandidates);
+  document
+    .getElementById("save-identity-button")
+    .addEventListener("click", saveIdentitySelection);
+}
+
+async function init() {
+  bridge = await resolveBridge();
+  if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
+  await bridge.ready();
+  bindEvents();
+  await loadOperatorSettings();
+  setRuntimeState("ready", "角色设置已就绪");
+}
+
+init().catch(showStartupError);

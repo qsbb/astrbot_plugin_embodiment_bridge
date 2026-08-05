@@ -3,6 +3,10 @@
     "pairing": {
       "title": "Quest 快速绑定",
       "description": "生成一次性二维码或 6 位配对码，在 Quest 中完成绑定"
+    },
+    "operator": {
+      "title": "Quest 角色设置",
+      "description": "选择聊天模型并从情读取自然人候选"
     }
   }
 }

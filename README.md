@@ -71,6 +71,16 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 
 前置条件：已设置至少 32 字符的 `bridge_api_key`、Quest 专用 `pairing_astrbot_api_key`、`pairing_user_id`、`pairing_bot_id` 和 Quest 可达的 `pairing_public_url`，并已选择聊天模型 Provider。公网必须使用 Quest 信任的 HTTPS；受控私网可显式使用私网 IP 字面量 HTTP。详细步骤与 Quest 端操作见 [docs/PAIRING_CN.md](docs/PAIRING_CN.md)。
 
+## 角色设置页
+
+插件另提供「Quest 角色设置」管理员 Page，与快速绑定页分离：
+
+- “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
+- 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
+- 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
+- 自然人选择只决定授权后的关系快照范围，不能替代原始 platform_id/bot_id/user_id，也不授予 owner、白名单或管理权限。
+
+模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点，不向浏览器写入长期密钥或本地存储。
 ## 生产 STT/TTS 配置
 
 语音能力默认关闭。先在 AstrBot 的 Provider 设置中启用 STT/TTS，并分别选定默认 Provider，再在本插件配置中启用：
