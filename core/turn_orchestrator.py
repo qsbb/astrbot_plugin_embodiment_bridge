@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
@@ -50,6 +51,7 @@ class TurnOrchestrator:
         runtime: SeriesRuntimeAdapter | None = None,
         voice_audio: VoiceHubTTSAdapter | None = None,
         output_chunk_ms: int = 50,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.sessions = sessions
         self.llm = llm
@@ -63,6 +65,7 @@ class TurnOrchestrator:
         self.environment = environment
         self.runtime = runtime
         self.voice_audio = voice_audio
+        self.diagnostic_log = diagnostic_log
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
     async def authorize_session(
@@ -155,8 +158,17 @@ class TurnOrchestrator:
         turn: TurnState,
         pcm16: bytes,
     ) -> None:
+        started = time.perf_counter()
         try:
             text = await self.stt.transcribe(pcm16, sample_rate=16_000)
+            self._diagnostic(
+                "stt.completed",
+                component="stt",
+                status="ok",
+                available=True,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                bytes=len(pcm16),
+            )
             if not text.strip():
                 await self._emit_error(
                     session, turn, "stt_empty", "Speech was not recognized"
@@ -176,6 +188,13 @@ class TurnOrchestrator:
         except asyncio.CancelledError:
             raise
         except AdapterUnavailable:
+            self._diagnostic(
+                "stt.error",
+                component="stt",
+                code="stt_unavailable",
+                error_type="AdapterUnavailable",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
             await self._emit_error(
                 session,
                 turn,
@@ -183,6 +202,13 @@ class TurnOrchestrator:
                 "PCM16 STT is not configured",
             )
         except Exception as exc:
+            self._diagnostic(
+                "stt.error",
+                component="stt",
+                code="stt_failed",
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
             self.logger.warning(
                 "[quest-avatar] STT turn failed: error_type=%s", type(exc).__name__
             )
@@ -259,14 +285,32 @@ class TurnOrchestrator:
             knowledge_task,
             environment_task,
         )
-        decision = await self.llm.generate(
-            user_text=user_text,
-            history=history,
-            interaction=interaction,
-            relationship=relationship,
-            knowledge=knowledge,
-            environment=environment,
-        )
+        llm_started = time.perf_counter()
+        try:
+            decision = await self.llm.generate(
+                user_text=user_text,
+                history=history,
+                interaction=interaction,
+                relationship=relationship,
+                knowledge=knowledge,
+                environment=environment,
+            )
+            self._diagnostic(
+                "llm.completed",
+                component="llm",
+                status="ok",
+                available=True,
+                duration_ms=(time.perf_counter() - llm_started) * 1000,
+            )
+        except Exception as exc:
+            self._diagnostic(
+                "llm.error",
+                component="llm",
+                code="llm_failed",
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - llm_started) * 1000,
+            )
+            raise
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
         await self.sessions.append_history(session, "user", user_text)
@@ -313,6 +357,7 @@ class TurnOrchestrator:
 
         audio_sent = False
         if text and self.tts.available:
+            tts_started = time.perf_counter()
             try:
                 async for pcm_chunk in self._normalized_audio_chunks(
                     self.tts.synthesize(text, emotion=intent.emotion.value)
@@ -333,9 +378,23 @@ class TurnOrchestrator:
                     ):
                         return
                     audio_sent = audio_sent or accepted
+                self._diagnostic(
+                    "tts.completed",
+                    component="tts",
+                    status="ok",
+                    available=True,
+                    duration_ms=(time.perf_counter() - tts_started) * 1000,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._diagnostic(
+                    "tts.error",
+                    component="tts",
+                    code="tts_failed",
+                    error_type=type(exc).__name__,
+                    duration_ms=(time.perf_counter() - tts_started) * 1000,
+                )
                 self.logger.warning(
                     "[quest-avatar] TTS failed: error_type=%s", type(exc).__name__
                 )
@@ -511,3 +570,11 @@ class TurnOrchestrator:
             ),
             return_exceptions=True,
         )
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
+            return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return

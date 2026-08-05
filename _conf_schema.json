@@ -316,5 +316,25 @@
     "default": 32768,
     "minimum": 8192,
     "maximum": 131072
+  },
+  "diagnostic_log_enabled": {
+    "description": "启用 Bridge 独立诊断日志",
+    "type": "bool",
+    "hint": "日志仅写入插件自有 data/plugin_data 目录；默认关闭，不接入 AstrBot 总日志。",
+    "default": false
+  },
+  "diagnostic_log_max_bytes": {
+    "description": "独立诊断日志单文件上限（字节）",
+    "type": "int",
+    "default": 1048576,
+    "minimum": 16384,
+    "maximum": 16777216
+  },
+  "diagnostic_log_backup_count": {
+    "description": "独立诊断日志轮转备份数",
+    "type": "int",
+    "default": 3,
+    "minimum": 0,
+    "maximum": 10
   }
 }

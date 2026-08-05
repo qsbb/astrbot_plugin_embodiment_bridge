@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import time
 from io import BytesIO
 from typing import Any, TypeVar
 
@@ -64,6 +65,7 @@ class PairingHttpApi:
         trusted_platform_id: str,
         operator_settings: Any,
         relationship_candidates: Any,
+        diagnostic_log: Any | None = None,
         pairing_defaults: dict[str, Any] | None = None,
         trusted_proxy_ip: str = "",
         max_json_body_bytes: int = 16_384,
@@ -78,6 +80,7 @@ class PairingHttpApi:
         self.trusted_proxy_ip = _canonical_ip(trusted_proxy_ip)
         self.operator_settings = operator_settings
         self.relationship_candidates = relationship_candidates
+        self.diagnostic_log = diagnostic_log
         self.pairing_defaults = dict(pairing_defaults or {})
         self.max_json_body_bytes = max(4096, min(65_536, max_json_body_bytes))
 
@@ -208,10 +211,11 @@ class PairingHttpApi:
             return self._error(exc, "save_identity_selection")
 
     async def overview(self) -> Any:
+        started = time.perf_counter()
         try:
             self._dashboard_owner()
             quick_pairing_ready, quick_pairing_reason = self._quick_pairing_status()
-            return _json_no_store(
+            response = _json_no_store(
                 {
                     "success": True,
                     "pairing_protocol_version": PAIRING_PROTOCOL_VERSION,
@@ -227,10 +231,19 @@ class PairingHttpApi:
                     "quick_pairing_reason": quick_pairing_reason,
                 },
             )
+            self._diagnostic(
+                "pairing.overview",
+                component="pairing",
+                status=200,
+                ready=quick_pairing_ready,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
             return self._error(exc, "overview")
 
     async def create(self) -> Any:
+        started = time.perf_counter()
         owner = ""
         pairing_id = ""
         try:
@@ -241,7 +254,7 @@ class PairingHttpApi:
             result = self.manager.create(owner, payload)
             pairing_id = result.pairing_id
             qr_svg_data_uri = _qr_svg_data_uri(result.qr_payload)
-            return _json_no_store(
+            response = _json_no_store(
                 {
                     "success": True,
                     "pairing": {
@@ -256,6 +269,14 @@ class PairingHttpApi:
                 },
                 status_code=201,
             )
+            self._diagnostic(
+                "pairing.create",
+                component="pairing",
+                status=201,
+                result="ok",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
             if owner and pairing_id:
                 try:
@@ -319,41 +340,68 @@ class PairingHttpApi:
         return PairingCreateRequest.model_validate(values)
 
     async def status(self) -> Any:
+        started = time.perf_counter()
         try:
             owner = self._dashboard_owner()
             payload = await self._read_model(PairingStatusRequest)
-            return _json_no_store(
+            response = _json_no_store(
                 {
                     "success": True,
                     "pairing": self.manager.status(owner, payload.pairing_id),
                 },
             )
+            self._diagnostic(
+                "pairing.status",
+                component="pairing",
+                status=200,
+                result="ok",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
             return self._error(exc, "status")
 
     async def revoke(self) -> Any:
+        started = time.perf_counter()
         try:
             owner = self._dashboard_owner()
             payload = await self._read_model(PairingRevokeRequest)
-            return _json_no_store(
+            response = _json_no_store(
                 {
                     "success": True,
                     "pairing": self.manager.revoke(owner, payload.pairing_id),
                 },
             )
+            self._diagnostic(
+                "pairing.revoke",
+                component="pairing",
+                status=200,
+                result="ok",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
             return self._error(exc, "revoke")
 
     async def exchange(self) -> Any:
+        started = time.perf_counter()
         try:
             self._dashboard_owner()
             payload = await self._read_model(PairingExchangeRequest)
-            return _json_no_store(
+            response = _json_no_store(
                 self.exchange_service.exchange(
                     payload,
                     remote=self._remote_address(),
                 )
             )
+            self._diagnostic(
+                "pairing.exchange",
+                component="pairing",
+                status=200,
+                result="ok",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
             return self._error(exc, "exchange")
 
@@ -429,6 +477,13 @@ class PairingHttpApi:
             ) from exc
 
     def _error(self, exc: Exception, operation: str) -> Any:
+        self._diagnostic(
+            "pairing.error",
+            component="pairing",
+            operation=operation,
+            code=getattr(exc, "code", "pairing_failed"),
+            error_type=type(exc).__name__,
+        )
         headers = dict(NO_STORE_HEADERS)
         if isinstance(exc, (PairingError, OperatorSettingsError)):
             data: dict[str, object] = {"code": exc.code}
@@ -454,6 +509,14 @@ class PairingHttpApi:
             data={"code": "internal_pairing_error"},
         )
         return _with_headers(response, headers)
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
+            return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return
 
 
 def _json_no_store(data: dict[str, object], *, status_code: int = 200) -> Any:

@@ -240,10 +240,12 @@ class BuiltinQuestListener:
         config: BuiltinListenerConfig,
         exchange_service: PairingExchangeService,
         logger: Any,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.config = config
         self.exchange_service = exchange_service
         self.logger = logger
+        self.diagnostic_log = diagnostic_log
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._client: aiohttp.ClientSession | None = None
@@ -274,6 +276,7 @@ class BuiltinQuestListener:
         }
 
     async def start(self) -> None:
+        started = asyncio.get_running_loop().time()
         async with self._lifecycle_lock:
             if self._ready or self._closed:
                 return
@@ -328,6 +331,14 @@ class BuiltinQuestListener:
                     if not self.config.public_url_reason
                     else self.config.public_url_reason
                 )
+                self._diagnostic(
+                    "listener.started",
+                    component="listener",
+                    status="ready",
+                    ready=True,
+                    enabled=True,
+                    duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+                )
             except asyncio.CancelledError:
                 await self._shutdown_components()
                 raise
@@ -339,6 +350,13 @@ class BuiltinQuestListener:
                     type(exc).__name__,
                 )
                 await self._shutdown_components()
+                self._diagnostic(
+                    "listener.start_error",
+                    component="listener",
+                    code="bind_failed",
+                    error_type=type(exc).__name__,
+                    duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+                )
             except Exception as exc:
                 self._reason = "start_failed"
                 self.logger.warning(
@@ -347,8 +365,16 @@ class BuiltinQuestListener:
                     type(exc).__name__,
                 )
                 await self._shutdown_components()
+                self._diagnostic(
+                    "listener.start_error",
+                    component="listener",
+                    code="start_failed",
+                    error_type=type(exc).__name__,
+                    duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+                )
 
     async def close(self) -> None:
+        started = asyncio.get_running_loop().time()
         async with self._lifecycle_lock:
             if self._closed:
                 return
@@ -370,6 +396,13 @@ class BuiltinQuestListener:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
             await self._shutdown_components()
+            self._diagnostic(
+                "listener.closed",
+                component="listener",
+                status="closed",
+                ready=False,
+                duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+            )
 
     async def _shutdown_components(self) -> None:
         runner = self._runner
@@ -461,6 +494,7 @@ class BuiltinQuestListener:
         return True
 
     async def _exchange(self, request: web.Request) -> web.Response:
+        started = asyncio.get_running_loop().time()
         if request.content_type != "application/json":
             raise ListenerHttpError(
                 "unsupported_media_type",
@@ -487,8 +521,22 @@ class BuiltinQuestListener:
                 payload,
                 remote=_canonical_peer(request.remote),
             )
+            self._diagnostic(
+                "pairing.exchange",
+                component="pairing",
+                status=200,
+                result="ok",
+                duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+            )
             return web.json_response(result, headers=dict(NO_STORE_HEADERS))
         except PairingError as exc:
+            self._diagnostic(
+                "pairing.exchange_error",
+                component="pairing",
+                status=exc.status_code,
+                code=exc.code,
+                duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+            )
             headers: dict[str, str] = {}
             data: dict[str, object] = {"code": exc.code}
             if exc.retry_after is not None:
@@ -721,6 +769,14 @@ class BuiltinQuestListener:
             headers["Cache-Control"] = "no-cache, no-transform"
             headers["X-Accel-Buffering"] = "no"
         return headers
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
+            return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return
 
     @staticmethod
     def _error_response(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -62,6 +63,7 @@ class HttpSseTransport:
         listener: Any,
         config: TransportConfig,
         logger: Any,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.context = context
         self.sessions = sessions
@@ -69,6 +71,7 @@ class HttpSseTransport:
         self.listener = listener
         self.config = config
         self.logger = logger
+        self.diagnostic_log = diagnostic_log
         self._identifier_adapter = TypeAdapter(Identifier)
 
     def register(self) -> None:
@@ -140,6 +143,7 @@ class HttpSseTransport:
             session = await self.sessions.get_owned(validated_session_id, owner)
             if not await self.sessions.attach_stream(session):
                 raise SessionConflict("an SSE stream is already attached")
+            self._diagnostic("sse.connected", component="sse", status="connected")
 
             async def event_stream():
                 try:
@@ -166,6 +170,9 @@ class HttpSseTransport:
                     raise
                 finally:
                     await self.sessions.detach_stream(session)
+                    self._diagnostic(
+                        "sse.disconnected", component="sse", status="closed"
+                    )
 
             return stream_response(
                 event_stream(),
@@ -176,6 +183,12 @@ class HttpSseTransport:
                 },
             )
         except Exception as exc:
+            self._diagnostic(
+                "sse.error",
+                component="sse",
+                code=getattr(exc, "code", "sse_failed"),
+                error_type=type(exc).__name__,
+            )
             return self._error(exc, "events")
 
     async def turn_start(self) -> Any:
@@ -290,11 +303,12 @@ class HttpSseTransport:
         return await self._json_endpoint(SessionCloseRequest, action)
 
     async def health(self) -> Any:
+        started = time.perf_counter()
         try:
             self._authenticate()
             await self.orchestrator.refresh_runtime_diagnostics()
             stats = await self.sessions.stats()
-            return json_response(
+            response = json_response(
                 {
                     "status": "ok",
                     "data": {
@@ -318,7 +332,23 @@ class HttpSseTransport:
                     },
                 }
             )
+            self._diagnostic(
+                "http.health",
+                component="health",
+                status=getattr(response, "status_code", 200),
+                duration_ms=(time.perf_counter() - started) * 1000,
+                available=self.orchestrator.stt.available,
+                ready=self.listener.status_snapshot().get("ready", False),
+            )
+            return response
         except Exception as exc:
+            self._diagnostic(
+                "http.error",
+                component="health",
+                code=getattr(exc, "code", "health_failed"),
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
             return self._error(exc, "health")
 
     async def _json_endpoint(
@@ -328,15 +358,41 @@ class HttpSseTransport:
         *,
         body_limit: int | None = None,
     ) -> Any:
+        started = time.perf_counter()
+        operation = model.__name__.removesuffix("Request").lower()
         try:
             owner = self._authenticate()
             payload = await self._read_model(
                 model,
                 body_limit or self.config.max_json_body_bytes,
             )
-            return await action(owner, payload)
+            response = await action(owner, payload)
+            self._diagnostic(
+                "http.request",
+                component="transport",
+                operation=operation,
+                status=getattr(response, "status_code", 200),
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return response
         except Exception as exc:
+            self._diagnostic(
+                "http.error",
+                component="transport",
+                operation=operation,
+                code=getattr(exc, "code", "request_failed"),
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
             return self._error(exc, model.__name__)
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
+            return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return
 
     def _authenticate(self) -> str:
         owner = str(request.username or "").strip()

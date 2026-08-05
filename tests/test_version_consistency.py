@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.2.1"
+EXPECTED_VERSION = "0.3.0"
 
 
 def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
@@ -25,7 +25,7 @@ def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
     assert main_match.group(1) == EXPECTED_VERSION
 
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert f"## Unreleased\n\n## {EXPECTED_VERSION} - 2026-08-04\n" in changelog
+    assert f"## Unreleased\n\n## {EXPECTED_VERSION} - 2026-08-05\n" in changelog
     assert "## 0.1.1 - 2026-08-03" in changelog
 
 

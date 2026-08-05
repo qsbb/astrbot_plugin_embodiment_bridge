@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from astrbot.api import AstrBotConfig, logger
+from astrbot.api import AstrBotConfig
 from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
@@ -21,6 +21,7 @@ from .adapters.stt import (
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.interaction_policy import InteractionPolicy
+from .core.diagnostic_log import DiagnosticLog, DiagnosticLogSink
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
 from .core.session_manager import SessionManager
@@ -33,7 +34,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -49,6 +50,16 @@ class QuestAvatarBridgePlugin(Star):
 
         self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.diagnostic_log = DiagnosticLog(
+            self.data_dir,
+            enabled=self._bool_config("diagnostic_log_enabled", False),
+            max_bytes=self._int_config(
+                "diagnostic_log_max_bytes", 1_048_576, 16_384, 16 * 1_048_576
+            ),
+            backup_count=self._int_config("diagnostic_log_backup_count", 3, 0, 10),
+        )
+        self.diagnostic_log.record("plugin.constructed", component="plugin")
+        self._component_logger = DiagnosticLogSink(self.diagnostic_log)
 
         bridge_api_key = str(config.get("bridge_api_key", "") or "")
         trusted_client_id = str(config.get("trusted_client_id", "") or "")
@@ -111,7 +122,7 @@ class QuestAvatarBridgePlugin(Star):
         )
         self.voice_hub_tts = VoiceHubTTSAdapter(
             context,
-            logger,
+            self._component_logger,
             enabled=self._bool_config("enable_voice_hub_tts", True),
             timeout_seconds=65.0,
             max_audio_seconds=max_tts_audio_seconds,
@@ -119,38 +130,38 @@ class QuestAvatarBridgePlugin(Star):
         self.tts = FallbackTTSAdapter(
             self.voice_hub_tts,
             self.astrbot_tts,
-            logger,
+            self._component_logger,
         )
         self.identity = QuestSessionAuthorizationAdapter(
             context,
-            logger,
+            self._component_logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
         )
         self.knowledge = GlobalKnowledgeAdapter(
             context,
-            logger,
+            self._component_logger,
             enabled=self._bool_config("enable_global_knowledge", True),
             top_k=self._int_config("global_knowledge_top_k", 5, 1, 10),
         )
         self.environment = CachedEnvironmentAdapter(
             context,
-            logger,
+            self._component_logger,
             enabled=self._bool_config("enable_environment_context", True),
         )
         self.runtime = SeriesRuntimeAdapter(
             context,
-            logger,
+            self._component_logger,
             enabled=self._bool_config("enable_runtime_diagnostics", True),
         )
         self.relationship = RelationshipSnapshotAdapter(
             context,
-            logger,
+            self._component_logger,
             person_id=relationship_person_id,
         )
         self.relationship_candidates = RelationshipIdentityCandidatesAdapter(
             context,
-            logger,
+            self._component_logger,
         )
         self.policy = InteractionPolicy(
             max_intensity=self._float_config("max_intensity", 0.85, 0.1, 1.0),
@@ -171,13 +182,14 @@ class QuestAvatarBridgePlugin(Star):
             tts=self.tts,
             relationship=self.relationship,
             policy=self.policy,
-            logger=logger,
+            logger=self._component_logger,
             identity=self.identity,
             knowledge=self.knowledge,
             environment=self.environment,
             runtime=self.runtime,
             voice_audio=self.voice_hub_tts,
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
+            diagnostic_log=self.diagnostic_log,
         )
         self.pairing = PairingManager(
             bridge_api_key=bridge_api_key,
@@ -203,7 +215,8 @@ class QuestAvatarBridgePlugin(Star):
         self.pairing_listener = BuiltinQuestListener(
             config=listener_config,
             exchange_service=self.pairing_exchange_service,
-            logger=logger,
+            logger=self._component_logger,
+            diagnostic_log=self.diagnostic_log,
         )
         self.transport = HttpSseTransport(
             context=context,
@@ -218,26 +231,28 @@ class QuestAvatarBridgePlugin(Star):
                     "sse_heartbeat_seconds", 15, 5, 60
                 ),
             ),
-            logger=logger,
+            logger=self._component_logger,
+            diagnostic_log=self.diagnostic_log,
         )
         self.operator_settings = OperatorSettings(
             context=context,
             config=config,
             llm=self.llm,
             relationship=self.relationship,
-            logger=logger,
+            logger=self._component_logger,
         )
         self.pairing_api = PairingHttpApi(
             context=context,
             manager=self.pairing,
             exchange_service=self.pairing_exchange_service,
             listener=self.pairing_listener,
-            logger=logger,
+            logger=self._component_logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
             trusted_proxy_ip=pairing_trusted_proxy_ip,
             operator_settings=self.operator_settings,
             relationship_candidates=self.relationship_candidates,
+            diagnostic_log=self.diagnostic_log,
             pairing_defaults={
                 "public_url": pairing_public_url,
                 "astrbot_api_key": str(config.get("pairing_astrbot_api_key", "") or ""),
@@ -283,12 +298,12 @@ class QuestAvatarBridgePlugin(Star):
                 ),
             )
         if not self.pairing.bootstrap_ready:
-            logger.warning(
+            self._component_logger.warning(
                 "[quest-avatar] pairing bootstrap disabled: reason=%s",
                 self.pairing.bootstrap_reason,
             )
         runtime = await self.runtime.refresh()
-        logger.info(
+        self._component_logger.info(
             "[quest-avatar] bridge initialized: version=%s transport=http+sse listener=%s llm=%s stt=%s tts=%s runtime=%s",
             __version__,
             listener_status.get("reason"),
@@ -296,6 +311,22 @@ class QuestAvatarBridgePlugin(Star):
             self.stt.available,
             self.tts.available,
             runtime.get("status"),
+        )
+        self.diagnostic_log.record(
+            "plugin.initialized",
+            component="plugin",
+            status="ok",
+            ready=listener_status.get("reason") == "ready",
+            enabled=listener_status.get("enabled", False),
+            available=self.llm.available,
+        )
+        self.diagnostic_log.record(
+            "capabilities.status",
+            component="capabilities",
+            status=runtime.get("status", "unknown"),
+            enabled=self.stt.available,
+            available=self.tts.available,
+            ready=self.llm.available,
         )
 
     def plugin_health(self) -> dict[str, object]:
@@ -315,22 +346,50 @@ class QuestAvatarBridgePlugin(Star):
             != "not_checked",
         }
         reasons = [name.upper() for name, passed in checks.items() if not passed]
-        return {
+        result = {
             "status": "ok" if not reasons else "degraded",
             "checks": checks,
             "reasons": reasons,
             "version": __version__,
         }
+        self.diagnostic_log.record(
+            "health.status",
+            component="health",
+            status=result["status"],
+            ready=bool(checks["pairing_listener_ready"]),
+            available=bool(checks["chat_provider_configured"]),
+        )
+        return result
 
     async def terminate(self) -> None:
         if self._terminated:
             return
         self._terminated = True
-        await self.pairing_listener.close()
-        self.pairing.close()
-        await self.orchestrator.close()
-        await self.relationship_candidates.close()
-        logger.info("[quest-avatar] bridge terminated")
+        self.diagnostic_log.record(
+            "plugin.terminate", component="plugin", status="start"
+        )
+        terminated_ok = False
+        try:
+            await self.pairing_listener.close()
+            self.pairing.close()
+            await self.orchestrator.close()
+            await self.relationship_candidates.close()
+            self._component_logger.info("[quest-avatar] bridge terminated")
+            terminated_ok = True
+        except Exception as exc:
+            self.diagnostic_log.record(
+                "plugin.terminate_error",
+                component="plugin",
+                code="terminate_failed",
+                error_type=type(exc).__name__,
+            )
+            raise
+        finally:
+            if terminated_ok:
+                self.diagnostic_log.record(
+                    "plugin.terminated", component="plugin", status="ok"
+                )
+            self.diagnostic_log.close()
 
     def _int_config(self, key: str, default: int, minimum: int, maximum: int) -> int:
         return int(self._number_config(key, default, minimum, maximum))
