@@ -52,6 +52,15 @@ class RelationshipPersonSelectionRequest(BaseModel):
     )
 
 
+class CharacterPersonaSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    character_name: str = Field(default="", max_length=64)
+    character_self_reference: str = Field(default="", max_length=64)
+    character_self_description: str = Field(default="", max_length=2_000)
+    character_user_relationship: str = Field(default="", max_length=256)
+
+
 class PairingHttpApi:
     def __init__(
         self,
@@ -97,6 +106,18 @@ class PairingHttpApi:
                 self.save_operator_settings,
                 ["POST"],
                 "Save Quest chat model selection",
+            ),
+            (
+                "pairing/persona-settings",
+                self.persona_settings_overview,
+                ["GET"],
+                "Read safe Quest character persona settings",
+            ),
+            (
+                "pairing/persona-settings",
+                self.save_persona_settings,
+                ["POST"],
+                "Save Quest character persona settings",
             ),
             (
                 "pairing/identity-candidates",
@@ -171,6 +192,32 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "settings": settings})
         except Exception as exc:
             return self._error(exc, "save_operator_settings")
+
+    async def persona_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "persona": self.operator_settings.persona_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "persona_settings_overview")
+
+    async def save_persona_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(CharacterPersonaSettingsRequest)
+            persona = await self.operator_settings.save_character_persona(
+                character_name=payload.character_name,
+                character_self_reference=payload.character_self_reference,
+                character_self_description=payload.character_self_description,
+                character_user_relationship=payload.character_user_relationship,
+            )
+            return _json_no_store({"success": True, "persona": persona})
+        except Exception as exc:
+            return self._error(exc, "save_persona_settings")
 
     async def identity_candidates(self) -> Any:
         try:

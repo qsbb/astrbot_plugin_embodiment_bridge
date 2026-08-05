@@ -103,6 +103,39 @@ class LateDecisionStub(DecisionStub):
         return self.decision
 
 
+class ConcurrentInteractionDecisionStub:
+    def __init__(self) -> None:
+        self.primary_started = asyncio.Event()
+        self.primary_release = asyncio.Event()
+        self.primary_cancelled = asyncio.Event()
+
+    async def generate(self, **kwargs: Any) -> ModelDecision:
+        if kwargs.get("interaction") is not None:
+            return decision(
+                Emotion.SHY,
+                Gesture.STEP_BACK,
+                LookAt.AWAY,
+                "interaction_reply",
+                "interaction",
+            )
+        self.primary_started.set()
+        try:
+            await self.primary_release.wait()
+        except asyncio.CancelledError:
+            self.primary_cancelled.set()
+            raise
+        return decision(
+            Emotion.HAPPY,
+            Gesture.TALK,
+            LookAt.USER,
+            "primary_reply",
+            "primary",
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 def decision(
     emotion: Emotion,
     gesture: Gesture,
@@ -300,6 +333,123 @@ def test_late_tts_after_interrupt_cannot_emit_audio_error_or_end() -> None:
     asyncio.run(scenario())
 
 
+def test_interaction_runs_independently_without_cancelling_primary_turn() -> None:
+    async def scenario() -> None:
+        llm = ConcurrentInteractionDecisionStub()
+        sessions, session, orchestrator = await build_orchestrator(llm)
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t1", text="primary"),
+        )
+        await asyncio.wait_for(llm.primary_started.wait(), timeout=1)
+
+        interaction = InteractionEvent(
+            session_id="s1",
+            event_id="e1",
+            name="head_pat",
+            phase="start",
+            strength=0.5,
+            hand="right",
+        )
+        interaction_turn = await orchestrator.submit_interaction(session, interaction)
+        assert interaction_turn is not None
+
+        interaction_events: list[dict[str, Any]] = []
+        while True:
+            item = await asyncio.wait_for(session.queue.get(), timeout=1)
+            if item.turn_id == interaction_turn.turn_id:
+                interaction_events.append(item.payload)
+                if item.event_type == "reply.end":
+                    break
+        assert llm.primary_cancelled.is_set() is False
+        assert session.current_turn is not None
+        assert session.current_turn.turn_id == "t1"
+        assert [event["type"] for event in interaction_events] == [
+            "avatar.intent",
+            "reply.text.delta",
+            "reply.audio.chunk",
+            "reply.end",
+        ]
+
+        llm.primary_release.set()
+        primary_events = await collect_until_end(session)
+        assert primary_events[-1]["turn_id"] == "t1"
+        assert primary_events[-1]["type"] == "reply.end"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_tts_uses_ordered_sentence_segments() -> None:
+    class SegmentTTSStub(TTSStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.segments: list[str] = []
+
+        async def synthesize(self, text: str, *, emotion: str) -> AsyncIterator[bytes]:
+            del emotion
+            self.segments.append(text)
+            yield b"\x00\x00" * 1_200
+
+    async def scenario() -> None:
+        tts = SegmentTTSStub()
+        result = decision(
+            Emotion.HAPPY,
+            Gesture.TALK,
+            LookAt.USER,
+            "reply",
+            "first sentence. second sentence! third sentence?",
+        )
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(result), tts=tts
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t1", text="hello"),
+        )
+        events = await collect_until_end(session)
+        assert tts.segments == [
+            "first sentence.",
+            "second sentence!",
+            "third sentence?",
+        ]
+        assert [event["type"] for event in events][-1] == "reply.end"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_tts_pipeline_prefetch_is_bounded() -> None:
+    class BurstTTSStub(TTSStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.produced = 0
+
+        async def synthesize(self, text: str, *, emotion: str) -> AsyncIterator[bytes]:
+            del text, emotion
+            for _ in range(20):
+                self.produced += 1
+                yield b"\x00\x00" * 1_200
+
+    async def scenario() -> None:
+        tts = BurstTTSStub()
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(Emotion.HAPPY, Gesture.TALK, LookAt.USER, "reply", "text")
+            ),
+            tts=tts,
+        )
+        stream = orchestrator._tts_pipeline("text", emotion="happy")
+        first = await anext(stream)
+        assert first
+        await asyncio.sleep(0.02)
+        assert tts.produced <= 4
+        await stream.aclose()
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
 def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
     async def scenario() -> None:
         result = decision(
@@ -319,6 +469,7 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
         assert types[0] == "avatar.intent"
         assert "reply.text.delta" in types
         assert "reply.audio.chunk" in types
+        assert types.index("reply.text.delta") < types.index("reply.audio.chunk")
         assert types[-1] == "reply.end"
         assert all(event["protocol_version"] == "1.0" for event in events)
         audio = next(event for event in events if event["type"] == "reply.audio.chunk")

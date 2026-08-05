@@ -40,7 +40,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -101,6 +101,16 @@ class QuestAvatarBridgePlugin(Star):
             context,
             chat_provider_id=str(config.get("chat_provider_id", "") or ""),
             persona_prompt=str(config.get("persona_prompt", "") or ""),
+            character_name=str(config.get("character_name", "") or ""),
+            character_self_reference=str(
+                config.get("character_self_reference", "") or ""
+            ),
+            character_self_description=str(
+                config.get("character_self_description", "") or ""
+            ),
+            character_user_relationship=str(
+                config.get("character_user_relationship", "") or ""
+            ),
         )
         self.astrbot_stt = AstrBotSTTAdapter(
             context,
@@ -246,6 +256,7 @@ class QuestAvatarBridgePlugin(Star):
             llm=self.llm,
             relationship=self.relationship,
             logger=self._component_logger,
+            diagnostic_log=self.diagnostic_log,
         )
         self.pairing_api = PairingHttpApi(
             context=context,
@@ -284,6 +295,7 @@ class QuestAvatarBridgePlugin(Star):
         self.pairing_api.register()
 
     async def initialize(self) -> None:
+        await self.diagnostic_log.start()
         await self.pairing_listener.start()
         listener_status = self.pairing_listener.status_snapshot()
         if self.pairing_listener.ready and self.pairing_listener.public_exchange_url:
@@ -333,6 +345,13 @@ class QuestAvatarBridgePlugin(Star):
             enabled=self.stt.available,
             available=self.tts.available,
             ready=self.llm.available,
+        )
+        self.diagnostic_log.record(
+            "persona.status",
+            component="persona",
+            status="configured" if self.llm.persona_configured else "default",
+            persona_configured=self.llm.persona_configured,
+            character_name_configured=self.llm.character_name_configured,
         )
 
     def plugin_health(self) -> dict[str, object]:
@@ -416,7 +435,7 @@ class QuestAvatarBridgePlugin(Star):
                 self.diagnostic_log.record(
                     "plugin.terminated", component="plugin", status="ok"
                 )
-            self.diagnostic_log.close()
+            await self.diagnostic_log.close(timeout=2.0)
 
     def _int_config(self, key: str, default: int, minimum: int, maximum: int) -> int:
         return int(self._number_config(key, default, minimum, maximum))

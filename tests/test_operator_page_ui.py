@@ -16,7 +16,7 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
     )
     assert metadata["pages"]["operator"] == {
         "title": "Quest 角色设置",
-        "description": "选择聊天模型并从情读取自然人候选",
+        "description": "设置角色自我身份、聊天模型与关系自然人",
     }
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -36,6 +36,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     for element_id in (
         "chat-provider-id",
         "save-model-button",
+        "character-name",
+        "character-self-reference",
+        "character-user-relationship",
+        "character-self-description",
+        "save-persona-button",
         "load-identity-candidates",
         "relationship-person-select",
         "save-identity-button",
@@ -44,6 +49,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
 
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
+    assert 'apiGet("pairing/persona-settings")' in js
+    assert 'apiPost("pairing/persona-settings"' in js
     assert 'apiGet("pairing/identity-candidates")' in js
     assert 'apiPost("pairing/identity-selection"' in js
     assert "provider.id" in js

@@ -2,9 +2,23 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-08-05
+
 ### Added
 
 - 增加完整自声明的只读 `series.diagnostics@1.0` 提供方，可由“核”依据系列 ID、插件 ID 与官方仓库元数据自动发现，无需在“核”中登记；诊断关闭或写入失败时返回固定 `disabled/unavailable` 状态，不改变原有 JSONL 落盘、轮转和失败关闭行为。
+- 「Quest 角色设置」Page 新增角色姓名、自称、自我描述及与用户关系定位；后端生成明确的 Quest 混合现实 persona system prompt，空配置不臆造姓名或经历。
+
+### Changed
+
+- interaction 使用独立且有界的决策 turn，不再因触碰默认取消正常文本、LLM 或 TTS；显式 `/interrupt` 语义保持不变。
+- TTS 改为顺序句段合成和容量为 2 的有界生产者-消费者流水线，文本 delta 继续优先发送，取消后不再产生旧轮音频或结束事件。
+- 插件独立诊断日志改为异步有界写队列，磁盘操作在线程中执行，terminate 在有界超时内 flush；写入故障仍不影响对话。
+- `/health` 新增脱敏的独立诊断日志可用状态，便于不读取日志正文地验收远端写入降级情况。
+
+### Security
+
+- persona Page/API 不显示 Bridge、Provider 或 API Key；`relationship_person_id` 仅选择关系快照，不参与角色身份推断；诊断只记录 persona 是否配置的布尔状态。
 
 ## 0.3.1 - 2026-08-05
 

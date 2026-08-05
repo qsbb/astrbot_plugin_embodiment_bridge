@@ -56,9 +56,32 @@ class NativeConfigStub(dict[str, Any]):
 class LlmStub:
     def __init__(self, provider_id: str = "") -> None:
         self.chat_provider_id = provider_id
+        self.character_name = ""
+        self.character_self_reference = ""
+        self.character_self_description = ""
+        self.character_user_relationship = ""
 
     def configure_provider(self, provider_id: str) -> None:
         self.chat_provider_id = provider_id
+
+    @property
+    def persona_configured(self) -> bool:
+        return any(
+            (
+                self.character_name,
+                self.character_self_reference,
+                self.character_self_description,
+                self.character_user_relationship,
+            )
+        )
+
+    @property
+    def character_name_configured(self) -> bool:
+        return bool(self.character_name)
+
+    def configure_persona(self, **values: str) -> None:
+        for key, value in values.items():
+            setattr(self, key, value)
 
 
 class RelationshipStub:
@@ -148,6 +171,42 @@ def test_unknown_provider_and_save_failure_do_not_change_runtime() -> None:
         assert failed.value.code == "config_save_failed"
         assert settings.llm.chat_provider_id == "model-a"
         assert config["chat_provider_id"] == "model-a"
+
+    asyncio.run(scenario())
+
+
+def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({"character_name": "Before"})
+        settings = build_settings(config=config)
+        settings.llm.character_name = "Before"
+
+        saved = await settings.save_character_persona(
+            character_name="Lingxi",
+            character_self_reference="I",
+            character_self_description="A Quest companion",
+            character_user_relationship="trusted companion",
+        )
+        assert saved["character_name"] == "Lingxi"
+        assert saved["persona_configured"] is True
+        assert config.saves[-1] == {
+            "character_name": "Lingxi",
+            "character_self_reference": "I",
+            "character_self_description": "A Quest companion",
+            "character_user_relationship": "trusted companion",
+        }
+
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_character_persona(
+                character_name="After",
+                character_self_reference="me",
+                character_self_description="changed",
+                character_user_relationship="changed",
+            )
+        assert failed.value.code == "config_save_failed"
+        assert settings.llm.character_name == "Lingxi"
+        assert config["character_name"] == "Lingxi"
 
     asyncio.run(scenario())
 

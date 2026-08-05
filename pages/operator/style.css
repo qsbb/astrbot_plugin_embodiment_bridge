@@ -7,7 +7,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #101718; }
-button, select { font: inherit; }
+button, select, input, textarea { font: inherit; }
 button {
   min-height: 44px;
   border: 1px solid #38504b;
@@ -21,7 +21,7 @@ button:hover:not(:disabled) { border-color: #58d5aa; background: #223734; }
 button:disabled { cursor: default; opacity: .48; }
 button.primary { border-color: #55d7aa; color: #071b15; background: #55d7aa; font-weight: 700; }
 button[aria-busy="true"] { cursor: wait; }
-select {
+select, input, textarea {
   width: 100%;
   min-height: 46px;
   border: 1px solid #38504b;
@@ -30,6 +30,7 @@ select {
   color: #eef5f2;
   background: #111c1d;
 }
+textarea { resize: vertical; line-height: 1.55; }
 label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }

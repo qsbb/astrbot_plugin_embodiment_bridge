@@ -57,6 +57,9 @@ $bridgeBytes = New-Object byte[] 32
 | `chat_provider_id` | 明确选择聊天模型 Provider |
 | `relationship_person_id` | 可选；由管理员在插件专属配置中管理，不改变平台授权 |
 | `persona_prompt` | 只写角色设定和边界，不写骨骼、Morph 或动画路径 |
+| `character_name` / `character_self_reference` | 可选角色姓名与自称；留空时不臆造姓名，只使用第一人称“我” |
+| `character_self_description` | 可选角色明确知道的自我描述；未知经历必须明确不知道 |
+| `character_user_relationship` | 可选与用户的关系定位；不由 `relationship_person_id` 推断 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |
 | `enable_astrbot_stt` | 真实 STT 联调时设为 `true`，否则 `audio/end` 返回 SSE `stt_unavailable` |

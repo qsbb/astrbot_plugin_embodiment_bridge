@@ -13,6 +13,7 @@
 - 本机联调与安全配置：[docs/LOCAL_INTEGRATION_CN.md](docs/LOCAL_INTEGRATION_CN.md)
 - AstrBot 4.26.8 本地加载失败审计：[docs/LOAD_FAILURE_AUDIT_CN.md](docs/LOAD_FAILURE_AUDIT_CN.md)
 - Unity 可复用协议样本：[fixtures/protocol_v1/](fixtures/protocol_v1/)
+- 实时异步审计：[docs/ASYNC_AUDIT_CN.md](docs/ASYNC_AUDIT_CN.md)
 - 后续动作/设备联调待办：[docs/TODO_CN.md](docs/TODO_CN.md)
 
 ## 职责边界
@@ -76,9 +77,11 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 插件另提供「Quest 角色设置」管理员 Page，与快速绑定页分离：
 
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
+- “自我身份”可设置角色姓名、自称、自我描述及与用户的关系定位；字段只持久化到“临”的插件专属配置。空配置会使用通用 Quest 角色定位，但不会臆造姓名、身世、职业或共同经历。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
 - 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
 - 自然人选择只决定授权后的关系快照范围，不能替代原始 platform_id/bot_id/user_id，也不授予 owner、白名单或管理权限。
+- `relationship_person_id` 绝不用于推断角色姓名、自称或身份；关系快照只影响语气、主动性和边界。
 
 模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点，不向浏览器写入长期密钥或本地存储。
 ## 生产 STT/TTS 配置
@@ -249,7 +252,7 @@ data: {"type":"reply.end","protocol_version":"1.0","session_id":"s1","turn_id":"
 }
 ```
 
-允许的交互名称为 `handshake|head_pat|cheek_pinch|gaze|speaking`，阶段为 `start|update|end|cancel`。交互事件会去重和去抖；被接受的交互建立 `i:<event_id>` 决策轮次并取消更旧的活动轮次，避免旧文字、音频和动作在身体互动后继续发送。
+允许的交互名称为 `handshake|head_pat|cheek_pinch|gaze|speaking`，阶段为 `start|update|end|cancel`。交互事件会去重和去抖；被接受的交互建立独立的 `i:<event_id>` 决策轮次，不会默认打断正常 LLM/TTS。只有 Unity 明确调用 `/interrupt` 才取消指定轮次；单会话并发 interaction 有界。
 
 ### 6. 打断
 
@@ -314,7 +317,7 @@ LLM 输出必须是单个严格 JSON 对象。未知枚举、额外字段、Mark
 
 - STT 与 AstrBot Core TTS 默认禁用；“声”PCM 输出默认启用但可安全缺失。没有任何可用 TTS 时文本决策链仍可用，音频输入在 `audio/end` 后产生 `stt_unavailable`。
 - STT 是整轮文件式识别：插件在 `audio/end` 后才调用 Provider，不产生 `asr.partial`，也不执行 VAD、回声消除或唤醒词检测。
-- TTS 是整轮文件式合成：Provider 完成音频文件后才开始发送 SSE PCM 块。AstrBot 4.26.8 的 `get_audio(text)` 不接受结构化 emotion，因此角色意图中的情绪不会被猜测性地传成 Provider 参数。
+- TTS Provider 仍是文件式合成，但 Bridge 会按安全句段顺序调用 Provider，并通过容量为 2 的生产者-消费者队列尽早发送已完成句段；不会无限并发。AstrBot 4.26.8 的 `get_audio(text)` 不接受结构化 emotion，因此角色意图中的情绪不会被猜测性地传成 Provider 参数。
 - TTS Provider 若不返回可解析的 PCM WAV，会安全产生 `tts_failed`；文字、意图和最终 `reply.end(audio_sent=false)` 保留。
 - 没有 Quest 真机网络、麦克风、扬声器回声、嘴型、模型动作兼容性或 72 Hz 性能验证；这些属于 Unity/设备验收。
 - 会话历史和交互事实只在内存中有界保存。当前不持久化用户正文或原始音频。

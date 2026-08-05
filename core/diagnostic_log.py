@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -34,12 +35,17 @@ _SAFE_FIELD_NAMES = frozenset(
         "sequence",
         "result",
         "rotated",
+        "persona_configured",
+        "character_name_configured",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
     r"(?:key|token|jwt|auth|secret|password|credential|api|base_url|url|path|body|"
     r"audio|reply|text|session|turn|person|platform|user|bot|group|client|identity)",
     re.IGNORECASE,
+)
+_SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
+    {"persona_configured", "character_name_configured"}
 )
 
 PLUGIN_ID = "astrbot_plugin_quest_avatar_bridge"
@@ -61,6 +67,7 @@ class DiagnosticLog:
         enabled: bool = False,
         max_bytes: int = 1_048_576,
         backup_count: int = 3,
+        queue_size: int = 256,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.path = self.data_dir / self.filename
@@ -71,8 +78,14 @@ class DiagnosticLog:
         self._write_failures = 0
         self._disabled_due_error = False
         self._events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
+        self._pending: deque[str] = deque(maxlen=max(16, min(queue_size, 4096)))
         self._stream_id = uuid.uuid4().hex
         self._sequence = 0
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._wake: asyncio.Event | None = None
+        self._writer_task: asyncio.Task[None] | None = None
+        self._closing = False
+        self._writing = False
 
     @property
     def write_failures(self) -> int:
@@ -82,30 +95,135 @@ class DiagnosticLog:
     def degraded(self) -> bool:
         return self._disabled_due_error
 
+    def status_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            if not self.enabled:
+                status = "disabled"
+            elif self._disabled_due_error:
+                status = "unavailable"
+            else:
+                status = "ready"
+            return {
+                "enabled": self.enabled,
+                "status": status,
+                "write_failures": self._write_failures,
+            }
+
     def record(self, event: str, **fields: Any) -> None:
-        if not self.enabled or self._disabled_due_error:
+        if not self.enabled or self._disabled_due_error or self._closing:
             return
         payload: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             "event": self._safe_token(event, fallback="diagnostic"),
         }
         for name, value in fields.items():
-            if name not in _SAFE_FIELD_NAMES or _SENSITIVE_NAME_RE.search(name):
+            if name not in _SAFE_FIELD_NAMES or (
+                _SENSITIVE_NAME_RE.search(name)
+                and name not in _SAFE_BOOLEAN_STATUS_FIELDS
+            ):
                 continue
             safe = self._safe_value(name, value)
             if safe is not None:
                 payload[name] = safe
         try:
             line = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
-            self._write_line(line)
-            self._append_event(payload)
+            with self._lock:
+                self._append_event_unlocked(payload)
+                self._pending.append(line)
+                loop = self._loop
+                wake = self._wake
+            if loop is not None and wake is not None:
+                loop.call_soon_threadsafe(wake.set)
         except Exception:
             # Diagnostics must never change plugin or request behavior.
             self._write_failures += 1
             self._disabled_due_error = True
 
-    def close(self) -> None:
-        return None
+    async def start(self) -> None:
+        if (
+            not self.enabled
+            or self._disabled_due_error
+            or self._writer_task is not None
+        ):
+            return
+        self._loop = asyncio.get_running_loop()
+        self._wake = asyncio.Event()
+        self._writer_task = asyncio.create_task(
+            self._writer(), name="quest-avatar:diagnostic-writer"
+        )
+        with self._lock:
+            has_pending = bool(self._pending)
+        if has_pending:
+            self._wake.set()
+
+    async def flush(self, timeout: float = 2.0) -> bool:
+        if not self.enabled or self._writer_task is None:
+            return True
+
+        async def wait_until_drained() -> None:
+            while True:
+                with self._lock:
+                    drained = not self._pending and not self._writing
+                if drained or self._disabled_due_error:
+                    return
+                await asyncio.sleep(0.01)
+
+        try:
+            async with asyncio.timeout(max(0.05, timeout)):
+                await wait_until_drained()
+            return not self._disabled_due_error
+        except TimeoutError:
+            return False
+
+    async def close(self, timeout: float = 2.0) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        task = self._writer_task
+        if task is None:
+            return
+        wake = self._wake
+        if wake is not None:
+            wake.set()
+        try:
+            async with asyncio.timeout(max(0.05, timeout)):
+                await task
+        except TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            self._writer_task = None
+            self._loop = None
+            self._wake = None
+
+    async def _writer(self) -> None:
+        wake = self._wake
+        if wake is None:
+            return
+        while True:
+            await wake.wait()
+            while True:
+                with self._lock:
+                    if not self._pending:
+                        self._writing = False
+                        wake.clear()
+                        should_close = self._closing
+                        break
+                    line = self._pending.popleft()
+                    self._writing = True
+                try:
+                    await asyncio.to_thread(self._write_line, line)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    with self._lock:
+                        self._write_failures += 1
+                        self._disabled_due_error = True
+                        self._pending.clear()
+                        self._writing = False
+                    return
+            if should_close:
+                return
 
     def _write_line(self, line: str) -> None:
         encoded_size = len(line.encode("utf-8"))
@@ -144,24 +262,25 @@ class DiagnosticLog:
 
     def _append_event(self, payload: dict[str, Any]) -> None:
         with self._lock:
-            self._sequence += 1
-            details = {
-                key: value
-                for key, value in payload.items()
-                if key not in {"ts", "event"}
+            self._append_event_unlocked(payload)
+
+    def _append_event_unlocked(self, payload: dict[str, Any]) -> None:
+        self._sequence += 1
+        details = {
+            key: value for key, value in payload.items() if key not in {"ts", "event"}
+        }
+        self._events.append(
+            {
+                "seq": self._sequence,
+                "timestamp": str(payload.get("ts") or ""),
+                "plugin_id": PLUGIN_ID,
+                "plugin_name": PLUGIN_NAME,
+                "level": self._event_level(str(payload.get("event") or "")),
+                "code": str(payload.get("event") or "diagnostic"),
+                "summary": str(payload.get("event") or "diagnostic"),
+                "details": details,
             }
-            self._events.append(
-                {
-                    "seq": self._sequence,
-                    "timestamp": str(payload.get("ts") or ""),
-                    "plugin_id": PLUGIN_ID,
-                    "plugin_name": PLUGIN_NAME,
-                    "level": self._event_level(str(payload.get("event") or "")),
-                    "code": str(payload.get("event") or "diagnostic"),
-                    "summary": str(payload.get("event") or "diagnostic"),
-                    "details": details,
-                }
-            )
+        )
 
     @staticmethod
     def _event_level(event: str) -> str:
@@ -208,6 +327,8 @@ class DiagnosticLog:
 
     @classmethod
     def _safe_value(cls, name: str, value: Any) -> Any:
+        if name in _SAFE_BOOLEAN_STATUS_FIELDS:
+            return value if isinstance(value, bool) else None
         if isinstance(value, bool):
             return value
         if isinstance(value, int) and not isinstance(value, bool):

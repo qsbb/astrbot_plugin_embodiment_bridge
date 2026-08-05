@@ -1,5 +1,6 @@
 let bridge = null;
 let operatorSettings = null;
+let personaSettings = null;
 
 async function resolveBridge(timeout = 3000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -132,9 +133,63 @@ function renderOperatorSettings(settings) {
   personSelect.value = selectedPerson;
 }
 
+function renderPersonaSettings(persona) {
+  personaSettings = persona || {};
+  const writable = personaSettings.config_writable === true;
+  const fields = {
+    "character-name": personaSettings.character_name,
+    "character-self-reference": personaSettings.character_self_reference,
+    "character-self-description": personaSettings.character_self_description,
+    "character-user-relationship": personaSettings.character_user_relationship
+  };
+  Object.entries(fields).forEach(([id, value]) => {
+    const input = document.getElementById(id);
+    input.value = String(value || "");
+    input.disabled = !writable;
+  });
+  const status = document.getElementById("persona-status");
+  status.textContent = writable
+    ? personaSettings.persona_configured
+      ? "角色自我身份已配置"
+      : "尚未配置姓名与背景，将使用不臆造身份的通用定位"
+    : "当前 AstrBot 配置对象不支持异步保存";
+  document.getElementById("save-persona-button").disabled = !writable;
+}
+
 async function loadOperatorSettings() {
   const response = await apiGet("pairing/operator-settings");
   renderOperatorSettings(response.settings);
+}
+
+async function loadPersonaSettings() {
+  const response = await apiGet("pairing/persona-settings");
+  renderPersonaSettings(response.persona);
+}
+
+async function savePersonaSettings() {
+  const button = document.getElementById("save-persona-button");
+  if (!setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const response = await apiPost("pairing/persona-settings", {
+      character_name: document.getElementById("character-name").value,
+      character_self_reference: document.getElementById(
+        "character-self-reference"
+      ).value,
+      character_self_description: document.getElementById(
+        "character-self-description"
+      ).value,
+      character_user_relationship: document.getElementById(
+        "character-user-relationship"
+      ).value
+    });
+    renderPersonaSettings(response.persona);
+    toast("角色自我身份已保存并立即生效");
+  } catch (error) {
+    toast("角色身份保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = personaSettings?.config_writable !== true;
+  }
 }
 
 async function saveModelSelection() {
@@ -255,6 +310,9 @@ function bindEvents() {
     .getElementById("save-model-button")
     .addEventListener("click", saveModelSelection);
   document
+    .getElementById("save-persona-button")
+    .addEventListener("click", savePersonaSettings);
+  document
     .getElementById("load-identity-candidates")
     .addEventListener("click", loadIdentityCandidates);
   document
@@ -267,7 +325,7 @@ async function init() {
   if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
   await bridge.ready();
   bindEvents();
-  await loadOperatorSettings();
+  await Promise.all([loadOperatorSettings(), loadPersonaSettings()]);
   setRuntimeState("ready", "角色设置已就绪");
 }
 

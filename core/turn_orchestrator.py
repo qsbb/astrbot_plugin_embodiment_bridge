@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
@@ -119,11 +120,7 @@ class TurnOrchestrator:
         if not accepted:
             return None
         turn_id = f"i:{interaction.event_id}"[:64]
-        turn = await self.sessions.begin_turn(
-            session,
-            turn_id,
-            cancel_previous=True,
-        )
+        turn = await self.sessions.begin_interaction_turn(session, turn_id)
         await self._launch(
             session,
             turn,
@@ -141,7 +138,10 @@ class TurnOrchestrator:
 
         async def runner() -> None:
             await gate.wait()
-            await operation()
+            try:
+                await operation()
+            finally:
+                await self.sessions.complete_turn(session, turn)
 
         task = asyncio.create_task(
             runner(),
@@ -359,8 +359,9 @@ class TurnOrchestrator:
         if text and self.tts.available:
             tts_started = time.perf_counter()
             try:
-                async for pcm_chunk in self._normalized_audio_chunks(
-                    self.tts.synthesize(text, emotion=intent.emotion.value)
+                async for pcm_chunk in self._tts_pipeline(
+                    text,
+                    emotion=intent.emotion.value,
                 ):
                     accepted = await self._emit(
                         session,
@@ -546,6 +547,55 @@ class TurnOrchestrator:
             raise ValueError("TTS adapter returned incomplete PCM16 samples")
         if buffer:
             yield bytes(buffer)
+
+    async def _tts_pipeline(
+        self,
+        text: str,
+        *,
+        emotion: str,
+    ) -> AsyncIterator[bytes]:
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2)
+        failure: list[Exception] = []
+
+        async def produce() -> None:
+            send_sentinel = True
+            try:
+                for segment in self._speech_segments(text):
+                    source = self.tts.synthesize(segment, emotion=emotion)
+                    async for chunk in self._normalized_audio_chunks(source):
+                        await queue.put(chunk)
+            except asyncio.CancelledError:
+                send_sentinel = False
+                raise
+            except Exception as exc:
+                failure.append(exc)
+            finally:
+                if send_sentinel:
+                    await queue.put(None)
+
+        producer = asyncio.create_task(produce(), name="quest-avatar:tts-producer")
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    if failure:
+                        raise failure[0]
+                    return
+                yield chunk
+        finally:
+            if not producer.done():
+                producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+
+    @staticmethod
+    def _speech_segments(text: str, max_chars: int = 240) -> list[str]:
+        segments: list[str] = []
+        for match in re.finditer(r".+?(?:[。！？!?；;.\n]+|$)", text, re.DOTALL):
+            sentence = match.group(0).strip()
+            while sentence:
+                segments.append(sentence[:max_chars])
+                sentence = sentence[max_chars:]
+        return segments or ([text.strip()] if text.strip() else [])
 
     @staticmethod
     def _text_chunks(text: str, size: int = 80) -> list[str]:

@@ -49,6 +49,11 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
                 assert health_body["data"]["protocol_version"] == "1.0"
                 assert health_body["data"]["input_audio"]["stt_available"] is True
                 assert health_body["data"]["output_audio"]["tts_available"] is True
+                assert health_body["data"]["diagnostic_log"] == {
+                    "enabled": False,
+                    "status": "disabled",
+                    "write_failures": 0,
+                }
                 integrations = health_body["data"]["series_integrations"]
                 assert integrations["identity"]["configured"] is False
                 assert integrations["identity"]["status"] == (

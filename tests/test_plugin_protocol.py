@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from astrbot_plugin_quest_avatar_bridge.core.models import SessionStartRequest
 
@@ -165,7 +166,7 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 18
+        assert len(registered) == 20
         assert (
             "/astrbot_plugin_quest_avatar_bridge/events/<session_id>",
             ("GET",),
@@ -188,6 +189,14 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         ) in registered
         assert (
             "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/persona-settings",
+            ("GET",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/persona-settings",
             ("POST",),
         ) in registered
         assert (
@@ -244,6 +253,27 @@ def test_component_construction_failure_does_not_leave_registered_routes(
         module.QuestAvatarBridgePlugin(context, {"bridge_api_key": "x" * 32})
 
     assert context.routes == []
+
+
+def test_persona_api_schema_rejects_extra_or_secret_fields(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    install_astrbot_stubs(monkeypatch, tmp_path)
+    pairing = importlib.import_module(
+        "astrbot_plugin_quest_avatar_bridge.transport.pairing"
+    )
+
+    with pytest.raises(ValidationError):
+        pairing.CharacterPersonaSettingsRequest.model_validate(
+            {
+                "character_name": "name",
+                "character_self_reference": "I",
+                "character_self_description": "description",
+                "character_user_relationship": "friend",
+                "bridge_api_key": "secret",
+            }
+        )
 
 
 def test_http_layer_requires_both_astrbot_and_bridge_auth(
@@ -376,7 +406,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 18
+        assert len(context.routes) == 20
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

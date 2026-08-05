@@ -327,6 +327,15 @@ class HttpSseTransport:
                             "tts_available": self.orchestrator.tts.available,
                         },
                         "pairing_listener": self.listener.status_snapshot(),
+                        "diagnostic_log": (
+                            self.diagnostic_log.status_snapshot()
+                            if self.diagnostic_log is not None
+                            else {
+                                "enabled": False,
+                                "status": "disabled",
+                                "write_failures": 0,
+                            }
+                        ),
                         "series_integrations": self.orchestrator.integration_status(),
                         **stats,
                     },

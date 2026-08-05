@@ -110,6 +110,30 @@
     "obvious_hint": true,
     "default": ""
   },
+  "character_name": {
+    "description": "Quest 角色姓名",
+    "type": "string",
+    "hint": "角色自我身份的一部分；留空时角色不得自行编造姓名。",
+    "default": ""
+  },
+  "character_self_reference": {
+    "description": "Quest 角色自称",
+    "type": "string",
+    "hint": "例如“我”或角色固定自称；留空时安全默认使用“我”。",
+    "default": ""
+  },
+  "character_self_description": {
+    "description": "Quest 角色自我描述",
+    "type": "text",
+    "hint": "描述角色是谁、性格与已知背景；不知道的经历不得编造。",
+    "default": ""
+  },
+  "character_user_relationship": {
+    "description": "Quest 角色与用户的关系定位",
+    "type": "string",
+    "hint": "只定义角色如何理解双方关系；不会替代身份授权或 relationship_person_id。",
+    "default": ""
+  },
   "enable_astrbot_stt": {
     "description": "启用 AstrBot 默认 STT Provider",
     "type": "bool",

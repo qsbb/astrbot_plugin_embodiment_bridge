@@ -143,6 +143,7 @@ class BoundedEventQueue:
 class TurnState:
     turn_id: str
     generation: int
+    interaction: bool = False
     audio: bytearray = field(default_factory=bytearray)
     next_audio_sequence: int = 0
     audio_ended: bool = False
@@ -164,6 +165,7 @@ class SessionState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     generation: int = 0
     current_turn: TurnState | None = None
+    interaction_turns: dict[str, TurnState] = field(default_factory=dict)
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
     stream_attached: bool = False
     closed: bool = False
@@ -185,12 +187,14 @@ class SessionManager:
         max_audio_bytes: int = 1_920_000,
         max_audio_chunk_bytes: int = 16_000,
         interaction_debounce_ms: int = 250,
+        max_concurrent_interactions: int = 2,
     ) -> None:
         self.max_sessions = max(1, max_sessions)
         self.event_queue_size = max(4, event_queue_size)
         self.max_audio_bytes = max(3_200, max_audio_bytes)
         self.max_audio_chunk_bytes = max(3_200, max_audio_chunk_bytes)
         self.interaction_debounce_seconds = max(0, interaction_debounce_ms) / 1000
+        self.max_concurrent_interactions = max(1, min(max_concurrent_interactions, 8))
         self._sessions: dict[str, SessionState] = {}
         self._lock = asyncio.Lock()
         self._terminated = False
@@ -248,7 +252,9 @@ class SessionManager:
             if session.closed:
                 raise SessionNotFound("session is closed")
             old_turn = session.current_turn
-            if old_turn is not None and old_turn.turn_id == turn_id:
+            if (
+                old_turn is not None and old_turn.turn_id == turn_id
+            ) or turn_id in session.interaction_turns:
                 raise SessionConflict("turn already exists")
             if old_turn is not None and not cancel_previous:
                 raise SessionConflict("another turn is active")
@@ -260,6 +266,30 @@ class SessionManager:
         if old_turn is not None:
             await session.queue.discard_turn(old_turn.turn_id)
         return turn
+
+    async def begin_interaction_turn(
+        self,
+        session: SessionState,
+        turn_id: str,
+    ) -> TurnState:
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            if (
+                session.current_turn is not None
+                and session.current_turn.turn_id == turn_id
+            ) or turn_id in session.interaction_turns:
+                raise SessionConflict("turn already exists")
+            if len(session.interaction_turns) >= self.max_concurrent_interactions:
+                raise SessionConflict("interaction concurrency limit reached")
+            session.generation += 1
+            turn = TurnState(
+                turn_id=turn_id,
+                generation=session.generation,
+                interaction=True,
+            )
+            session.interaction_turns[turn_id] = turn
+            return turn
 
     async def assign_task(
         self,
@@ -367,17 +397,32 @@ class SessionManager:
     ) -> bool:
         async with session.lock:
             turn = session.current_turn
+            if requested_turn_id:
+                if turn is None or requested_turn_id != turn.turn_id:
+                    turn = session.interaction_turns.pop(requested_turn_id, None)
+                else:
+                    session.current_turn = None
+            elif turn is not None:
+                session.current_turn = None
             if turn is None:
                 return False
-            if requested_turn_id and requested_turn_id != turn.turn_id:
-                return False
-            session.generation += 1
-            session.current_turn = None
             if turn.task is not None:
                 turn.task.cancel()
             turn.audio.clear()
         await session.queue.discard_turn(turn.turn_id)
         return True
+
+    async def complete_turn(
+        self,
+        session: SessionState,
+        turn: TurnState,
+    ) -> None:
+        if not turn.interaction:
+            return
+        async with session.lock:
+            current = session.interaction_turns.get(turn.turn_id)
+            if current is turn:
+                session.interaction_turns.pop(turn.turn_id, None)
 
     async def attach_stream(self, session: SessionState) -> bool:
         async with session.lock:
@@ -407,12 +452,15 @@ class SessionManager:
             session.closed = True
             turn = session.current_turn
             session.current_turn = None
-            session.generation += 1
+            interaction_turns = list(session.interaction_turns.values())
+            session.interaction_turns.clear()
             tasks = list(session.tasks)
             for task in tasks:
                 task.cancel()
             if turn is not None:
                 turn.audio.clear()
+            for interaction_turn in interaction_turns:
+                interaction_turn.audio.clear()
             session.history.clear()
             session.interactions.clear()
             session.seen_event_ids.clear()
@@ -432,13 +480,16 @@ class SessionManager:
                 session.closed = True
                 turn = session.current_turn
                 session.current_turn = None
-                session.generation += 1
+                interaction_turns = list(session.interaction_turns.values())
+                session.interaction_turns.clear()
                 session_tasks = list(session.tasks)
                 for task in session_tasks:
                     task.cancel()
                     tasks.add(task)
                 if turn is not None:
                     turn.audio.clear()
+                for interaction_turn in interaction_turns:
+                    interaction_turn.audio.clear()
                 session.history.clear()
                 session.interactions.clear()
             await session.queue.close()
@@ -454,14 +505,17 @@ class SessionManager:
         turn_id: str,
         generation: int,
     ) -> bool:
+        if session.closed:
+            return False
         current = session.current_turn
-        return bool(
-            not session.closed
-            and current is not None
+        if (
+            current is not None
             and current.turn_id == turn_id
             and current.generation == generation
-            and session.generation == generation
-        )
+        ):
+            return True
+        interaction = session.interaction_turns.get(turn_id)
+        return bool(interaction is not None and interaction.generation == generation)
 
     async def stats(self) -> dict[str, int]:
         async with self._lock:

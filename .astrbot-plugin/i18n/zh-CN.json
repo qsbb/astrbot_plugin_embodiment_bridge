@@ -6,7 +6,7 @@
     },
     "operator": {
       "title": "Quest 角色设置",
-      "description": "选择聊天模型并从情读取自然人候选"
+      "description": "设置角色自我身份、聊天模型与关系自然人"
     }
   }
 }

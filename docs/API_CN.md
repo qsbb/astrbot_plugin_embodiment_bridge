@@ -158,6 +158,8 @@ sequenceDiagram
 
 内置 8520 listener 仅代理上表九个正常接口，并额外直接处理：
 
+`/health` 的 `diagnostic_log` 只返回 `enabled`、`status=disabled|ready|unavailable` 和 `write_failures` 计数，不返回路径、日志正文、身份或密钥。可在启用独立日志后连续调用两次 health，确认第二次仍为 `ready` 且失败数为 0。
+
 | 方法 | 完整路径 | 认证 | 用途 |
 |---|---|---|---|
 | POST | `/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/exchange` | 一次性 token 或 6 位短码 | 首次匿名兑换 |
@@ -166,7 +168,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/operator-settings`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/operator-settings`、`pairing/persona-settings`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -185,6 +187,8 @@ sequenceDiagram
 |---|---|---:|---|
 | GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
+| GET | `/pairing/persona-settings` | 200 | 读取插件专属角色身份安全字段与布尔配置状态 |
+| POST | `/pairing/persona-settings` | 200 | 原子持久化角色姓名、自称、自我描述和关系定位 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
 
@@ -193,6 +197,19 @@ sequenceDiagram
 ```json
 {"chat_provider_id":"provider-instance-id"}
 ```
+
+角色身份保存请求只允许以下四个字段，额外字段按 schema 拒绝：
+
+```json
+{
+  "character_name": "角色姓名",
+  "character_self_reference": "我",
+  "character_self_description": "角色明确知道的自我描述",
+  "character_user_relationship": "与用户的关系定位"
+}
+```
+
+这些字段只定义角色自身。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。字段为空时后端明确使用通用 Quest 混合现实角色定位，不臆造姓名、身世、职业、过去经历或共同记忆。
 
 自然人候选只接受 `relationship.identity_candidates@1.0` 的 `admin_labels_only` 响应，每项仅含 `person_id`、`display_name`、`account_count`。当前“情”未提供兼容契约时返回空候选和 `contract_unavailable`；Bridge 不读取其私有 registry，也不转发 identities Page。保存请求只允许：
 
@@ -450,7 +467,7 @@ hand:  left | right | both | none
 
 重复 `event_id` 或去抖窗口内的同名同阶段事件返回 `accepted=false` 和 `reason=duplicate_or_debounced`，不是 HTTP 错误。
 
-交互建立 `i:<event_id>` 决策轮次并取消旧活动轮次。Unity 不得把触碰名称自行固定映射为情绪。
+交互建立独立的 `i:<event_id>` 决策轮次，不替换或取消正常语音/文本轮次。单会话 interaction 并发有界；只有显式 `/interrupt` 才取消其 `turn_id` 指向的轮次。Unity 不得把触碰名称自行固定映射为情绪。
 
 ## 12. 打断
 
@@ -769,7 +786,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 - 文本轮 `turn.start.text` 最长 8192 个字符；语音轮可省略 `text` 或发送 `null`/`""`，然后按 `sequence=0` 开始上传 PCM16。
 - Quest 当前建议每 80 ms 上传一块，即 2560 字节（16000 Hz、单声道、16-bit）；网络背压时暂停采集或进入本地有界缓冲，不要并行开启第二轮上传。
 - 以 `(session_id, turn_id)` 作为文字、音频和动作的路由键。
-- 发起新轮或交互前停止本地旧轮播放；同时调用 `interrupt` 或使用 `cancel_previous=true`。
+- 发起新的正常语音/文本轮次前停止本地旧轮播放，并调用 `interrupt` 或使用 `cancel_previous=true`；普通 interaction 不应默认停止或打断正在播放的正常回复。
 - 收到旧 `turn_id` 的迟到网络数据时直接丢弃。
 - PCM16 Base64 解码后按 24000 Hz、单声道、16 位播放。
 - 嘴型只跟随实际播放缓冲区，不跟随 `reply.text.delta`。
@@ -782,6 +799,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 
 - STT 与 Core TTS adapter 默认关闭；`voice.audio_output@1.0` 默认优先但可安全缺失。文本轮次和角色意图链始终独立可用。
 - AstrBot 4.26.8 的公开 TTS Provider 没有结构化 emotion 或固定输出 PCM 契约；本插件通过 WAV 解析和重采样建立输出约束，无法解析的 Provider 音频会 `tts_failed`。
+- LLM 使用公开的整轮 `context.llm_generate()`，该接口不提供 token 流；模型完成后 Bridge 先发送全部 `reply.text.delta`，再以单生产者、容量 2 的有界队列顺序合成并发送句段音频。取消会同步终止旧 TTS producer，所有发送仍复核 turn generation。
 - 本插件只消费 `astrbot_plugin_voice_hub` 的 `voice.audio_output@1.0`；明确不消费带事件/投递副作用的 `voice.delivery@1.0`。
 - 没有公开 WebSocket 接口，前端不得尝试连接猜测的 WebSocket 路径。
 - 未完成 Quest 真机网络、麦克风回声、嘴型和具体模型动作验收。

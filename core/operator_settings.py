@@ -6,6 +6,12 @@ from typing import Any
 
 
 _PERSON_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_PERSONA_KEYS = (
+    "character_name",
+    "character_self_reference",
+    "character_self_description",
+    "character_user_relationship",
+)
 
 
 class OperatorSettingsError(RuntimeError):
@@ -27,12 +33,14 @@ class OperatorSettings:
         llm: Any,
         relationship: Any,
         logger: Any,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.context = context
         self.config = config
         self.llm = llm
         self.relationship = relationship
         self.logger = logger
+        self.diagnostic_log = diagnostic_log
         self._save_lock = asyncio.Lock()
 
     def snapshot(self) -> dict[str, Any]:
@@ -53,6 +61,28 @@ class OperatorSettings:
             "relationship_person_id": str(
                 getattr(self.relationship, "person_id", "") or ""
             ).strip(),
+            "persona": self.persona_snapshot(),
+            "config_writable": callable(
+                getattr(self.config, "save_config_async", None)
+            ),
+        }
+
+    def persona_snapshot(self) -> dict[str, Any]:
+        return {
+            "character_name": str(getattr(self.llm, "character_name", "") or ""),
+            "character_self_reference": str(
+                getattr(self.llm, "character_self_reference", "") or ""
+            ),
+            "character_self_description": str(
+                getattr(self.llm, "character_self_description", "") or ""
+            ),
+            "character_user_relationship": str(
+                getattr(self.llm, "character_user_relationship", "") or ""
+            ),
+            "persona_configured": bool(getattr(self.llm, "persona_configured", False)),
+            "character_name_configured": bool(
+                getattr(self.llm, "character_name_configured", False)
+            ),
             "config_writable": callable(
                 getattr(self.config, "save_config_async", None)
             ),
@@ -88,6 +118,35 @@ class OperatorSettings:
         await self._persist("relationship_person_id", person_id)
         self.relationship.configure_person_id(person_id)
         return self.snapshot()
+
+    async def save_character_persona(
+        self,
+        *,
+        character_name: str,
+        character_self_reference: str,
+        character_self_description: str,
+        character_user_relationship: str,
+    ) -> dict[str, Any]:
+        values = {
+            "character_name": _single_line(character_name, 64),
+            "character_self_reference": _single_line(character_self_reference, 64),
+            "character_self_description": _multi_line(
+                character_self_description, 2_000
+            ),
+            "character_user_relationship": _single_line(
+                character_user_relationship, 256
+            ),
+        }
+        await self._persist_many(values)
+        self.llm.configure_persona(**values)
+        self._diagnostic(
+            "persona.updated",
+            component="persona",
+            status="configured" if any(values.values()) else "default",
+            persona_configured=bool(any(values.values())),
+            character_name_configured=bool(values["character_name"]),
+        )
+        return self.persona_snapshot()
 
     def _list_chat_providers(self) -> list[dict[str, str]]:
         try:
@@ -126,6 +185,18 @@ class OperatorSettings:
         return items
 
     async def _persist(self, key: str, value: str) -> None:
+        await self._persist_many({key: value})
+
+    async def _persist_many(self, changes: dict[str, str]) -> None:
+        if not changes or any(
+            key not in {*_PERSONA_KEYS, "chat_provider_id", "relationship_person_id"}
+            for key in changes
+        ):
+            raise OperatorSettingsError(
+                "invalid_config_key",
+                422,
+                "配置字段不在允许范围内",
+            )
         save = getattr(self.config, "save_config_async", None)
         if not callable(save):
             raise OperatorSettingsError(
@@ -135,18 +206,21 @@ class OperatorSettings:
             )
 
         async with self._save_lock:
+            old_values: dict[str, tuple[Any, bool]] = {}
+            for key in changes:
+                try:
+                    old_exists = key in self.config
+                except TypeError:
+                    old_exists = False
+                try:
+                    old_value = self.config.get(key)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    old_value = None
+                old_values[key] = (old_value, old_exists)
             try:
-                old_exists = key in self.config
-            except TypeError:
-                old_exists = False
-            try:
-                old_value = self.config.get(key)
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                old_value = None
-            try:
-                committed = await save({key: value})
+                committed = await save(dict(changes))
             except Exception as exc:
-                self._restore_value(key, old_value, old_exists)
+                self._restore_values(old_values)
                 self.logger.warning(
                     "[quest-avatar] operator setting save failed: key=%s error_type=%s",
                     key,
@@ -159,17 +233,37 @@ class OperatorSettings:
                 ) from exc
 
             if committed is not True:
+                self._restore_values(old_values)
                 raise OperatorSettingsError(
                     "config_save_superseded",
                     409,
                     "配置已被更新，请刷新页面后重试",
                 )
 
-    def _restore_value(self, key: str, old_value: Any, old_exists: bool) -> None:
-        try:
-            if old_exists:
-                self.config[key] = old_value
-            else:
-                self.config.pop(key, None)
-        except (AttributeError, RuntimeError, TypeError, ValueError):
+    def _restore_values(self, values: dict[str, tuple[Any, bool]]) -> None:
+        for key, (old_value, old_exists) in values.items():
+            try:
+                if old_exists:
+                    self.config[key] = old_value
+                else:
+                    self.config.pop(key, None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
             return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return
+
+
+def _single_line(value: object, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit].strip()
+
+
+def _multi_line(value: object, limit: int) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = "".join(char for char in text if char == "\n" or ord(char) >= 32)
+    return cleaned[:limit].strip()

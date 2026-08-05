@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
+import threading
 from pathlib import Path
 
 from astrbot_plugin_quest_avatar_bridge.core.diagnostic_log import (
@@ -70,19 +71,26 @@ def test_diagnostics_provider_exposes_bounded_safe_events_and_clear_cursor(
 def test_diagnostics_provider_reports_unavailable_after_write_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
-    diagnostic = DiagnosticLog(tmp_path, enabled=True)
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
+        monkeypatch.setattr(
+            diagnostic,
+            "_write_line",
+            lambda _line: (_ for _ in ()).throw(OSError("disk full")),
+        )
+        await diagnostic.start()
+        diagnostic.record(
+            "listener.start_error", component="listener", code="bind_failed"
+        )
+        assert await diagnostic.flush() is False
 
-    monkeypatch.setattr(
-        diagnostic,
-        "_write_line",
-        lambda _line: (_ for _ in ()).throw(OSError("disk full")),
-    )
-    diagnostic.record("listener.start_error", component="listener", code="bind_failed")
+        payload = diagnostic.diagnostic_events()
+        assert payload["status"] == "unavailable"
+        assert payload["reason"] == "DIAGNOSTIC_UNAVAILABLE"
+        assert payload["events"] == []
+        await diagnostic.close()
 
-    payload = diagnostic.diagnostic_events()
-    assert payload["status"] == "unavailable"
-    assert payload["reason"] == "DIAGNOSTIC_UNAVAILABLE"
-    assert payload["events"] == []
+    asyncio.run(scenario())
 
 
 def test_logger_does_not_attach_root_handler(tmp_path: Path) -> None:
@@ -98,87 +106,179 @@ def test_logger_does_not_attach_root_handler(tmp_path: Path) -> None:
 
 
 def test_component_sink_does_not_forward_message_or_arguments(tmp_path: Path) -> None:
-    diagnostic = DiagnosticLog(tmp_path, enabled=True)
-    sink = DiagnosticLogSink(diagnostic)
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
+        await diagnostic.start()
+        sink = DiagnosticLogSink(diagnostic)
+        sink.error("API key=%s reply=%s", "credential-secret", "reply-secret")
+        assert await diagnostic.flush()
 
-    sink.error("API key=%s reply=%s", "credential-secret", "reply-secret")
+        line = diagnostic.path.read_text(encoding="utf-8")
+        assert "credential-secret" not in line
+        assert "reply-secret" not in line
+        assert json.loads(line)["event"] == "component.error"
+        await diagnostic.close()
 
-    line = diagnostic.path.read_text(encoding="utf-8")
-    assert "credential-secret" not in line
-    assert "reply-secret" not in line
-    assert json.loads(line)["event"] == "component.error"
+    asyncio.run(scenario())
 
 
 def test_sensitive_fields_are_omitted_and_values_are_bounded(tmp_path: Path) -> None:
-    diagnostic = DiagnosticLog(tmp_path, enabled=True)
-    diagnostic.record(
-        "http.session_start",
-        component="transport",
-        status=201,
-        session_id="session-secret",
-        turn_id="turn-secret",
-        user_id="user-secret",
-        api_key="api-secret",
-        reply_text="reply-secret",
-        error_type="ValueError",
-        duration_ms=12.3456,
-    )
-
-    line = diagnostic.path.read_text(encoding="utf-8")
-    payload = json.loads(line)
-    assert payload["event"] == "http.session_start"
-    assert payload["status"] == 201
-    assert payload["duration_ms"] == 12.346
-    assert all(
-        secret not in line
-        for secret in (
-            "session-secret",
-            "turn-secret",
-            "user-secret",
-            "api-secret",
-            "reply-secret",
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
+        await diagnostic.start()
+        diagnostic.record(
+            "http.session_start",
+            component="transport",
+            status=201,
+            session_id="session-secret",
+            turn_id="turn-secret",
+            user_id="user-secret",
+            api_key="api-secret",
+            reply_text="reply-secret",
+            error_type="ValueError",
+            duration_ms=12.3456,
         )
-    )
-    assert "session_id" not in payload
-    assert "turn_id" not in payload
-    assert "api_key" not in payload
+        assert await diagnostic.flush()
+
+        line = diagnostic.path.read_text(encoding="utf-8")
+        payload = json.loads(line)
+        assert payload["event"] == "http.session_start"
+        assert payload["status"] == 201
+        assert payload["duration_ms"] == 12.346
+        assert all(
+            secret not in line
+            for secret in (
+                "session-secret",
+                "turn-secret",
+                "user-secret",
+                "api-secret",
+                "reply-secret",
+            )
+        )
+        assert "session_id" not in payload
+        assert "turn_id" not in payload
+        assert "api_key" not in payload
+        await diagnostic.close()
+
+    asyncio.run(scenario())
 
 
 def test_rotation_and_concurrent_writes_keep_valid_jsonl(tmp_path: Path) -> None:
-    diagnostic = DiagnosticLog(tmp_path, enabled=True, max_bytes=16_384, backup_count=2)
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(
+            tmp_path, enabled=True, max_bytes=16_384, backup_count=2, queue_size=512
+        )
+        await diagnostic.start()
 
-    def write_batch(offset: int) -> None:
-        for index in range(40):
-            diagnostic.record(
-                "http.request",
-                component="transport",
-                operation="session_start",
-                status=201,
-                duration_ms=index,
-                reason=f"batch_{offset}",
-            )
+        def write_batch(offset: int) -> None:
+            for index in range(40):
+                diagnostic.record(
+                    "http.request",
+                    component="transport",
+                    operation="session_start",
+                    status=201,
+                    duration_ms=index,
+                    reason=f"batch_{offset}",
+                )
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        list(pool.map(write_batch, range(8)))
+        await asyncio.gather(
+            *(asyncio.to_thread(write_batch, item) for item in range(8))
+        )
+        assert await diagnostic.flush()
+        await diagnostic.close()
 
-    files = [diagnostic.path, *sorted(tmp_path.glob("quest_avatar_bridge.log.*"))]
-    assert diagnostic.path.exists()
-    assert any(path.name.endswith(".1") for path in files)
-    for path in files:
-        assert path.stat().st_size <= diagnostic.max_bytes
-        for line in path.read_text(encoding="utf-8").splitlines():
-            json.loads(line)
+        files = [diagnostic.path, *sorted(tmp_path.glob("quest_avatar_bridge.log.*"))]
+        assert diagnostic.path.exists()
+        assert any(path.name.endswith(".1") for path in files)
+        for path in files:
+            assert path.stat().st_size <= diagnostic.max_bytes
+            for line in path.read_text(encoding="utf-8").splitlines():
+                json.loads(line)
+
+    asyncio.run(scenario())
 
 
 def test_write_failure_degrades_without_raising(tmp_path: Path, monkeypatch) -> None:
-    diagnostic = DiagnosticLog(tmp_path, enabled=True)
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
 
-    def fail(_line: str) -> None:
-        raise OSError("read-only filesystem")
+        def fail(_line: str) -> None:
+            raise OSError("read-only filesystem")
 
-    monkeypatch.setattr(diagnostic, "_write_line", fail)
-    diagnostic.record("listener.start_error", component="listener", code="bind_failed")
-    diagnostic.record("listener.closed", component="listener", status="closed")
+        monkeypatch.setattr(diagnostic, "_write_line", fail)
+        await diagnostic.start()
+        diagnostic.record(
+            "listener.start_error", component="listener", code="bind_failed"
+        )
+        assert await diagnostic.flush() is False
+        diagnostic.record("listener.closed", component="listener", status="closed")
 
-    assert diagnostic.degraded is True
-    assert diagnostic.write_failures == 1
+        assert diagnostic.degraded is True
+        assert diagnostic.write_failures == 1
+        await diagnostic.close()
+
+    asyncio.run(scenario())
+
+
+def test_slow_disk_write_does_not_block_event_loop(tmp_path: Path, monkeypatch) -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_write(_line: str) -> None:
+            entered.set()
+            release.wait(timeout=1)
+
+        monkeypatch.setattr(diagnostic, "_write_line", slow_write)
+        await diagnostic.start()
+        diagnostic.record("http.request", component="transport", status=200)
+        assert await asyncio.to_thread(entered.wait, 1)
+
+        progressed = False
+
+        async def tick() -> None:
+            nonlocal progressed
+            await asyncio.sleep(0)
+            progressed = True
+
+        await asyncio.wait_for(tick(), timeout=0.1)
+        assert progressed is True
+        release.set()
+        assert await diagnostic.flush()
+        await diagnostic.close()
+
+    asyncio.run(scenario())
+
+
+def test_persona_diagnostics_only_write_boolean_configuration_state(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True)
+        await diagnostic.start()
+        diagnostic.record(
+            "persona.status",
+            component="persona",
+            status="configured",
+            persona_configured=True,
+            character_name_configured=False,
+            character_name="name-secret",
+            persona_text="persona-secret",
+        )
+        assert await diagnostic.flush()
+        assert diagnostic.status_snapshot() == {
+            "enabled": True,
+            "status": "ready",
+            "write_failures": 0,
+        }
+
+        line = diagnostic.path.read_text(encoding="utf-8")
+        payload = json.loads(line)
+        assert payload["persona_configured"] is True
+        assert payload["character_name_configured"] is False
+        assert "name-secret" not in line
+        assert "persona-secret" not in line
+        await diagnostic.close()
+
+    asyncio.run(scenario())

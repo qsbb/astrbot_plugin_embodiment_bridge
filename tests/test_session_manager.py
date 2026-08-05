@@ -14,6 +14,7 @@ from astrbot_plugin_quest_avatar_bridge.core.session_manager import (
     BoundedEventQueue,
     QueueItem,
     SessionManager,
+    SessionConflict,
     SessionOwnershipError,
 )
 
@@ -63,6 +64,28 @@ def test_interaction_dedupe_and_debounce() -> None:
         assert await manager.record_interaction(session, interaction("e1")) is False
         assert await manager.record_interaction(session, interaction("e2")) is False
         assert len(session.interactions) == 1
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_interaction_turns_are_bounded_and_do_not_replace_primary() -> None:
+    async def scenario() -> None:
+        manager = SessionManager(max_concurrent_interactions=2)
+        session = await manager.start_session(session_request("s1"), "owner")
+        primary = await manager.begin_turn(session, "t1", cancel_previous=True)
+        first = await manager.begin_interaction_turn(session, "i:e1")
+        second = await manager.begin_interaction_turn(session, "i:e2")
+
+        assert manager.is_current(session, primary.turn_id, primary.generation)
+        assert manager.is_current(session, first.turn_id, first.generation)
+        assert manager.is_current(session, second.turn_id, second.generation)
+        with pytest.raises(SessionConflict, match="concurrency limit"):
+            await manager.begin_interaction_turn(session, "i:e3")
+
+        await manager.complete_turn(session, first)
+        assert not manager.is_current(session, first.turn_id, first.generation)
+        assert manager.is_current(session, primary.turn_id, primary.generation)
         await manager.terminate()
 
     asyncio.run(scenario())
