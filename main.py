@@ -8,6 +8,7 @@ from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
 from .adapters.astrbot_persona import AstrBotPersonaAdapter
+from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
@@ -41,7 +42,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -161,6 +162,12 @@ class QuestAvatarBridgePlugin(Star):
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
         )
+        self.message_pipeline = AstrBotMessagePipelineAdapter(
+            context,
+            self._component_logger,
+            enabled=self._bool_config("enable_astrbot_message_pipeline", True),
+            platform_id=trusted_platform_id,
+        )
         self.knowledge = GlobalKnowledgeAdapter(
             context,
             self._component_logger,
@@ -211,6 +218,7 @@ class QuestAvatarBridgePlugin(Star):
             environment=self.environment,
             runtime=self.runtime,
             voice_audio=self.voice_hub_tts,
+            message_pipeline=self.message_pipeline,
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
             diagnostic_log=self.diagnostic_log,
         )

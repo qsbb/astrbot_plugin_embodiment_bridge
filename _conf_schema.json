@@ -103,12 +103,18 @@
     "maximum": 300
   },
   "chat_provider_id": {
-    "description": "角色决策使用的聊天模型 Provider ID",
+    "description": "兼容回退与触碰动作决策使用的聊天模型 Provider ID",
     "type": "string",
     "_special": "select_provider",
-    "hint": "Quest 会话没有消息平台 UMO，因此必须显式选择 AstrBot 聊天模型。",
+    "hint": "普通文字/语音优先进入 AstrBot 正式消息管线；管线不可用或处理触碰动作时使用此 Provider。",
     "obvious_hint": true,
     "default": ""
+  },
+  "enable_astrbot_message_pipeline": {
+    "description": "普通对话进入 AstrBot 正式消息管线",
+    "type": "bool",
+    "hint": "仅对通过身份授权的文字/语音会话生效。输入会作为受控消息事件进入 EventBus，经过人格、工具与插件钩子；禁止继承管理员权限，最终 TTS 仍由 Quest Bridge 流式输出。不可用时回退上方 Provider。",
+    "default": true
   },
   "persona_source_mode": {
     "description": "Quest 角色人格来源",

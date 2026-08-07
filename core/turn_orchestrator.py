@@ -8,6 +8,10 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 from ..adapters.astrbot_llm import DecisionGenerator
+from ..adapters.astrbot_pipeline import (
+    AstrBotMessagePipelineAdapter,
+    MessagePipelineUnavailable,
+)
 from ..adapters.environment import CachedEnvironmentAdapter
 from ..adapters.identity import (
     ProtectedContextDecision,
@@ -51,6 +55,7 @@ class TurnOrchestrator:
         environment: CachedEnvironmentAdapter | None = None,
         runtime: SeriesRuntimeAdapter | None = None,
         voice_audio: VoiceHubTTSAdapter | None = None,
+        message_pipeline: AstrBotMessagePipelineAdapter | None = None,
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
     ) -> None:
@@ -66,6 +71,7 @@ class TurnOrchestrator:
         self.environment = environment
         self.runtime = runtime
         self.voice_audio = voice_audio
+        self.message_pipeline = message_pipeline
         self.diagnostic_log = diagnostic_log
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
@@ -277,30 +283,65 @@ class TurnOrchestrator:
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
         history = await self.sessions.history_snapshot(session)
-        relationship_task = self._read_relationship(session)
-        knowledge_task = self._read_knowledge(user_text, interaction)
-        environment_task = self._read_environment()
-        relationship, knowledge, environment = await asyncio.gather(
-            relationship_task,
-            knowledge_task,
-            environment_task,
+        use_message_pipeline = bool(
+            interaction is None
+            and session.protected_context_authorized
+            and self.message_pipeline is not None
+            and self.message_pipeline.available
         )
+        relationship = await self._read_relationship(session)
+        knowledge: list[dict[str, Any]] = []
+        environment: dict[str, Any] | None = None
+        if not use_message_pipeline:
+            knowledge, environment = await asyncio.gather(
+                self._read_knowledge(user_text, interaction),
+                self._read_environment(),
+            )
         llm_started = time.perf_counter()
         try:
-            decision = await self.llm.generate(
-                user_text=user_text,
-                history=history,
-                interaction=interaction,
-                relationship=relationship,
-                knowledge=knowledge,
-                environment=environment,
-            )
+            operation = "direct_provider"
+            if use_message_pipeline and self.message_pipeline is not None:
+                try:
+                    decision = await self.message_pipeline.generate(
+                        session=session,
+                        user_text=user_text,
+                    )
+                    operation = "astrbot_event_bus"
+                except MessagePipelineUnavailable:
+                    knowledge, environment = await asyncio.gather(
+                        self._read_knowledge(user_text, interaction),
+                        self._read_environment(),
+                    )
+                    decision = await self.llm.generate(
+                        user_text=user_text,
+                        history=history,
+                        interaction=interaction,
+                        relationship=relationship,
+                        knowledge=knowledge,
+                        environment=environment,
+                    )
+            else:
+                decision = await self.llm.generate(
+                    user_text=user_text,
+                    history=history,
+                    interaction=interaction,
+                    relationship=relationship,
+                    knowledge=knowledge,
+                    environment=environment,
+                )
             self._diagnostic(
                 "llm.completed",
                 component="llm",
+                operation=operation,
                 status="ok",
                 available=True,
                 duration_ms=(time.perf_counter() - llm_started) * 1000,
+            )
+            self._diagnostic(
+                "decision.completed",
+                component="llm",
+                status="ok",
+                result="reply" if decision.should_reply else "silent",
             )
         except Exception as exc:
             self._diagnostic(
@@ -485,6 +526,9 @@ class TurnOrchestrator:
             "voice_audio_output": self.voice_audio.status_snapshot()
             if self.voice_audio is not None
             else {"enabled": False, "available": False, "status": "disabled"},
+            "astrbot_message_pipeline": self.message_pipeline.status_snapshot()
+            if self.message_pipeline is not None
+            else {"enabled": False, "available": False, "status": "disabled"},
             "runtime": self.runtime.snapshot
             if self.runtime is not None
             else {"status": "disabled"},
@@ -635,6 +679,7 @@ class TurnOrchestrator:
                     self.knowledge,
                     self.environment,
                     self.runtime,
+                    self.message_pipeline,
                 )
                 if adapter is not None
             ),

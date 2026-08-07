@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.4.3 - 2026-08-08
+
+### Added
+
+- 已授权的 Quest 文字与语音输入可作为受控合成消息事件进入 AstrBot EventBus，沿用真实平台会话来源，经过正式人格、会话、工具和插件钩子后再回传 Protocol 1.0。
+- 独立诊断新增对话生成模式及最终 `reply/silent/error` 结果，不记录输入、转写或回复正文。
+
+### Changed
+
+- 直接 `context.llm_generate()` 改为消息管线不可用时的兼容回退，并继续负责触碰动作决策；Quest 下行 TTS 仍由 Bridge 自己流式输出，合成消息事件会阻止服务端重复 TTS。
+- 空消息管线结果不再伪装成正常完成，而是作为明确失败进入既有 `error + reply.end(status=failed)` 收口。
+
+### Security
+
+- 只有通过既有身份适配器授权且服务端配置的原始平台仍在线时才进入 EventBus；Quest 自报字段不能选择平台、人格或 Provider，合成事件固定禁止继承 AstrBot 管理员身份。
+
 ## 0.4.2 - 2026-08-05
 
 ### Added

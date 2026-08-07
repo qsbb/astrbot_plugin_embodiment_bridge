@@ -2,7 +2,7 @@
 
 凝心溯溪系列 Quest 角色桥接模块。它把 Meta Quest 3 上 Unity MMD/VRM 前端上报的对话与交互事实交给 AstrBot 决策，再通过 SSE 返回模型无关的文字、音频和角色意图。
 
-插件基于 AstrBot 当前公开的 `Context.register_web_api()`、`astrbot.api.web.request`、`json_response()`、`error_response()`、`stream_response()`、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。人格接入按 AstrBot 4.27.1 的公开 `get_persona()`、`get_all_personas()` 与 `get_default_persona_v3(None)` 实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
+插件基于 AstrBot 当前公开的 `Context.register_web_api()`、事件队列、消息事件、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。已授权的普通对话进入正式 EventBus；直接 Provider 只保留为兼容回退和触碰动作决策。人格接入按 AstrBot 4.27.1 的公开接口实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
 
 ## 项目信息
 
@@ -79,13 +79,13 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
 - “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
-- Quest 没有可信的 AstrBot UMO/Conversation ID 映射，因此不会伪造消息平台会话人格；管理员保存的 `astrbot_persona_id` 是服务端受控的 Quest 会话人格。显式人格被删除或失效时回退通用 MR 身份，不会自动改用默认或其他人格。
+- 只有“序”已授权且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊/群聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，使用服务端受控的兼容人格与 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
 - 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
 - 自然人选择只决定授权后的关系快照范围，不能替代原始 platform_id/bot_id/user_id，也不授予 owner、白名单或管理权限。
 - `relationship_person_id` 绝不用于推断角色姓名、自称或身份；关系快照只影响语气、主动性和边界。
-- 每个 turn 在调用 LLM 前异步取得一次、1 秒超时的人格稳定快照。人格正文被限定为身份/性格/表达数据，不能覆盖 Protocol 1.0 JSON schema、认证授权、安全边界、动作白名单或模型无关边界。
+- EventBus 模式由 AstrBot 正式会话与插件钩子负责人格、历史、工具和时间/环境上下文；回退模式每个 turn 异步取得一次人格稳定快照。两条路径都不能覆盖 Protocol 1.0、认证授权和动作白名单。
 
 模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点，不向浏览器写入长期密钥或本地存储。
 ## 生产 STT/TTS 配置
@@ -314,8 +314,8 @@ LLM 输出必须是单个严格 JSON 对象。未知枚举、额外字段、Mark
 - `astrbot_plugin_identity_guardian`：按服务端可信 API 主体、客户端 ID、平台 ID 与原始 bot/user 绑定授权；任何失败只关闭受保护上下文。
 - `astrbot_plugin_relationship`：仅在“序”授权当前会话后消费 `relationship.snapshot@1.0` 的只读派生字段。
 - `astrbot_plugin_environment_awareness`：只消费 `environment.opportunity@1.0` 的缓存事实，不调用实时私有方法。
-- `astrbot_plugin_conversation_flow`：不调用。Quest 会话不是 AstrBot 消息事件会话，本插件自行维护有界近期对话和取消 token。
-- `astrbot_plugin_voice_hub`：只调用无消息副作用的 `voice.audio_output@1.0`，读取 provider 管理的 PCM16 WAV 后下混/重采样；不删除源文件。
+- `astrbot_plugin_conversation_flow`：EventBus 对话会经过其正式消息钩子；Bridge 从最终消息链取正文并保留自己的有界取消 token。回退和触碰决策仍使用本地近期历史。
+- `astrbot_plugin_voice_hub`：合成消息事件标记为由 Quest 处理 TTS，避免正式消息钩子重复合成；随后 Bridge 通过 `voice.audio_output@1.0` 对最终正文做一次流式输出。
 - `astrbot_plugin_update_manager`：只在启动和显式 health 读取 `update_manager.series_runtime@1.0`，不更新、安装、启停、重载或联网。
 - `astrbot_plugin_orchestration_hub`：当前提供方未注册服务，因此不调用 resolver，也不猜 service 名。
 
