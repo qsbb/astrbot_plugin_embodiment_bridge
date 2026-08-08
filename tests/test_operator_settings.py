@@ -34,11 +34,35 @@ class ProviderStub:
         return self._meta
 
 
+class PlatformStub:
+    def __init__(
+        self,
+        platform_id: str,
+        adapter_type: str,
+        display_name: str,
+    ) -> None:
+        self.config = {"token": "platform-secret"}
+        self._meta = SimpleNamespace(
+            id=platform_id,
+            name=adapter_type,
+            adapter_display_name=display_name,
+        )
+
+    def meta(self) -> Any:
+        return self._meta
+
+
 class ContextStub:
     def __init__(self, providers: list[Any]) -> None:
         self.providers = providers
         self.persona_manager = PersonaManagerStub()
-        self.platforms = {"platform-a": object(), "platform-b": object()}
+        self.platforms = {
+            "platform-a": PlatformStub("platform-a", "aiocqhttp", "OneBot 11"),
+            "platform-b": PlatformStub("platform-b", "telegram", "Telegram"),
+        }
+        self.platform_manager = SimpleNamespace(
+            get_insts=lambda: list(self.platforms.values())
+        )
 
     def get_all_providers(self) -> list[Any]:
         return self.providers
@@ -199,6 +223,27 @@ def test_snapshot_lists_only_safe_provider_metadata() -> None:
     assert snapshot["config_writable"] is False
 
 
+def test_platform_snapshot_lists_only_safe_loaded_platform_metadata() -> None:
+    settings = build_settings(config={})
+
+    snapshot = settings.platform_snapshot()
+
+    assert snapshot["platforms_status"] == "ok"
+    assert snapshot["platforms"] == [
+        {
+            "id": "platform-a",
+            "adapter_type": "aiocqhttp",
+            "display_name": "OneBot 11",
+        },
+        {
+            "id": "platform-b",
+            "adapter_type": "telegram",
+            "display_name": "Telegram",
+        },
+    ]
+    assert "platform-secret" not in repr(snapshot)
+
+
 def test_model_and_relationship_selection_persist_before_runtime_switch() -> None:
     async def scenario() -> None:
         config = NativeConfigStub({"chat_provider_id": "model-a"})
@@ -232,6 +277,19 @@ def test_trusted_platform_persists_and_updates_runtime_immediately() -> None:
             "configured": True,
             "available": True,
             "availability_reason": "ready",
+            "platforms_status": "ok",
+            "platforms": [
+                {
+                    "id": "platform-a",
+                    "adapter_type": "aiocqhttp",
+                    "display_name": "OneBot 11",
+                },
+                {
+                    "id": "platform-b",
+                    "adapter_type": "telegram",
+                    "display_name": "Telegram",
+                },
+            ],
             "config_writable": True,
         }
         assert config.saves == [{"trusted_platform_id": "platform-a"}]

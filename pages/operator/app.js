@@ -136,22 +136,41 @@ function renderOperatorSettings(settings) {
 
 function renderPlatformSettings(platform) {
   platformSettings = platform || {};
-  const input = document.getElementById("trusted-platform-id");
+  const select = document.getElementById("trusted-platform-id");
   const button = document.getElementById("save-platform-button");
   const status = document.getElementById("platform-status");
-  input.value = String(platformSettings.trusted_platform_id || "");
-  input.disabled = platformSettings.config_writable !== true;
-  button.disabled = input.disabled;
+  const selected = String(platformSettings.trusted_platform_id || "");
+  const platforms = Array.isArray(platformSettings.platforms)
+    ? platformSettings.platforms
+    : [];
+  select.replaceChildren(new Option("不使用正式消息平台", ""));
+  platforms.forEach((item) => {
+    const id = String(item?.id || "");
+    const displayName = String(item?.display_name || item?.adapter_type || id);
+    const adapterType = String(item?.adapter_type || "");
+    const label = displayName === adapterType
+      ? displayName + " · " + id
+      : displayName + " · " + adapterType + " · " + id;
+    select.add(new Option(label, id));
+  });
+  if (selected && !platforms.some((item) => String(item?.id || "") === selected)) {
+    select.add(new Option("已配置但不可用 · " + selected, selected));
+  }
+  select.value = selected;
+  select.disabled = platformSettings.config_writable !== true || !platforms.length;
+  button.disabled = select.disabled;
 
   const messages = {
     ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u53ef\u8fdb\u5165 AstrBot EventBus\u3002",
-    trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u5f53\u524d\u4f1a\u56de\u9000\u5230\u76f4\u63a5 Provider \u94fe\u8def\u3002",
+    trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528\u3002\u8bf7\u4fdd\u5b58\u5df2\u542f\u7528\u7684 AstrBot \u5e73\u53f0\u5b9e\u4f8b ID\u3002",
     astrbot_event_api_unavailable: "\u5f53\u524d AstrBot \u7248\u672c\u4e0d\u63d0\u4f9b EventBus \u5e73\u53f0\u63a5\u53e3\u3002",
     trusted_platform_unavailable: "\u5df2\u914d\u7f6e\u7684\u5e73\u53f0\u5f53\u524d\u4e0d\u5b58\u5728\u6216\u672a\u542f\u7528\u3002",
     disabled: "AstrBot \u6b63\u5f0f\u6d88\u606f\u94fe\u8def\u5df2\u5173\u95ed\u3002"
   };
   status.textContent = platformSettings.config_writable === true
-    ? messages[platformSettings.availability_reason] || "\u5e73\u53f0\u72b6\u6001\u672a\u77e5\u3002"
+    ? platforms.length
+      ? messages[platformSettings.availability_reason] || "\u5e73\u53f0\u72b6\u6001\u672a\u77e5\u3002"
+      : "\u6ca1\u6709\u5df2\u52a0\u8f7d\u7684 AstrBot \u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528\u3002"
     : "\u5f53\u524d AstrBot \u914d\u7f6e\u5bf9\u8c61\u4e0d\u652f\u6301\u5f02\u6b65\u4fdd\u5b58\u3002";
 }
 
@@ -294,7 +313,7 @@ async function savePlatformSettings() {
     toast("\u5e73\u53f0\u4fdd\u5b58\u5931\u8d25\uff1a" + error.message, true);
   } finally {
     setButtonBusy(button, false);
-    button.disabled = platformSettings?.config_writable !== true;
+    button.disabled = document.getElementById("trusted-platform-id").disabled;
   }
 }
 

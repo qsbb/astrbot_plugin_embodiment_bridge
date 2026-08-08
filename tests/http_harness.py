@@ -145,6 +145,17 @@ class ContextStub:
         self.providers = [ChatProviderStub()]
         self.persona_manager = PersonaManagerStub()
         self.stars: list[Any] = []
+        self.contract_platform = types.SimpleNamespace(
+            meta=lambda: types.SimpleNamespace(
+                id="contract-platform",
+                name="aiocqhttp",
+                adapter_display_name="OneBot 11",
+            ),
+            create_event=lambda message: message,
+        )
+        self.platform_manager = types.SimpleNamespace(
+            get_insts=lambda: [self.contract_platform]
+        )
 
     def register_web_api(
         self,
@@ -164,10 +175,7 @@ class ContextStub:
     def get_platform_inst(self, platform_id: str) -> Any | None:
         if platform_id != "contract-platform":
             return None
-        return types.SimpleNamespace(
-            meta=lambda: types.SimpleNamespace(id="contract-platform"),
-            create_event=lambda message: message,
-        )
+        return self.contract_platform
 
     def get_event_queue(self) -> asyncio.Queue[Any]:
         return asyncio.Queue()

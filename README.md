@@ -78,7 +78,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 插件另提供「Quest 角色设置」管理员 Page，与快速绑定页分离：
 
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
-- “正式消息链路”允许管理员填写 `trusted_platform_id`。后端只通过 AstrBot 公开 `Context.get_platform_inst()` 验证该实例当前存在，保存成功后立即同步身份授权和 EventBus 适配器；页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
+- “正式消息链路”从 AstrBot 已加载平台目录选择 `trusted_platform_id`。目录仅投影实例 ID、适配器类型和显示名，保存时再通过公开 `Context.get_platform_inst()` 验证该实例当前存在；成功后立即同步身份授权和 EventBus 适配器。页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
 - “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
 - 只有“序”已授权且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊/群聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。

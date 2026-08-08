@@ -253,6 +253,14 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert platform["availability_reason"] == (
                     "trusted_platform_not_configured"
                 )
+                assert platform["platforms_status"] == "ok"
+                assert platform["platforms"] == [
+                    {
+                        "id": "contract-platform",
+                        "adapter_type": "aiocqhttp",
+                        "display_name": "OneBot 11",
+                    }
+                ]
 
                 unknown_platform = await client.post(
                     server.url("/pairing/platform-settings"),

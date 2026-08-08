@@ -187,6 +187,8 @@ sequenceDiagram
 |---|---|---:|---|
 | GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
+| GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |
+| POST | `/pairing/platform-settings` | 200 | 验证并持久化 `trusted_platform_id`，成功后立即启用正式消息链路 |
 | GET | `/pairing/persona-settings` | 200 | 读取 AstrBot 人格安全 ID、来源、状态和手动兼容字段 |
 | POST | `/pairing/persona-settings` | 200 | 原子持久化人格来源、服务端人格选择和手动兼容字段 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
@@ -198,6 +200,14 @@ sequenceDiagram
 ```json
 {"chat_provider_id":"provider-instance-id"}
 ```
+
+平台枚举只返回已加载实例的 `id`、`adapter_type` 和 `display_name`，不返回平台账号、原始配置、Token、Webhook 或错误详情。保存请求只允许：
+
+```json
+{"trusted_platform_id":"platform-instance-id"}
+```
+
+非空 ID 必须仍能由 AstrBot `Context.get_platform_inst()` 精确解析；空字符串表示关闭正式消息链路。
 
 人格列表每项只包含 `id`；响应不含 system prompt、预设对话、工具、技能或错误模板。角色身份保存请求只允许以下字段，额外字段按 schema 拒绝：
 

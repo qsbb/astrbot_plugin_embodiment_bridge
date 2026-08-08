@@ -55,6 +55,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert 'apiPost("pairing/operator-settings"' in js
     assert 'apiGet("pairing/platform-settings")' in js
     assert 'apiPost("pairing/platform-settings"' in js
+    assert "platformSettings.platforms" in js
+    assert 'select id="trusted-platform-id"' in html
+    assert 'input id="trusted-platform-id"' not in html
+    assert r"\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528" in js
+    assert r"\u56de\u9000\u5230\u76f4\u63a5 Provider" not in js
     assert 'apiGet("pairing/persona-settings")' in js
     assert 'apiPost("pairing/persona-settings"' in js
     assert "persona_source_mode" in js

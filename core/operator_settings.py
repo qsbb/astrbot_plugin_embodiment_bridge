@@ -82,6 +82,7 @@ class OperatorSettings:
         }
 
     def platform_snapshot(self) -> dict[str, Any]:
+        platforms = self._list_platforms()
         platform_id = str(
             getattr(self.message_pipeline, "platform_id", "")
             or getattr(self.identity, "trusted_platform_id", "")
@@ -98,6 +99,8 @@ class OperatorSettings:
             "configured": bool(platform_id),
             "available": reason == "ready",
             "availability_reason": reason or "astrbot_event_api_unavailable",
+            "platforms_status": "ok" if platforms else "empty",
+            "platforms": platforms,
             "config_writable": callable(
                 getattr(self.config, "save_config_async", None)
             ),
@@ -367,6 +370,51 @@ class OperatorSettings:
                 }
             )
         items.sort(key=lambda item: (item["id"].casefold(), item["model"].casefold()))
+        return items
+
+    def _list_platforms(self) -> list[dict[str, str]]:
+        try:
+            manager = self.context.platform_manager
+            get_insts = manager.get_insts
+            platforms = get_insts()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return []
+        if not isinstance(platforms, (list, tuple)):
+            return []
+
+        items: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for platform in platforms:
+            try:
+                metadata = platform.meta()
+                platform_id = str(metadata.id or "").strip()
+                adapter_type = str(metadata.name or "").strip()
+                display_name = str(metadata.adapter_display_name or adapter_type).strip()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            if (
+                not platform_id
+                or len(platform_id) > 128
+                or platform_id in seen
+                or "|" in platform_id
+                or any(char.isspace() or ord(char) < 33 for char in platform_id)
+            ):
+                continue
+            seen.add(platform_id)
+            items.append(
+                {
+                    "id": platform_id,
+                    "adapter_type": adapter_type[:128],
+                    "display_name": display_name[:128],
+                }
+            )
+        items.sort(
+            key=lambda item: (
+                item["display_name"].casefold(),
+                item["adapter_type"].casefold(),
+                item["id"].casefold(),
+            )
+        )
         return items
 
     async def _persist(self, key: str, value: str) -> None:
