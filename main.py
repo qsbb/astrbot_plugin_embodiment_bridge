@@ -23,9 +23,6 @@ from .adapters.stt import (
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.diagnostic_log import (
-    DIAGNOSTIC_SERIES_ID,
-    PLUGIN_ID as DIAGNOSTIC_PLUGIN_ID,
-    PLUGIN_NAME as DIAGNOSTIC_PLUGIN_NAME,
     DiagnosticLog,
     DiagnosticLogSink,
 )
@@ -42,7 +39,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -65,6 +62,9 @@ class QuestAvatarBridgePlugin(Star):
                 "diagnostic_log_max_bytes", 1_048_576, 16_384, 16 * 1_048_576
             ),
             backup_count=self._int_config("diagnostic_log_backup_count", 3, 0, 10),
+            platform_log_enabled=self._bool_config(
+                "diagnostic_platform_log_enabled", False
+            ),
         )
         self.diagnostic_log.record("plugin.constructed", component="plugin")
         self._component_logger = DiagnosticLogSink(self.diagnostic_log)
@@ -419,19 +419,6 @@ class QuestAvatarBridgePlugin(Star):
             available=bool(checks["chat_provider_configured"]),
         )
         return result
-
-    def diagnostic_log_contract(self) -> dict[str, object]:
-        """Expose a self-declared provider discoverable by the series manager."""
-        return {
-            "name": "series.diagnostics",
-            "version": "1.0",
-            "series_id": DIAGNOSTIC_SERIES_ID,
-            "plugin_id": DIAGNOSTIC_PLUGIN_ID,
-            "plugin_name": DIAGNOSTIC_PLUGIN_NAME,
-            "capabilities": ("read_events", "clear_events"),
-            "storage": "memory_only",
-            "astrbot_log_propagation": False,
-        }
 
     def diagnostic_events(
         self, *, after_seq: int = 0, limit: int = 200

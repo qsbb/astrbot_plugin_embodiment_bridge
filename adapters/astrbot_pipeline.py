@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import types
 import uuid
 from typing import Any
 
@@ -52,15 +53,19 @@ class AstrBotMessagePipelineAdapter:
             return "disabled"
         if not self.platform_id:
             return "trusted_platform_not_configured"
-        queue_getter = getattr(self.context, "get_event_queue", None)
-        platform_getter = getattr(self.context, "get_platform_inst", None)
-        if not callable(queue_getter) or not callable(platform_getter):
+        try:
+            self.context.get_event_queue
+            platform_getter = self.context.get_platform_inst
+        except AttributeError:
             return "astrbot_event_api_unavailable"
         try:
-            if platform_getter(self.platform_id) is None:
+            platform = platform_getter(self.platform_id)
+            if platform is None:
                 return "trusted_platform_unavailable"
+            if not callable(platform.create_event):
+                return "astrbot_event_factory_unavailable"
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            return "trusted_platform_unavailable"
+            return "astrbot_event_factory_unavailable"
         return "ready"
 
     def configure_platform(self, platform_id: str) -> None:
@@ -80,15 +85,25 @@ class AstrBotMessagePipelineAdapter:
         if not self.platform_id:
             raise MessagePipelineUnavailable("trusted_platform_not_configured")
 
-        platform_getter = getattr(self.context, "get_platform_inst", None)
-        queue_getter = getattr(self.context, "get_event_queue", None)
-        if not callable(platform_getter) or not callable(queue_getter):
+        try:
+            platform_getter = self.context.get_platform_inst
+            queue_getter = self.context.get_event_queue
+        except AttributeError:
             raise MessagePipelineUnavailable("astrbot_event_api_unavailable")
         platform = platform_getter(self.platform_id)
         if platform is None:
             raise MessagePipelineUnavailable("trusted_platform_unavailable")
+        try:
+            event_factory = platform.create_event
+        except AttributeError as exc:
+            raise MessagePipelineUnavailable(
+                "astrbot_event_factory_unavailable"
+            ) from exc
+        if not callable(event_factory):
+            raise MessagePipelineUnavailable("astrbot_event_factory_unavailable")
 
         event = _build_capture_event(
+            platform=platform,
             platform_meta=platform.meta(),
             user_text=user_text,
             user_id=session.user_id,
@@ -147,6 +162,7 @@ class AstrBotMessagePipelineAdapter:
 
 def _build_capture_event(
     *,
+    platform: Any,
     platform_meta: Any,
     user_text: str,
     user_id: str,
@@ -155,104 +171,162 @@ def _build_capture_event(
 ) -> Any:
     # Imports stay lazy so plugin discovery still degrades cleanly on older
     # AstrBot builds that do not expose the complete EventBus ABI.
-    from astrbot.api.event import AstrMessageEvent
     from astrbot.api.message_components import Plain
-    from astrbot.core.platform import (
+    from astrbot.api.platform import (
         AstrBotMessage,
         Group,
         MessageMember,
         MessageType,
     )
 
-    class QuestPipelineEvent(AstrMessageEvent):
-        def __init__(self, message_obj: Any, session_id: str) -> None:
-            super().__init__(
-                message_str=user_text,
-                message_obj=message_obj,
-                platform_meta=platform_meta,
-                session_id=session_id,
-            )
-            self._quest_done = asyncio.Event()
-            self._quest_messages: list[str] = []
-            self._quest_stream = ""
-
-        async def send(self, message: Any) -> None:
-            self._has_send_oper = True
-            self._capture(message, streaming=False)
-
-        async def send_streaming(
-            self,
-            generator: Any,
-            use_fallback: bool = False,
-        ) -> None:
-            del use_fallback
-            self._has_send_oper = True
-            async for message in generator:
-                self._capture(message, streaming=True)
-
-        async def send_typing(self) -> None:
-            return None
-
-        async def stop_typing(self) -> None:
-            return None
-
-        def cleanup_temporary_local_files(self) -> None:
-            try:
-                super().cleanup_temporary_local_files()
-            finally:
-                self._quest_done.set()
-
-        async def wait_completed(self) -> None:
-            await self._quest_done.wait()
-
-        def captured_text(self) -> str:
-            values = [value for value in self._quest_messages if value.strip()]
-            if self._quest_stream.strip():
-                values.append(self._quest_stream)
-            deduplicated: list[str] = []
-            for value in values:
-                cleaned = value.strip()
-                if cleaned and (not deduplicated or deduplicated[-1] != cleaned):
-                    deduplicated.append(cleaned)
-            return "\n".join(deduplicated)
-
-        def _capture(self, message: Any, *, streaming: bool) -> None:
-            if message is None:
-                return
-            getter = getattr(message, "get_plain_text", None)
-            text = str(getter() if callable(getter) else "")
-            if not text:
-                return
-            if not streaming:
-                self._quest_messages.append(text)
-                return
-            if text.startswith(self._quest_stream):
-                self._quest_stream = text
-            elif not self._quest_stream.endswith(text):
-                self._quest_stream += text
-
     message = AstrBotMessage()
     message.self_id = str(bot_id)
     message.sender = MessageMember(str(user_id), "Quest")
     message.type = MessageType.GROUP_MESSAGE if group_id else MessageType.FRIEND_MESSAGE
     message.session_id = str(group_id or user_id)
-    message.message_id = "quest-" + uuid.uuid4().hex
+    message_id = "quest-" + uuid.uuid4().hex
+    message.message_id = message_id
     message.message = [Plain(str(user_text))]
     message.message_str = str(user_text)
-    message.raw_message = {"source": "quest_avatar_bridge"}
+    message.raw_message = _bridge_raw_message(
+        platform_name=str(getattr(platform_meta, "name", "") or ""),
+        user_text=user_text,
+        user_id=str(user_id),
+        bot_id=str(bot_id),
+        group_id=str(group_id or ""),
+        message_id=message_id,
+    )
     message.timestamp = int(time.time())
     if group_id:
         message.group = Group(group_id=str(group_id))
 
-    event = QuestPipelineEvent(message, message.session_id)
+    # Platform.create_event is AstrBot's public factory. It preserves the
+    # concrete adapter event type and its normal MessageSession/UMO setup.
+    event = platform.create_event(message)
+    from astrbot.api.event import AstrMessageEvent
+
+    if not isinstance(event, AstrMessageEvent):
+        raise MessagePipelineUnavailable("astrbot_event_factory_invalid")
+
+    event._quest_done = asyncio.Event()
+    event._quest_messages = []
+    event._quest_stream = ""
+    original_cleanup = event.cleanup_temporary_local_files
+
+    async def send(self: Any, outgoing: Any) -> None:
+        self._has_send_oper = True
+        _capture_message(self, outgoing, streaming=False)
+
+    async def send_streaming(
+        self: Any,
+        generator: Any,
+        use_fallback: bool = False,
+    ) -> None:
+        del use_fallback
+        self._has_send_oper = True
+        async for outgoing in generator:
+            _capture_message(self, outgoing, streaming=True)
+
+    async def send_typing(self: Any) -> None:
+        return None
+
+    async def stop_typing(self: Any) -> None:
+        return None
+
+    def cleanup(self: Any) -> None:
+        try:
+            original_cleanup()
+        finally:
+            self._quest_done.set()
+
+    async def wait_completed(self: Any) -> None:
+        await self._quest_done.wait()
+
+    def captured_text(self: Any) -> str:
+        values = [value for value in self._quest_messages if value.strip()]
+        if self._quest_stream.strip():
+            values.append(self._quest_stream)
+        deduplicated: list[str] = []
+        for value in values:
+            cleaned = value.strip()
+            if cleaned and (not deduplicated or deduplicated[-1] != cleaned):
+                deduplicated.append(cleaned)
+        return "\n".join(deduplicated)
+
+    event.send = types.MethodType(send, event)
+    event.send_streaming = types.MethodType(send_streaming, event)
+    event.send_typing = types.MethodType(send_typing, event)
+    event.stop_typing = types.MethodType(stop_typing, event)
+    event.cleanup_temporary_local_files = types.MethodType(cleanup, event)
+    event.wait_completed = types.MethodType(wait_completed, event)
+    event.captured_text = types.MethodType(captured_text, event)
     # A Quest bridge session can never inherit AstrBot administrator role from
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
     event.set_extra("quest_avatar_bridge", True)
+    event.set_extra(
+        "quest_avatar_bridge.identity_context",
+        {
+            "platform_id": str(platform_meta.id),
+            "bot_id": str(bot_id),
+            "user_id": str(user_id),
+            "group_id": str(group_id or ""),
+            "session_id": str(message.session_id),
+            "trusted": True,
+        },
+    )
     # Quest streams TTS through Protocol 1.0 after the text decision. Mark the
     # synthetic event handled so voice_hub does not synthesize the same reply.
     event.set_extra("mimo_tts_handled", True)
     return event
+
+
+def _capture_message(event: Any, message: Any, *, streaming: bool) -> None:
+    if message is None:
+        return
+    getter = getattr(message, "get_plain_text", None)
+    text = str(getter() if callable(getter) else "")
+    if not text:
+        return
+    if not streaming:
+        event._quest_messages.append(text)
+        return
+    if text.startswith(event._quest_stream):
+        event._quest_stream = text
+    elif not event._quest_stream.endswith(text):
+        event._quest_stream += text
+
+
+def _bridge_raw_message(
+    *,
+    platform_name: str,
+    user_text: str,
+    user_id: str,
+    bot_id: str,
+    group_id: str,
+    message_id: str,
+) -> dict[str, Any]:
+    """Provide stable, adapter-neutral metadata for generic plugin hooks.
+
+    This is not treated as a native platform payload. Native hooks should use
+    AstrMessageEvent's public accessors; the fields below keep common
+    post-processing integrations able to resolve the authorized sender.
+    """
+    message_type = "group" if group_id else "private"
+    raw: dict[str, Any] = {
+        "source": "quest_avatar_bridge",
+        "platform": platform_name,
+        "post_type": "message",
+        "message_type": message_type,
+        "self_id": bot_id,
+        "user_id": user_id,
+        "message_id": message_id,
+        "message": [{"type": "text", "data": {"text": user_text}}],
+        "sender": {"user_id": user_id, "nickname": "Quest"},
+    }
+    if group_id:
+        raw["group_id"] = group_id
+    return raw
 
 
 def _delivery_plan_text(event: Any) -> str:

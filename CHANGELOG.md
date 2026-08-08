@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.4.5 - 2026-08-08
+
+### Fixed
+
+- 通过 AstrBot 公开 `Platform.create_event()` 构造 EventBus 消息，保留真实平台事件类型、标准 MessageSession/UMO 和受信绑定身份，避免普通插件与记忆/后处理钩子只能看到 Bridge 自定义事件。
+
+### Changed
+
+- Bridge 不再声明 `series.diagnostics@1.0` 提供方，避免被“核”聚合；独立 JSONL、内存快照、Dashboard 脱敏诊断接口继续可用。
+- 可选将固定脱敏诊断摘要写入 Bridge 专属 logger，默认关闭且不挂接 root handler。
+
 ## 0.4.4 - 2026-08-08
 
 ### Added

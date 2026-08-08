@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,7 +22,10 @@ class QueueStub:
 class ContextStub:
     def __init__(self) -> None:
         self.queue = QueueStub()
-        self.platform = SimpleNamespace(meta=lambda: SimpleNamespace(id="qq", name="aiocqhttp"))
+        self.platform = SimpleNamespace(
+            meta=lambda: SimpleNamespace(id="qq", name="aiocqhttp"),
+            create_event=lambda message: message,
+        )
 
     def get_event_queue(self) -> QueueStub:
         return self.queue
@@ -151,3 +156,86 @@ def test_empty_pipeline_reply_is_not_reported_as_success(
         assert adapter.status == "empty_reply"
 
     asyncio.run(scenario())
+
+
+def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlain:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class FakeAstrBotMessage:
+        def __init__(self) -> None:
+            self.group = None
+
+    class FakeEvent:
+        def __init__(self, message: Any) -> None:
+            self.message_obj = message
+            self.session_id = message.session_id
+            self._extras: dict[str, Any] = {}
+            self._has_send_oper = False
+
+        def set_extra(self, key: str, value: Any) -> None:
+            self._extras[key] = value
+
+        def get_extra(self, key: str, default: Any = None) -> Any:
+            return self._extras.get(key, default)
+
+        def cleanup_temporary_local_files(self) -> None:
+            return None
+
+    class FakeAstrMessageEvent(FakeEvent):
+        pass
+
+    class FakePlatform:
+        def meta(self) -> Any:
+            return types.SimpleNamespace(id="trusted-platform", name="aiocqhttp")
+
+        def create_event(self, message: Any) -> FakeEvent:
+            event = FakeAstrMessageEvent(message)
+            event.native_factory = True
+            return event
+
+    class FakeMessageMember:
+        def __init__(self, user_id: str, nickname: str) -> None:
+            self.user_id = user_id
+            self.nickname = nickname
+
+    class FakeGroup:
+        def __init__(self, group_id: str) -> None:
+            self.group_id = group_id
+
+    message_components = types.ModuleType("astrbot.api.message_components")
+    message_components.Plain = FakePlain
+    platform_module = types.ModuleType("astrbot.api.platform")
+    platform_module.AstrBotMessage = FakeAstrBotMessage
+    platform_module.Group = FakeGroup
+    platform_module.MessageMember = FakeMessageMember
+    platform_module.MessageType = types.SimpleNamespace(
+        GROUP_MESSAGE="group", FRIEND_MESSAGE="friend"
+    )
+    event_module = types.ModuleType("astrbot.api.event")
+    event_module.AstrMessageEvent = FakeAstrMessageEvent
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", message_components
+    )
+    monkeypatch.setitem(sys.modules, "astrbot.api.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+
+    message = astrbot_pipeline._build_capture_event(
+        platform=FakePlatform(),
+        platform_meta=FakePlatform().meta(),
+        user_text="hello",
+        user_id="bound-user",
+        bot_id="bound-bot",
+        group_id="bound-group",
+    )
+
+    assert isinstance(message, FakeAstrMessageEvent)
+    assert message.native_factory is True
+    assert message.get_extra("_api_key_allow_admin_role") is False
+    identity = message.get_extra("quest_avatar_bridge.identity_context")
+    assert identity["platform_id"] == "trusted-platform"
+    assert identity["user_id"] == "bound-user"
+    assert identity["trusted"] is True

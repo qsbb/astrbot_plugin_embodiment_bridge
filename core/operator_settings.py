@@ -374,7 +374,8 @@ class OperatorSettings:
 
     async def _persist_many(self, changes: dict[str, str]) -> None:
         if not changes or any(
-            key not in {
+            key
+            not in {
                 *_PERSONA_KEYS,
                 "chat_provider_id",
                 "relationship_person_id",

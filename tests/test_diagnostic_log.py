@@ -5,6 +5,7 @@ import logging
 import asyncio
 import threading
 from pathlib import Path
+from typing import Any
 
 from astrbot_plugin_quest_avatar_bridge.core.diagnostic_log import (
     DiagnosticLog,
@@ -20,12 +21,14 @@ def test_disabled_logger_does_not_create_file(tmp_path: Path) -> None:
     assert not diagnostic.path.exists()
 
 
-def test_diagnostics_provider_reports_fixed_disabled_contract(tmp_path: Path) -> None:
+def test_diagnostics_snapshot_reports_private_contract_when_disabled(
+    tmp_path: Path,
+) -> None:
     diagnostic = DiagnosticLog(tmp_path)
 
     payload = diagnostic.diagnostic_events()
 
-    assert payload["contract"] == "series.diagnostics@1.0"
+    assert payload["contract"] == "quest_avatar_bridge.diagnostics@1.0"
     assert payload["plugin_id"] == "astrbot_plugin_quest_avatar_bridge"
     assert payload["plugin_name"] == "临"
     assert payload["status"] == "disabled"
@@ -117,6 +120,41 @@ def test_component_sink_does_not_forward_message_or_arguments(tmp_path: Path) ->
         assert "credential-secret" not in line
         assert "reply-secret" not in line
         assert json.loads(line)["event"] == "component.error"
+        await diagnostic.close()
+
+    asyncio.run(scenario())
+
+
+def test_platform_logger_mirror_is_namespaced_and_redacted(
+    tmp_path: Path, caplog: Any
+) -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticLog(tmp_path, enabled=True, platform_log_enabled=True)
+        caplog.set_level(
+            logging.INFO,
+            logger="astrbot.plugin.astrbot_plugin_quest_avatar_bridge",
+        )
+        await diagnostic.start()
+        diagnostic.record(
+            "turn.failed",
+            component="turn",
+            status="failed",
+            code="provider_error",
+            session_id="hidden-session",
+            reply_text="hidden-reply",
+        )
+        assert await diagnostic.flush()
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "astrbot.plugin.astrbot_plugin_quest_avatar_bridge"
+        ]
+        assert records
+        rendered = records[-1].getMessage()
+        assert "provider_error" in rendered
+        assert "hidden-session" not in rendered
+        assert "hidden-reply" not in rendered
+        assert diagnostic._platform_logger.handlers == []
         await diagnostic.close()
 
     asyncio.run(scenario())

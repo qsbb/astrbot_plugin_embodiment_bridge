@@ -346,6 +346,6 @@ python -m compileall .
 
 ## Series plugin integrations
 
-“临”还提供完整自声明的只读 `series.diagnostics@1.0` 诊断契约，供“核”根据 `series_id=ningxin_suxi`、插件 ID 和官方仓库元数据自动发现，无需在“核”里登记。契约用于统一显示插件自己的初始化、传输、配对、健康和会话状态；诊断默认关闭，关闭时显示“已关闭”，写入失败时显示“不可用”，不会阻塞其他系列日志。该契约不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会改变现有 JSONL 轮转与失败关闭行为。
+“临”保留插件自有 JSONL、内存快照和 Dashboard 脱敏诊断接口，但从 0.4.5 起不再声明 `series.diagnostics@1.0` 提供方，因此不会被“核”自动聚合。可选配置 `diagnostic_platform_log_enabled=true` 后，固定脱敏摘要会写入 `astrbot.plugin.astrbot_plugin_quest_avatar_bridge` 专属 logger；默认关闭，不挂接 root handler。诊断不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会阻塞其他请求。
 
 Quest calls only this Bridge. Backend reuse of knowledge, identity authorization, relationship snapshots, cached environment facts, Voice Hub PCM output, and runtime diagnostics is documented in [docs/SERIES_INTEGRATIONS_CN.md](docs/SERIES_INTEGRATIONS_CN.md). Conversation proactive delivery and orchestration-hub resolution are intentionally not consumed in normal Quest turns.

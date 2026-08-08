@@ -389,6 +389,36 @@ async function saveIdentitySelection() {
   }
 }
 
+async function loadDiagnostics() {
+  const button = document.getElementById("load-diagnostics");
+  if (!setButtonBusy(button, true, "读取中……")) return;
+  try {
+    const response = await apiGet("pairing/diagnostics");
+    const diagnostics = response.diagnostics || {};
+    const events = Array.isArray(diagnostics.events) ? diagnostics.events : [];
+    const statusLabels = {
+      ready: "可用",
+      disabled: "未启用",
+      unavailable: "暂不可用"
+    };
+    const status = String(diagnostics.status || "unavailable");
+    document.getElementById("diagnostics-status").textContent =
+      `状态：${statusLabels[status] || status} · 事件：${events.length} 条`;
+    document.getElementById("diagnostics-events").textContent = JSON.stringify(
+      events,
+      null,
+      2
+    );
+  } catch (error) {
+    document.getElementById("diagnostics-status").textContent =
+      "诊断日志暂不可用";
+    document.getElementById("diagnostics-events").textContent = "[]";
+    toast("读取诊断日志失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
 function bindEvents() {
   document.getElementById("chat-provider-id").addEventListener("change", (event) => {
     document.getElementById("save-model-button").disabled =
@@ -417,6 +447,9 @@ function bindEvents() {
   document
     .getElementById("save-identity-button")
     .addEventListener("click", saveIdentitySelection);
+  document
+    .getElementById("load-diagnostics")
+    .addEventListener("click", loadDiagnostics);
 }
 
 async function init() {

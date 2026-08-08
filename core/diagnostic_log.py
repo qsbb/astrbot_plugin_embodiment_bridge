@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
@@ -69,8 +70,7 @@ _SAFE_PERSONA_ENUM_VALUES = frozenset(
 
 PLUGIN_ID = "astrbot_plugin_quest_avatar_bridge"
 PLUGIN_NAME = "临"
-DIAGNOSTIC_CONTRACT = "series.diagnostics@1.0"
-DIAGNOSTIC_SERIES_ID = "ningxin_suxi"
+DIAGNOSTIC_CONTRACT = "quest_avatar_bridge.diagnostics@1.0"
 _MAX_EVENTS = 1000
 
 
@@ -87,12 +87,17 @@ class DiagnosticLog:
         max_bytes: int = 1_048_576,
         backup_count: int = 3,
         queue_size: int = 256,
+        platform_log_enabled: bool = False,
     ) -> None:
         self.data_dir = Path(data_dir)
         self.path = self.data_dir / self.filename
         self.enabled = bool(enabled)
         self.max_bytes = max(16_384, min(int(max_bytes), 16 * 1_048_576))
         self.backup_count = max(0, min(int(backup_count), 10))
+        self.platform_log_enabled = bool(platform_log_enabled)
+        self._platform_logger = logging.getLogger(
+            "astrbot.plugin.astrbot_plugin_quest_avatar_bridge"
+        )
         self._lock = threading.RLock()
         self._write_failures = 0
         self._disabled_due_error = False
@@ -158,6 +163,27 @@ class DiagnosticLog:
             # Diagnostics must never change plugin or request behavior.
             self._write_failures += 1
             self._disabled_due_error = True
+
+    def _mirror_platform_log(self, payload: dict[str, Any]) -> None:
+        if not self.platform_log_enabled:
+            return
+        try:
+            summary = {
+                "event": payload.get("event", "diagnostic"),
+                **{
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"ts", "event"}
+                },
+            }
+            self._platform_logger.info(
+                "[quest_avatar_bridge] diagnostic=%s",
+                json.dumps(summary, ensure_ascii=True, separators=(",", ":")),
+            )
+        except Exception:
+            # Platform logging is strictly diagnostic and must never affect
+            # the plugin-owned sink or request path.
+            return
 
     async def start(self) -> None:
         if (
@@ -259,6 +285,11 @@ class DiagnosticLog:
                 rotated = True
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(line)
+            if self.platform_log_enabled:
+                try:
+                    self._mirror_platform_log(json.loads(line))
+                except Exception:
+                    pass
             if rotated:
                 # A rotation marker is intentionally omitted: it would create
                 # another write and could recurse when the filesystem is full.

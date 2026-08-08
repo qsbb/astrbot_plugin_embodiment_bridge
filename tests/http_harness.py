@@ -165,7 +165,8 @@ class ContextStub:
         if platform_id != "contract-platform":
             return None
         return types.SimpleNamespace(
-            meta=lambda: types.SimpleNamespace(id="contract-platform")
+            meta=lambda: types.SimpleNamespace(id="contract-platform"),
+            create_event=lambda message: message,
         )
 
     def get_event_queue(self) -> asyncio.Queue[Any]:

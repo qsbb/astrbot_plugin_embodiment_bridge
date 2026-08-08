@@ -53,6 +53,13 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   padding: 24px;
   background: #151f20;
 }
+
+.diagnostics-events {
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 0.75rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
 .setting-panel h2 { margin: 0; font-size: 22px; letter-spacing: 0; }
 .section-label { color: #55d7aa; font-size: 12px; font-weight: 800; }
 .field-status { min-height: 48px; font-size: 13px; }
