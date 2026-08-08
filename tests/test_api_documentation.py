@@ -38,7 +38,7 @@ def test_frontend_api_document_covers_public_protocol() -> None:
 
     for allowed_value in (
         "neutral | happy | shy | surprised | concerned | uncomfortable",
-        "idle | talk | wave | bow | handshake | head_pat | cheek_pinch | refuse | step_back",
+        "idle | talk | wave | bow | dance | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back",
         "user | hand | away | none",
     ):
         assert allowed_value in document

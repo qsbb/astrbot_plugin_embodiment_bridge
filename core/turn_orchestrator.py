@@ -56,6 +56,7 @@ class TurnOrchestrator:
         runtime: SeriesRuntimeAdapter | None = None,
         voice_audio: VoiceHubTTSAdapter | None = None,
         message_pipeline: AstrBotMessagePipelineAdapter | None = None,
+        allow_direct_provider_fallback: bool = True,
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
     ) -> None:
@@ -72,6 +73,7 @@ class TurnOrchestrator:
         self.runtime = runtime
         self.voice_audio = voice_audio
         self.message_pipeline = message_pipeline
+        self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
@@ -193,6 +195,19 @@ class TurnOrchestrator:
             await self._decide_and_deliver(session, turn, text, interaction=None)
         except asyncio.CancelledError:
             raise
+        except MessagePipelineUnavailable as exc:
+            self._diagnostic(
+                "message_pipeline.blocked",
+                component="message_pipeline",
+                status="blocked",
+                reason_code=str(exc)[:64] or "unknown",
+            )
+            await self._emit_terminal_error(
+                session,
+                turn,
+                "astrbot_message_pipeline_unavailable",
+                "AstrBot 消息链路不可用，请先配置可信平台并完成绑定",
+            )
         except AdapterUnavailable:
             self._diagnostic(
                 "stt.error",
@@ -232,6 +247,17 @@ class TurnOrchestrator:
             await self._decide_and_deliver(session, turn, text, interaction=None)
         except asyncio.CancelledError:
             raise
+        except MessagePipelineUnavailable as exc:
+            self.logger.warning(
+                "[quest-avatar] AstrBot message pipeline unavailable: reason=%s",
+                str(exc) or "unknown",
+            )
+            await self._emit_terminal_error(
+                session,
+                turn,
+                "astrbot_message_pipeline_unavailable",
+                "AstrBot 消息链路不可用，请先配置可信平台并完成绑定",
+            )
         except Exception as exc:
             self.logger.warning(
                 "[quest-avatar] text turn failed: error_type=%s", type(exc).__name__
@@ -289,6 +315,20 @@ class TurnOrchestrator:
             and self.message_pipeline is not None
             and self.message_pipeline.available
         )
+        pipeline_required = interaction is None and not self.allow_direct_provider_fallback
+        if pipeline_required and not use_message_pipeline:
+            reason = (
+                self.message_pipeline.availability_reason
+                if self.message_pipeline is not None
+                else "astrbot_event_api_unavailable"
+            )
+            self._diagnostic(
+                "message_pipeline.blocked",
+                component="message_pipeline",
+                status="blocked",
+                reason_code=reason,
+            )
+            raise MessagePipelineUnavailable(reason)
         relationship = await self._read_relationship(session)
         knowledge: list[dict[str, Any]] = []
         environment: dict[str, Any] | None = None
@@ -307,7 +347,19 @@ class TurnOrchestrator:
                         user_text=user_text,
                     )
                     operation = "astrbot_event_bus"
-                except MessagePipelineUnavailable:
+                except MessagePipelineUnavailable as exc:
+                    self._diagnostic(
+                        "message_pipeline.fallback",
+                        component="message_pipeline",
+                        status=(
+                            "fallback"
+                            if self.allow_direct_provider_fallback
+                            else "blocked"
+                        ),
+                        reason_code=str(exc)[:64] or "unknown",
+                    )
+                    if not self.allow_direct_provider_fallback:
+                        raise
                     knowledge, environment = await asyncio.gather(
                         self._read_knowledge(user_text, interaction),
                         self._read_environment(),

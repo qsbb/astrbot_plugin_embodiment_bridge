@@ -42,6 +42,8 @@ class AstrBotMessagePipelineAdapter:
         self.platform_id = str(platform_id or "").strip()
         self.timeout_seconds = min(max(float(timeout_seconds), 10.0), 180.0)
         self.status = "enabled" if self.enabled else "disabled"
+        self.last_error = ""
+        self.last_duration_ms = 0
 
     @property
     def available(self) -> bool:
@@ -78,28 +80,37 @@ class AstrBotMessagePipelineAdapter:
         session: SessionState,
         user_text: str,
     ) -> ModelDecision:
+        started = time.perf_counter()
+        self.last_error = ""
         if not self.enabled:
+            self.last_error = "message_pipeline_disabled"
             raise MessagePipelineUnavailable("message_pipeline_disabled")
         if not session.protected_context_authorized:
+            self.last_error = "protected_context_not_authorized"
             raise MessagePipelineUnavailable("protected_context_not_authorized")
         if not self.platform_id:
+            self.last_error = "trusted_platform_not_configured"
             raise MessagePipelineUnavailable("trusted_platform_not_configured")
 
         try:
             platform_getter = self.context.get_platform_inst
             queue_getter = self.context.get_event_queue
         except AttributeError:
+            self.last_error = "astrbot_event_api_unavailable"
             raise MessagePipelineUnavailable("astrbot_event_api_unavailable")
         platform = platform_getter(self.platform_id)
         if platform is None:
+            self.last_error = "trusted_platform_unavailable"
             raise MessagePipelineUnavailable("trusted_platform_unavailable")
         try:
             event_factory = platform.create_event
         except AttributeError as exc:
+            self.last_error = "astrbot_event_factory_unavailable"
             raise MessagePipelineUnavailable(
                 "astrbot_event_factory_unavailable"
             ) from exc
         if not callable(event_factory):
+            self.last_error = "astrbot_event_factory_unavailable"
             raise MessagePipelineUnavailable("astrbot_event_factory_unavailable")
 
         event = _build_capture_event(
@@ -114,6 +125,7 @@ class AstrBotMessagePipelineAdapter:
             queue_getter().put_nowait(event)
         except (AttributeError, asyncio.QueueFull, RuntimeError) as exc:
             self.status = "queue_unavailable"
+            self.last_error = "astrbot_event_queue_unavailable"
             raise MessagePipelineUnavailable("astrbot_event_queue_unavailable") from exc
 
         self.status = "processing"
@@ -121,6 +133,7 @@ class AstrBotMessagePipelineAdapter:
             await asyncio.wait_for(event.wait_completed(), timeout=self.timeout_seconds)
         except TimeoutError as exc:
             self.status = "timeout"
+            self.last_error = "astrbot_pipeline_timeout"
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
 
         reply = event.captured_text().strip()
@@ -128,9 +141,11 @@ class AstrBotMessagePipelineAdapter:
             reply = _delivery_plan_text(event).strip()
         if not reply:
             self.status = "empty_reply"
+            self.last_error = "astrbot_pipeline_empty_reply"
             raise MessagePipelineEmpty("astrbot_pipeline_empty_reply")
 
         self.status = "ok"
+        self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         reply = reply[:4000]
         return ModelDecision(
             should_reply=True,
@@ -151,6 +166,8 @@ class AstrBotMessagePipelineAdapter:
             "available": self.available,
             "availability_reason": self.availability_reason,
             "status": self.status,
+            "last_error": self.last_error,
+            "last_duration_ms": self.last_duration_ms,
             "mode": "astrbot_event_bus",
             "admin_inheritance": False,
             "server_tts_suppressed": True,

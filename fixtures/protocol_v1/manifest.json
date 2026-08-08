@@ -68,7 +68,10 @@
       "head_pat",
       "cheek_pinch",
       "refuse",
-      "step_back"
+      "step_back",
+      "dance",
+      "nod",
+      "sway"
     ],
     "look_at": ["user", "hand", "away", "none"],
     "interaction_name": [

@@ -2,7 +2,7 @@
 
 凝心溯溪系列 Quest 角色桥接模块。它把 Meta Quest 3 上 Unity MMD/VRM 前端上报的对话与交互事实交给 AstrBot 决策，再通过 SSE 返回模型无关的文字、音频和角色意图。
 
-插件基于 AstrBot 当前公开的 `Context.register_web_api()`、事件队列、消息事件、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。已授权的普通对话进入正式 EventBus；直接 Provider 只保留为兼容回退和触碰动作决策。人格接入按 AstrBot 4.27.1 的公开接口实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
+插件基于 AstrBot 当前公开的 `Context.register_web_api()`、事件队列、消息事件、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。普通文字/语音默认只进入已授权的正式 EventBus；直连 Provider 回退必须由管理员显式开启，触碰动作仍使用受控兼容决策。人格接入按 AstrBot 4.27.1 的公开接口实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
 
 ## 项目信息
 
@@ -80,7 +80,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
 - “正式消息链路”允许管理员填写 `trusted_platform_id`。后端只通过 AstrBot 公开 `Context.get_platform_inst()` 验证该实例当前存在，保存成功后立即同步身份授权和 EventBus 适配器；页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
 - “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
-- 只有“序”已授权且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊/群聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，使用服务端受控的兼容人格与 Provider 回退。
+- 只有“序”已授权且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊/群聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
 - 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
@@ -100,6 +100,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 | `enable_voice_hub_tts` | `true` | 优先消费“声”的 `voice.audio_output@1.0`；失败前未发送字节时可回退 Core TTS |
 | `trusted_client_id` | 空 | 服务端固定 Quest 客户端 ID；空值会关闭受保护上下文 |
 | `trusted_platform_id` | 空 | 服务端固定原始平台 ID；可在「Quest 角色设置」Page 验证并保存，空值会关闭受保护上下文与 EventBus 正式消息链路 |
+| `allow_direct_provider_fallback` | `false` | 普通文字/语音是否允许在正式消息链路不可用时回退到直连 Provider；关闭可确保不会静默绕过记忆、知和后处理插件 |
 | `stt_timeout_seconds` | `45` | 单次整轮识别超时 |
 | `tts_timeout_seconds` | `60` | 单次整轮合成超时 |
 | `max_tts_audio_seconds` | `120` | 规范化后输出时长上限 |

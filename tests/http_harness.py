@@ -389,6 +389,9 @@ def build_plugin(
         {
             "bridge_api_key": BRIDGE_API_KEY,
             "chat_provider_id": "fake-provider",
+            # The legacy HTTP harness exercises the compatibility provider;
+            # production defaults to the strict AstrBot EventBus path.
+            "allow_direct_provider_fallback": True,
             "gesture_cooldown_ms": 0,
             "pairing_exchange_proxy_url": (
                 "https://pair.example.com/quest/pairing/exchange"

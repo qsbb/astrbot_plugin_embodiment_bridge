@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.4.6 - 2026-08-09
+
+### Added
+
+- 新增白名单 Avatar Skill 注册表；LLM 可通过结构化 `action.name` 和受限参数调用 `wave`、`bow`、`dance`、`nod`、`sway` 及触碰反应，最终仍只输出语义 `avatar.intent`。
+
+### Changed
+
+- 普通文字/语音默认不再静默回退到直连 Provider；AstrBot 正式消息链路未授权或不可用时返回明确错误，避免绕过记忆、知识和后处理插件。触碰交互仍保留受控兼容决策。
+
 ## 0.4.5 - 2026-08-08
 
 ### Fixed

@@ -219,6 +219,9 @@ class QuestAvatarBridgePlugin(Star):
             runtime=self.runtime,
             voice_audio=self.voice_hub_tts,
             message_pipeline=self.message_pipeline,
+            allow_direct_provider_fallback=self._bool_config(
+                "allow_direct_provider_fallback", False
+            ),
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
             diagnostic_log=self.diagnostic_log,
         )

@@ -717,7 +717,7 @@ GET /health
 
 ```text
 emotion: neutral | happy | shy | surprised | concerned | uncomfortable
-gesture: idle | talk | wave | bow | handshake | head_pat | cheek_pinch | refuse | step_back
+gesture: idle | talk | wave | bow | dance | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back
 look_at: user | hand | away | none
 ```
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -49,6 +49,9 @@ class Gesture(StrEnum):
     CHEEK_PINCH = "cheek_pinch"
     REFUSE = "refuse"
     STEP_BACK = "step_back"
+    DANCE = "dance"
+    NOD = "nod"
+    SWAY = "sway"
 
 
 class LookAt(StrEnum):
@@ -187,10 +190,19 @@ class ProposedIntent(StrictModel):
     ] = "model_decision"
 
 
+class AvatarActionCall(StrictModel):
+    name: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
+    ]
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class ModelDecision(StrictModel):
     should_reply: bool
     reply_text: str = Field(default="", max_length=4000)
     intent: ProposedIntent
+    action: AvatarActionCall | None = None
 
     @model_validator(mode="after")
     def align_reply_flag(self) -> ModelDecision:
