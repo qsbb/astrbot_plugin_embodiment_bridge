@@ -161,6 +161,16 @@ class ContextStub:
     def get_all_providers(self) -> list[Any]:
         return self.providers
 
+    def get_platform_inst(self, platform_id: str) -> Any | None:
+        if platform_id != "contract-platform":
+            return None
+        return types.SimpleNamespace(
+            meta=lambda: types.SimpleNamespace(id="contract-platform")
+        )
+
+    def get_event_queue(self) -> asyncio.Queue[Any]:
+        return asyncio.Queue()
+
 
 class ChatProviderStub:
     def meta(self) -> Any:

@@ -42,6 +42,12 @@ class ChatProviderSelectionRequest(BaseModel):
     chat_provider_id: str = Field(min_length=1, max_length=256)
 
 
+class TrustedPlatformSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    trusted_platform_id: str = Field(default="", max_length=128)
+
+
 class RelationshipPersonSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -111,6 +117,18 @@ class PairingHttpApi:
                 self.save_operator_settings,
                 ["POST"],
                 "Save Quest chat model selection",
+            ),
+            (
+                "pairing/platform-settings",
+                self.platform_settings_overview,
+                ["GET"],
+                "Read safe Quest AstrBot platform settings",
+            ),
+            (
+                "pairing/platform-settings",
+                self.save_platform_settings,
+                ["POST"],
+                "Save Quest AstrBot platform selection",
             ),
             (
                 "pairing/persona-settings",
@@ -203,6 +221,30 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "settings": settings})
         except Exception as exc:
             return self._error(exc, "save_operator_settings")
+
+    async def platform_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "platform": self.operator_settings.platform_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "platform_settings_overview")
+
+    async def save_platform_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(TrustedPlatformSettingsRequest)
+            platform = await self.operator_settings.save_trusted_platform_id(
+                payload.trusted_platform_id
+            )
+            self.trusted_platform_id = platform["trusted_platform_id"]
+            return _json_no_store({"success": True, "platform": platform})
+        except Exception as exc:
+            return self._error(exc, "save_platform_settings")
 
     async def persona_settings_overview(self) -> Any:
         try:

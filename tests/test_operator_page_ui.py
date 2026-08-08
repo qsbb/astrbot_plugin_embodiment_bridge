@@ -16,7 +16,7 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
     )
     assert metadata["pages"]["operator"] == {
         "title": "Quest 角色设置",
-        "description": "继承 AstrBot 人格，设置聊天模型与关系自然人",
+        "description": "设置 AstrBot 正式消息平台、人格、聊天模型与关系自然人",
     }
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -36,6 +36,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     for element_id in (
         "chat-provider-id",
         "save-model-button",
+        "trusted-platform-id",
+        "save-platform-button",
         "persona-source-mode",
         "astrbot-persona-id",
         "character-name",
@@ -51,6 +53,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
 
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
+    assert 'apiGet("pairing/platform-settings")' in js
+    assert 'apiPost("pairing/platform-settings"' in js
     assert 'apiGet("pairing/persona-settings")' in js
     assert 'apiPost("pairing/persona-settings"' in js
     assert "persona_source_mode" in js
@@ -86,7 +90,6 @@ def test_operator_page_does_not_expose_secrets_or_private_relationship_storage()
         "_page_identities",
         "/astrbot_plugin_relationship/identities",
         "trusted_client_id",
-        "trusted_platform_id",
         "localStorage",
         "console.log",
         "system_prompt",

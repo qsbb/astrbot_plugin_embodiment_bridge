@@ -166,7 +166,7 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 21
+        assert len(registered) == 23
         assert (
             "/astrbot_plugin_quest_avatar_bridge/events/<session_id>",
             ("GET",),
@@ -189,6 +189,14 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         ) in registered
         assert (
             "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/platform-settings",
+            ("GET",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/pairing/platform-settings",
             ("POST",),
         ) in registered
         assert (
@@ -419,7 +427,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 21
+        assert len(context.routes) == 23
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

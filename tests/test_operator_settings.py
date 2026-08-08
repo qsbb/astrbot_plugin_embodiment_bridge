@@ -38,9 +38,13 @@ class ContextStub:
     def __init__(self, providers: list[Any]) -> None:
         self.providers = providers
         self.persona_manager = PersonaManagerStub()
+        self.platforms = {"platform-a": object(), "platform-b": object()}
 
     def get_all_providers(self) -> list[Any]:
         return self.providers
+
+    def get_platform_inst(self, platform_id: str) -> Any | None:
+        return self.platforms.get(platform_id)
 
 
 class NativeConfigStub(dict[str, Any]):
@@ -96,6 +100,31 @@ class RelationshipStub:
         self.person_id = person_id
 
 
+class IdentityStub:
+    def __init__(self, platform_id: str = "") -> None:
+        self.trusted_platform_id = platform_id
+
+    def configure_trusted_platform(self, platform_id: str) -> None:
+        self.trusted_platform_id = platform_id
+
+
+class MessagePipelineStub:
+    def __init__(self, context: ContextStub, platform_id: str = "") -> None:
+        self.context = context
+        self.platform_id = platform_id
+
+    @property
+    def availability_reason(self) -> str:
+        if not self.platform_id:
+            return "trusted_platform_not_configured"
+        if self.context.get_platform_inst(self.platform_id) is None:
+            return "trusted_platform_unavailable"
+        return "ready"
+
+    def configure_platform(self, platform_id: str) -> None:
+        self.platform_id = platform_id
+
+
 class PersonaManagerStub:
     def __init__(self) -> None:
         self.personas = {
@@ -131,6 +160,8 @@ def build_settings(
             ProviderStub("model-a", "gpt-a", "secret-a"),
         ]
     )
+    identity = IdentityStub(str(config.get("trusted_platform_id", "") or ""))
+    pipeline = MessagePipelineStub(context, identity.trusted_platform_id)
     return OperatorSettings(
         context=context,
         config=config,
@@ -138,6 +169,8 @@ def build_settings(
         relationship=RelationshipStub(),
         persona=AstrBotPersonaAdapter(context),
         logger=LoggerStub(),
+        identity=identity,
+        message_pipeline=pipeline,
     )
 
 
@@ -183,6 +216,59 @@ def test_model_and_relationship_selection_persist_before_runtime_switch() -> Non
             {"chat_provider_id": "model-b"},
             {"relationship_person_id": "person-a"},
         ]
+
+    asyncio.run(scenario())
+
+
+def test_trusted_platform_persists_and_updates_runtime_immediately() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub()
+        settings = build_settings(config=config)
+
+        saved = await settings.save_trusted_platform_id("platform-a")
+
+        assert saved == {
+            "trusted_platform_id": "platform-a",
+            "configured": True,
+            "available": True,
+            "availability_reason": "ready",
+            "config_writable": True,
+        }
+        assert config.saves == [{"trusted_platform_id": "platform-a"}]
+        assert settings.identity.trusted_platform_id == "platform-a"
+        assert settings.message_pipeline.platform_id == "platform-a"
+
+        cleared = await settings.save_trusted_platform_id("")
+        assert cleared["availability_reason"] == "trusted_platform_not_configured"
+        assert settings.identity.trusted_platform_id == ""
+        assert settings.message_pipeline.platform_id == ""
+
+    asyncio.run(scenario())
+
+
+def test_invalid_missing_or_failed_platform_save_keeps_runtime_selection() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({"trusted_platform_id": "platform-a"})
+        settings = build_settings(config=config)
+
+        for value, code in (
+            ("bad|platform", "invalid_trusted_platform_id"),
+            ("bad platform", "invalid_trusted_platform_id"),
+            ("missing", "trusted_platform_not_available"),
+        ):
+            with pytest.raises(OperatorSettingsError) as invalid:
+                await settings.save_trusted_platform_id(value)
+            assert invalid.value.code == code
+            assert settings.identity.trusted_platform_id == "platform-a"
+            assert settings.message_pipeline.platform_id == "platform-a"
+
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_trusted_platform_id("platform-b")
+        assert failed.value.code == "config_save_failed"
+        assert config["trusted_platform_id"] == "platform-a"
+        assert settings.identity.trusted_platform_id == "platform-a"
+        assert settings.message_pipeline.platform_id == "platform-a"
 
     asyncio.run(scenario())
 

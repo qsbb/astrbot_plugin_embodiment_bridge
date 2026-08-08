@@ -43,6 +43,8 @@ class OperatorSettings:
         persona: Any,
         logger: Any,
         diagnostic_log: Any | None = None,
+        identity: Any | None = None,
+        message_pipeline: Any | None = None,
     ) -> None:
         self.context = context
         self.config = config
@@ -51,6 +53,8 @@ class OperatorSettings:
         self.persona = persona
         self.logger = logger
         self.diagnostic_log = diagnostic_log
+        self.identity = identity
+        self.message_pipeline = message_pipeline
         self._save_lock = asyncio.Lock()
 
     def snapshot(self) -> dict[str, Any]:
@@ -72,6 +76,28 @@ class OperatorSettings:
                 getattr(self.relationship, "person_id", "") or ""
             ).strip(),
             "persona": self.persona_snapshot(),
+            "config_writable": callable(
+                getattr(self.config, "save_config_async", None)
+            ),
+        }
+
+    def platform_snapshot(self) -> dict[str, Any]:
+        platform_id = str(
+            getattr(self.message_pipeline, "platform_id", "")
+            or getattr(self.identity, "trusted_platform_id", "")
+            or self.config.get("trusted_platform_id", "")
+            or ""
+        ).strip()
+        reason = (
+            str(getattr(self.message_pipeline, "availability_reason", "") or "")
+            if self.message_pipeline is not None
+            else "astrbot_event_api_unavailable"
+        )
+        return {
+            "trusted_platform_id": platform_id,
+            "configured": bool(platform_id),
+            "available": reason == "ready",
+            "availability_reason": reason or "astrbot_event_api_unavailable",
             "config_writable": callable(
                 getattr(self.config, "save_config_async", None)
             ),
@@ -169,6 +195,56 @@ class OperatorSettings:
         await self._persist("relationship_person_id", person_id)
         self.relationship.configure_person_id(person_id)
         return self.snapshot()
+
+    async def save_trusted_platform_id(self, value: str) -> dict[str, Any]:
+        platform_id = str(value or "").strip()
+        if (
+            len(platform_id) > 128
+            or "|" in platform_id
+            or any(char.isspace() or ord(char) < 33 for char in platform_id)
+        ):
+            raise OperatorSettingsError(
+                "invalid_trusted_platform_id",
+                422,
+                "AstrBot platform ID is invalid",
+            )
+        if platform_id:
+            getter = getattr(self.context, "get_platform_inst", None)
+            if not callable(getter):
+                raise OperatorSettingsError(
+                    "astrbot_platform_api_unavailable",
+                    503,
+                    "AstrBot platform lookup API is unavailable",
+                )
+            try:
+                platform = getter(platform_id)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                raise OperatorSettingsError(
+                    "astrbot_platform_lookup_failed",
+                    503,
+                    "AstrBot platform lookup failed",
+                ) from exc
+            if platform is None:
+                raise OperatorSettingsError(
+                    "trusted_platform_not_available",
+                    422,
+                    "The selected AstrBot platform is not available",
+                )
+
+        await self._persist("trusted_platform_id", platform_id)
+        if self.identity is not None:
+            self.identity.configure_trusted_platform(platform_id)
+        if self.message_pipeline is not None:
+            self.message_pipeline.configure_platform(platform_id)
+        snapshot = self.platform_snapshot()
+        self._diagnostic(
+            "platform.updated",
+            component="message_pipeline",
+            status=snapshot["availability_reason"],
+            configured=snapshot["configured"],
+            available=snapshot["available"],
+        )
+        return snapshot
 
     async def save_character_persona(
         self,
@@ -298,7 +374,12 @@ class OperatorSettings:
 
     async def _persist_many(self, changes: dict[str, str]) -> None:
         if not changes or any(
-            key not in {*_PERSONA_KEYS, "chat_provider_id", "relationship_person_id"}
+            key not in {
+                *_PERSONA_KEYS,
+                "chat_provider_id",
+                "relationship_person_id",
+                "trusted_platform_id",
+            }
             for key in changes
         ):
             raise OperatorSettingsError(

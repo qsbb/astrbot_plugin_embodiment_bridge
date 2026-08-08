@@ -1,6 +1,7 @@
 let bridge = null;
 let operatorSettings = null;
 let personaSettings = null;
+let platformSettings = null;
 
 async function resolveBridge(timeout = 3000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -133,6 +134,27 @@ function renderOperatorSettings(settings) {
   personSelect.value = selectedPerson;
 }
 
+function renderPlatformSettings(platform) {
+  platformSettings = platform || {};
+  const input = document.getElementById("trusted-platform-id");
+  const button = document.getElementById("save-platform-button");
+  const status = document.getElementById("platform-status");
+  input.value = String(platformSettings.trusted_platform_id || "");
+  input.disabled = platformSettings.config_writable !== true;
+  button.disabled = input.disabled;
+
+  const messages = {
+    ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u53ef\u8fdb\u5165 AstrBot EventBus\u3002",
+    trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u5f53\u524d\u4f1a\u56de\u9000\u5230\u76f4\u63a5 Provider \u94fe\u8def\u3002",
+    astrbot_event_api_unavailable: "\u5f53\u524d AstrBot \u7248\u672c\u4e0d\u63d0\u4f9b EventBus \u5e73\u53f0\u63a5\u53e3\u3002",
+    trusted_platform_unavailable: "\u5df2\u914d\u7f6e\u7684\u5e73\u53f0\u5f53\u524d\u4e0d\u5b58\u5728\u6216\u672a\u542f\u7528\u3002",
+    disabled: "AstrBot \u6b63\u5f0f\u6d88\u606f\u94fe\u8def\u5df2\u5173\u95ed\u3002"
+  };
+  status.textContent = platformSettings.config_writable === true
+    ? messages[platformSettings.availability_reason] || "\u5e73\u53f0\u72b6\u6001\u672a\u77e5\u3002"
+    : "\u5f53\u524d AstrBot \u914d\u7f6e\u5bf9\u8c61\u4e0d\u652f\u6301\u5f02\u6b65\u4fdd\u5b58\u3002";
+}
+
 function renderPersonaSettings(persona) {
   personaSettings = persona || {};
   const writable = personaSettings.config_writable === true;
@@ -203,6 +225,11 @@ async function loadOperatorSettings() {
   renderOperatorSettings(response.settings);
 }
 
+async function loadPlatformSettings() {
+  const response = await apiGet("pairing/platform-settings");
+  renderPlatformSettings(response.platform);
+}
+
 async function loadPersonaSettings() {
   const response = await apiGet("pairing/persona-settings");
   renderPersonaSettings(response.persona);
@@ -251,6 +278,23 @@ async function saveModelSelection() {
   } finally {
     setButtonBusy(button, false);
     button.disabled = !document.getElementById("chat-provider-id").value;
+  }
+}
+
+async function savePlatformSettings() {
+  const button = document.getElementById("save-platform-button");
+  if (!setButtonBusy(button, true, "\u6b63\u5728\u4fdd\u5b58\u2026")) return;
+  try {
+    const response = await apiPost("pairing/platform-settings", {
+      trusted_platform_id: document.getElementById("trusted-platform-id").value
+    });
+    renderPlatformSettings(response.platform);
+    toast("\u5e73\u53f0\u5df2\u4fdd\u5b58\u5e76\u7acb\u5373\u751f\u6548");
+  } catch (error) {
+    toast("\u5e73\u53f0\u4fdd\u5b58\u5931\u8d25\uff1a" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = platformSettings?.config_writable !== true;
   }
 }
 
@@ -354,6 +398,9 @@ function bindEvents() {
     .getElementById("save-model-button")
     .addEventListener("click", saveModelSelection);
   document
+    .getElementById("save-platform-button")
+    .addEventListener("click", savePlatformSettings);
+  document
     .getElementById("save-persona-button")
     .addEventListener("click", savePersonaSettings);
   document
@@ -377,7 +424,11 @@ async function init() {
   if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
   await bridge.ready();
   bindEvents();
-  await Promise.all([loadOperatorSettings(), loadPersonaSettings()]);
+  await Promise.all([
+    loadOperatorSettings(),
+    loadPlatformSettings(),
+    loadPersonaSettings()
+  ]);
   setRuntimeState("ready", "角色设置已就绪");
 }
 

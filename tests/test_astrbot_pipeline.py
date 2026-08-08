@@ -114,6 +114,26 @@ def test_pipeline_rejects_unauthorized_session_before_queueing() -> None:
     asyncio.run(scenario())
 
 
+def test_pipeline_reports_precise_platform_availability_and_reconfigures() -> None:
+    context = ContextStub()
+    adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(context, SimpleNamespace())
+
+    assert adapter.available is False
+    assert adapter.availability_reason == "trusted_platform_not_configured"
+
+    adapter.configure_platform("missing")
+    assert adapter.available is False
+    assert adapter.availability_reason == "trusted_platform_unavailable"
+
+    adapter.configure_platform("qq")
+    assert adapter.available is True
+    assert adapter.availability_reason == "ready"
+    assert adapter.status_snapshot()["availability_reason"] == "ready"
+
+    adapter.enabled = False
+    assert adapter.availability_reason == "disabled"
+
+
 def test_empty_pipeline_reply_is_not_reported_as_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

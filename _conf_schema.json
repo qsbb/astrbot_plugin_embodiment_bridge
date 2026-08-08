@@ -208,7 +208,7 @@
   "trusted_platform_id": {
     "description": "服务端固定的原始 AstrBot 平台身份",
     "type": "string",
-    "hint": "例如 aiocqhttp。由 AstrBot 管理员按真实原始平台配置，不能由 Unity 提交，也不能从自然人关系映射推导；留空会关闭受保护关系上下文。",
+    "hint": "填写 AstrBot 已启用的平台实例 ID，也可在 Quest 角色设置 Page 中验证并保存。不能由 Unity 提交，也不能从自然人关系映射推导；留空会关闭受保护关系上下文与 EventBus 正式消息链路。",
     "default": ""
   },
   "relationship_person_id": {

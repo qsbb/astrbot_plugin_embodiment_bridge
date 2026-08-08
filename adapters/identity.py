@@ -79,6 +79,12 @@ class QuestSessionAuthorizationAdapter:
             "unity_trusted_source_fields": False,
         }
 
+    def configure_trusted_platform(self, platform_id: str) -> None:
+        self.trusted_platform_id = str(platform_id or "").strip()
+        self.status = (
+            "ready_for_authorization" if self.configured else self.configuration_reason
+        )
+
     async def authorize(
         self,
         *,

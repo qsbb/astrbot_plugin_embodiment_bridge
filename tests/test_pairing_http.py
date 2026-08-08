@@ -237,6 +237,49 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                     }
                 ]
 
+                platform_denied = await client.get(
+                    server.url("/pairing/platform-settings")
+                )
+                assert platform_denied.status == 401
+
+                platform_response = await client.get(
+                    server.url("/pairing/platform-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert platform_response.status == 200
+                platform = (await platform_response.json())["platform"]
+                assert platform["configured"] is False
+                assert platform["available"] is False
+                assert platform["availability_reason"] == (
+                    "trusted_platform_not_configured"
+                )
+
+                unknown_platform = await client.post(
+                    server.url("/pairing/platform-settings"),
+                    headers=PAGE_AUTH,
+                    json={"trusted_platform_id": "missing"},
+                )
+                assert unknown_platform.status == 422
+                assert (await unknown_platform.json())["data"]["code"] == (
+                    "trusted_platform_not_available"
+                )
+
+                saved_platform = await client.post(
+                    server.url("/pairing/platform-settings"),
+                    headers=PAGE_AUTH,
+                    json={"trusted_platform_id": "contract-platform"},
+                )
+                assert saved_platform.status == 200
+                saved_platform_body = (await saved_platform.json())["platform"]
+                assert saved_platform_body["available"] is True
+                assert saved_platform_body["availability_reason"] == "ready"
+                assert bundle.plugin.identity.trusted_platform_id == (
+                    "contract-platform"
+                )
+                assert bundle.plugin.message_pipeline.platform_id == (
+                    "contract-platform"
+                )
+
                 saved = await client.post(
                     server.url("/pairing/operator-settings"),
                     headers=PAGE_AUTH,

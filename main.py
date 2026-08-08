@@ -42,7 +42,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -273,6 +273,8 @@ class QuestAvatarBridgePlugin(Star):
             persona=self.persona,
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
+            identity=self.identity,
+            message_pipeline=self.message_pipeline,
         )
         self.pairing_api = PairingHttpApi(
             context=context,

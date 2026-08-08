@@ -460,6 +460,7 @@ def test_exchange_request_validation_and_path_fail_closed() -> None:
                 f"{PUBLIC_API_PATH}/pairing/revoke",
                 f"{PUBLIC_API_PATH}/pairing/overview",
                 f"{PUBLIC_API_PATH}/pairing/operator-settings",
+                f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
                 f"{PUBLIC_API_PATH}/pairing/identity-selection",
             )
@@ -585,6 +586,7 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
                 f"{PUBLIC_API_PATH}/pairing/create",
                 f"{PUBLIC_API_PATH}/pairing/overview",
                 f"{PUBLIC_API_PATH}/pairing/operator-settings",
+                f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
             ):
                 assert (await client.get(base + path)).status == 404

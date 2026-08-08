@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.4.4 - 2026-08-08
+
+### Added
+
+- 「Quest 角色设置」管理员 Page 新增可信 AstrBot 平台实例 ID 的读取与保存入口；保存前使用公开 `Context.get_platform_inst()` 验证实例，成功后立即同步身份授权与 EventBus 适配器，无需重载插件。
+- EventBus 诊断新增 `availability_reason`，明确区分未配置、AstrBot API 不可用、平台实例不在线、功能关闭和可用状态。
+
+### Security
+
+- 平台选择入口继续受 Dashboard 身份保护，不进入快速绑定 Page、二维码、Quest 协议或 8520 匿名交换面；不枚举平台账号、不读取原始平台配置，也不授予 AstrBot 管理员权限。
+- 配置持久化失败、平台 ID 非法或平台实例不存在时保持原运行时选择，禁止半更新。
+
 ## 0.4.3 - 2026-08-08
 
 ### Added

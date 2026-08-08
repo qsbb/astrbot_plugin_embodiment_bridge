@@ -44,16 +44,28 @@ class AstrBotMessagePipelineAdapter:
 
     @property
     def available(self) -> bool:
-        if not self.enabled or not self.platform_id:
-            return False
+        return self.availability_reason == "ready"
+
+    @property
+    def availability_reason(self) -> str:
+        if not self.enabled:
+            return "disabled"
+        if not self.platform_id:
+            return "trusted_platform_not_configured"
         queue_getter = getattr(self.context, "get_event_queue", None)
         platform_getter = getattr(self.context, "get_platform_inst", None)
         if not callable(queue_getter) or not callable(platform_getter):
-            return False
+            return "astrbot_event_api_unavailable"
         try:
-            return platform_getter(self.platform_id) is not None
+            if platform_getter(self.platform_id) is None:
+                return "trusted_platform_unavailable"
         except (AttributeError, RuntimeError, TypeError, ValueError):
-            return False
+            return "trusted_platform_unavailable"
+        return "ready"
+
+    def configure_platform(self, platform_id: str) -> None:
+        self.platform_id = str(platform_id or "").strip()
+        self.status = "enabled" if self.enabled else "disabled"
 
     async def generate(
         self,
@@ -122,6 +134,7 @@ class AstrBotMessagePipelineAdapter:
         return {
             "enabled": self.enabled,
             "available": self.available,
+            "availability_reason": self.availability_reason,
             "status": self.status,
             "mode": "astrbot_event_bus",
             "admin_inheritance": False,

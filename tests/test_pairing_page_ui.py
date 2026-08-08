@@ -89,6 +89,7 @@ def test_pairing_page_contains_complete_safe_workflow() -> None:
     assert "expected_remote_ip" not in html + js
     assert "trusted_client_id" not in html + js
     assert "trusted_platform_id" not in html + js
+    assert "pairing/platform-settings" not in html + js
     assert "localStorage" not in js
     assert "quick_pairing_ready" in js
     assert "qr_svg_data_uri" in js
