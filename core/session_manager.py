@@ -210,8 +210,20 @@ class SessionManager:
         async with self._lock:
             if self._terminated:
                 raise SessionConflict("bridge is terminating")
-            if request.session_id in self._sessions:
-                raise SessionConflict("session already exists")
+            existing = self._sessions.get(request.session_id)
+            if existing is not None:
+                if not self._same_session_identity(existing, request, owner):
+                    raise SessionConflict("session already exists")
+                async with existing.lock:
+                    if existing.closed:
+                        raise SessionConflict("session is closed")
+                    existing.protected_context_authorized = bool(
+                        protected_context_authorized
+                    )
+                    existing.context_authorization_reason = str(
+                        context_authorization_reason or "not_checked"
+                    )[:128]
+                return existing
             if len(self._sessions) >= self.max_sessions:
                 raise SessionConflict("session limit reached")
             session = SessionState(
@@ -230,6 +242,21 @@ class SessionManager:
             )
             self._sessions[request.session_id] = session
             return session
+
+    @staticmethod
+    def _same_session_identity(
+        session: SessionState,
+        request: SessionStartRequest,
+        owner: str,
+    ) -> bool:
+        return bool(
+            session.owner == owner
+            and session.client_id == request.client_id
+            and session.user_id == request.user_id
+            and session.bot_id == request.bot_id
+            and session.group_id == request.group_id
+            and session.relationship_profile_id == request.relationship_profile_id
+        )
 
     async def get_owned(self, session_id: str, owner: str) -> SessionState:
         async with self._lock:
@@ -468,6 +495,12 @@ class SessionManager:
         await session.queue.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def close_all_sessions(self) -> None:
+        async with self._lock:
+            sessions = list(self._sessions.values())
+        for session in sessions:
+            await self.close_session(session)
 
     async def terminate(self) -> None:
         async with self._lock:

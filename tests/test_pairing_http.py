@@ -7,6 +7,7 @@ from typing import Any
 from aiohttp import ClientSession
 
 from .http_harness import (
+    AUTH_HEADERS,
     ASTRBOT_API_TOKEN,
     BRIDGE_API_KEY,
     LiveHttpServer,
@@ -473,6 +474,114 @@ def test_pairing_exchange_requires_proxy_injected_astrbot_auth(
                 assert (await response.json())["data"]["code"] == (
                     "astrbot_auth_required"
                 )
+
+    asyncio.run(scenario())
+
+
+def test_service_control_is_dashboard_protected_and_gates_quest_sessions(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/service-status"))
+                assert denied.status == 401
+
+                status_response = await client.get(
+                    server.url("/pairing/service-status"),
+                    headers=PAGE_AUTH,
+                )
+                assert status_response.status == 200
+                service = (await status_response.json())["service"]
+                assert service["enabled"] is True
+                assert service["config_writable"] is True
+                assert service["listener"] == {
+                    "configured": False,
+                    "ready": False,
+                    "reason": "disabled",
+                    "bind_host": "0.0.0.0",
+                    "port": 8520,
+                }
+                assert service["capabilities"] == {
+                    "dialogue": True,
+                    "eventbus": False,
+                    "identity_configured": False,
+                    "stt": True,
+                    "tts": True,
+                    "avatar_actions": True,
+                }
+
+                session_request = {
+                    "type": "session.start",
+                    "protocol_version": "1.0",
+                    "session_id": "service-control-session",
+                    "client_id": "quest-client",
+                    "user_id": "quest-user",
+                    "bot_id": "quest-bot",
+                }
+                created = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json=session_request,
+                )
+                assert created.status == 201
+
+                unauthenticated = await client.post(
+                    server.url("/pairing/service-control"),
+                    json={"enabled": False},
+                )
+                assert unauthenticated.status == 401
+                malformed = await client.post(
+                    server.url("/pairing/service-control"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": False, "unexpected": True},
+                )
+                assert malformed.status == 422
+
+                stopped = await client.post(
+                    server.url("/pairing/service-control"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": False},
+                )
+                assert stopped.status == 200
+                stopped_service = (await stopped.json())["service"]
+                assert stopped_service["status"] == "stopped"
+                assert stopped_service["sessions"]["active_sessions"] == 0
+
+                rejected = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json=session_request,
+                )
+                assert rejected.status == 503
+                assert (await rejected.json())["data"]["code"] == (
+                    "bridge_service_disabled"
+                )
+
+                health = await client.get(
+                    server.url("/health"),
+                    headers=AUTH_HEADERS,
+                )
+                assert health.status == 200
+                assert (await health.json())["data"]["service"]["status"] == (
+                    "stopped"
+                )
+
+                restarted = await client.post(
+                    server.url("/pairing/service-control"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": True},
+                )
+                assert restarted.status == 200
+                assert (await restarted.json())["service"]["enabled"] is True
+                recreated = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json=session_request,
+                )
+                assert recreated.status == 201
 
     asyncio.run(scenario())
 

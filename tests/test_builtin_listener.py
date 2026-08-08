@@ -459,6 +459,8 @@ def test_exchange_request_validation_and_path_fail_closed() -> None:
                 f"{PUBLIC_API_PATH}/pairing/status",
                 f"{PUBLIC_API_PATH}/pairing/revoke",
                 f"{PUBLIC_API_PATH}/pairing/overview",
+                f"{PUBLIC_API_PATH}/pairing/service-status",
+                f"{PUBLIC_API_PATH}/pairing/service-control",
                 f"{PUBLIC_API_PATH}/pairing/operator-settings",
                 f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
@@ -585,6 +587,8 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
                 "/api/v1/plugins/extensions/other/health",
                 f"{PUBLIC_API_PATH}/pairing/create",
                 f"{PUBLIC_API_PATH}/pairing/overview",
+                f"{PUBLIC_API_PATH}/pairing/service-status",
+                f"{PUBLIC_API_PATH}/pairing/service-control",
                 f"{PUBLIC_API_PATH}/pairing/operator-settings",
                 f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
@@ -702,6 +706,32 @@ def test_unreachable_upstream_returns_stable_no_store_error_without_secrets() ->
                 "listener_upstream_unavailable"
             )
         assert all(secret not in line for line in logger.lines)
+        await listener.close()
+
+    asyncio.run(scenario())
+
+
+def test_listener_can_stop_release_port_and_start_again() -> None:
+    async def scenario() -> None:
+        listener = await start_listener(make_manager())
+        first_port = int(listener.status_snapshot()["port"])
+        assert listener.ready is True
+
+        await listener.stop(reason="service_disabled")
+        assert listener.ready is False
+        assert listener.status_snapshot()["reason"] == "service_disabled"
+
+        probe = await asyncio.start_server(
+            lambda _reader, _writer: None,
+            "127.0.0.1",
+            first_port,
+        )
+        probe.close()
+        await probe.wait_closed()
+
+        await listener.start()
+        assert listener.ready is True
+        assert listener.status_snapshot()["reason"] == "ready"
         await listener.close()
 
     asyncio.run(scenario())

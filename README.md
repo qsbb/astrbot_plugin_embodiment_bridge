@@ -77,6 +77,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 
 插件另提供「Quest 角色设置」管理员 Page，与快速绑定页分离：
 
+- 页面顶部集中显示 Quest Bridge 运行状态、内置 listener 地址、活跃会话、SSE、待发事件以及对话/EventBus/身份/STT/TTS/动作能力；管理员可即时启停服务。关闭会终止现有 Quest 会话并停止内置 listener，但管理 Page 和认证 health 保持可用，重新开启无需热重载插件。
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
 - “正式消息链路”从 AstrBot 已加载平台目录选择 `trusted_platform_id`。目录仅投影实例 ID、适配器类型和显示名，保存时再通过公开 `Context.get_platform_inst()` 验证该实例当前存在；成功后立即同步身份授权和 EventBus 适配器。页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
 - “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。

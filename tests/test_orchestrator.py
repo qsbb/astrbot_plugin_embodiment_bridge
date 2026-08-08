@@ -5,6 +5,9 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from astrbot_plugin_quest_avatar_bridge.adapters.stt import DisabledSTTAdapter
+from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_pipeline import (
+    MessagePipelineUnavailable,
+)
 from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import InteractionPolicy
 from astrbot_plugin_quest_avatar_bridge.core.models import (
     Emotion,
@@ -198,6 +201,29 @@ async def collect_until_end(session: Any) -> list[dict[str, Any]]:
         events.append(item.payload)
         if item.event_type in {"reply.end", "error"}:
             return events
+
+
+def test_pipeline_error_uses_safe_session_authorization_reason() -> None:
+    async def scenario() -> None:
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(safe_neutral_decision("test"))
+        )
+        session.context_authorization_reason = "quest_identity_not_allowlisted"
+
+        assert orchestrator._public_pipeline_reason(
+            session,
+            MessagePipelineUnavailable("protected_context_not_authorized"),
+        ) == "quest_identity_not_allowlisted"
+        assert "五段绑定" in orchestrator._pipeline_error_message(
+            "quest_identity_not_allowlisted"
+        )
+        assert orchestrator._public_pipeline_reason(
+            session,
+            MessagePipelineUnavailable("private_internal_detail"),
+        ) == "astrbot_message_pipeline_unavailable"
+        await sessions.terminate()
+
+    asyncio.run(scenario())
 
 
 def test_accept_and_refuse_are_model_decisions_not_touch_mappings() -> None:

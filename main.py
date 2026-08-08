@@ -30,6 +30,7 @@ from .core.interaction_policy import InteractionPolicy
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
 from .core.session_manager import SessionManager
+from .core.service_control import BridgeServiceControl
 from .core.turn_orchestrator import TurnOrchestrator
 from .transport.builtin_listener import (
     BuiltinListenerConfig,
@@ -39,7 +40,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -252,11 +253,21 @@ class QuestAvatarBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
         )
+        self.service = BridgeServiceControl(
+            config=config,
+            listener=self.pairing_listener,
+            sessions=self.sessions,
+            orchestrator=self.orchestrator,
+            logger=self._component_logger,
+            diagnostic_log=self.diagnostic_log,
+            enabled=self._bool_config("bridge_service_enabled", True),
+        )
         self.transport = HttpSseTransport(
             context=context,
             sessions=self.sessions,
             orchestrator=self.orchestrator,
             listener=self.pairing_listener,
+            service=self.service,
             config=TransportConfig(
                 bridge_api_key=bridge_api_key,
                 max_json_body_bytes=max_json_body_bytes,
@@ -284,6 +295,7 @@ class QuestAvatarBridgePlugin(Star):
             manager=self.pairing,
             exchange_service=self.pairing_exchange_service,
             listener=self.pairing_listener,
+            service=self.service,
             logger=self._component_logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
@@ -317,7 +329,7 @@ class QuestAvatarBridgePlugin(Star):
 
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
-        await self.pairing_listener.start()
+        await self.service.initialize()
         listener_status = self.pairing_listener.status_snapshot()
         if self.pairing_listener.ready and self.pairing_listener.public_exchange_url:
             self.pairing.configure_exchange_url(
@@ -393,6 +405,7 @@ class QuestAvatarBridgePlugin(Star):
 
     def plugin_health(self) -> dict[str, object]:
         checks = {
+            "bridge_service_enabled": self.service.enabled,
             "transport_registered": self.transport is not None,
             "pairing_registered": self.pairing_api is not None,
             "pairing_bootstrap_ready": self.pairing.bootstrap_ready,
@@ -440,7 +453,7 @@ class QuestAvatarBridgePlugin(Star):
         )
         terminated_ok = False
         try:
-            await self.pairing_listener.close()
+            await self.service.close()
             self.pairing.close()
             await self.orchestrator.close()
             await self.relationship_candidates.close()

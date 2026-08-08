@@ -16,7 +16,7 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
     )
     assert metadata["pages"]["operator"] == {
         "title": "Quest 角色设置",
-        "description": "设置 AstrBot 正式消息平台、人格、聊天模型与关系自然人",
+        "description": "控制 Quest 服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人",
     }
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -34,6 +34,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
 
     for element_id in (
+        "service-status-badge",
+        "refresh-service-button",
+        "service-control-button",
+        "active-session-count",
+        "attached-stream-count",
+        "queued-event-count",
         "chat-provider-id",
         "save-model-button",
         "trusted-platform-id",
@@ -51,6 +57,18 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     ):
         assert f'id="{element_id}"' in html
 
+    assert 'apiGet("pairing/service-status")' in js
+    assert 'apiPost("pairing/service-control", { enabled })' in js
+    assert "关闭服务会断开当前 Quest 会话" in js
+    for capability in (
+        "dialogue",
+        "eventbus",
+        "identity_configured",
+        "stt",
+        "tts",
+        "avatar_actions",
+    ):
+        assert f'data-capability="{capability}"' in html
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
     assert 'apiGet("pairing/platform-settings")' in js
@@ -75,6 +93,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "不包含平台 UID、Bot ID 或 UMO" in html
     assert "自然人绑定不会授予权限" in html
     assert 'button[aria-busy="true"]' in css
+    assert ".capability-strip" in css
+    assert ".status-badge.running" in css
     assert "@media (max-width: 820px)" in css
     assert "prefers-reduced-motion" in css
 

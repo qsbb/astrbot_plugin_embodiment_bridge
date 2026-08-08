@@ -1,4 +1,10 @@
 {
+  "bridge_service_enabled": {
+    "description": "启用 Quest Bridge 对话服务",
+    "type": "bool",
+    "hint": "可在 Quest 角色设置 Page 中即时启停。关闭会停止 8520 监听、终止现有 Quest 会话并拒绝业务请求；AstrBot 管理 Page 保持可用以便重新开启。",
+    "default": true
+  },
   "pairing_listener_enabled": {
     "description": "启用内置 Quest Bridge 8520 监听器",
     "type": "bool",

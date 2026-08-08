@@ -26,6 +26,8 @@
     }
   },
   "routes": [
+    {"method": "GET", "path": "/pairing/service-status", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/service-control", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
@@ -176,6 +178,8 @@
     "queued_unconsumed_critical_events_retained": true
   },
   "session_start_semantics": {
+    "same_owner_and_identity_is_idempotent_and_reauthorized": true,
+    "identity_change_for_existing_session_is_conflict": true,
     "protected_context_status_in_response": true,
     "protected_context_default_access": "denied",
     "api_principal_source": "astrbot_authenticated_request",
@@ -209,7 +213,10 @@
     "stt_failed",
     "turn_failed",
     "interaction_failed",
-    "tts_failed"
+    "tts_failed",
+    "owner_not_configured",
+    "quest_identity_not_allowlisted",
+    "trusted_platform_not_configured"
   ],
   "http_error_codes": [
     {"status": 400, "code": "invalid_content_length"},
@@ -225,5 +232,6 @@
     {"status": 422, "code": "schema_validation_failed"},
     {"status": 500, "code": "internal_error"},
     {"status": 503, "code": "bridge_not_configured"}
+    ,{"status": 503, "code": "bridge_service_disabled"}
   ]
 }

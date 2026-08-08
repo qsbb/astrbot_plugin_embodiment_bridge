@@ -71,6 +71,24 @@ Content-Type: application/json
 - `pairing_listener_public_url` 可填写主机 base URL、插件 base URL 或精确 exchange URL，服务端会规范化到精确路径；不会猜测宿主机 IP。
 - 内置 listener 不读取 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 或 `X-Quest-Pairing-Source`，exchange 来源只使用直接 TCP peer IP。
 
+### 2.1 管理员服务控制
+
+「Quest 角色设置」Page 通过 AstrBot Dashboard 身份调用以下管理端点；它们不属于 Quest Protocol 1.0，也不会由 8520 listener 代理：
+
+```http
+GET /pairing/service-status
+POST /pairing/service-control
+Content-Type: application/json
+```
+
+状态响应只包含运行布尔值、监听地址/端口、会话统计和能力布尔值，不包含密钥、账号、Provider ID、自然人 ID、正文或音频。控制请求严格只接受：
+
+```json
+{"enabled": false}
+```
+
+关闭服务会持久化 `bridge_service_enabled=false`、关闭全部 Quest 会话并停止内置 listener。正常 Quest 业务接口随后返回 `503 bridge_service_disabled`；认证 `GET /health`、本节两个管理端点和管理 Page 继续可用。重新开启后 listener 会直接恢复，不要求热重载插件。
+
 ## 3. 推荐调用顺序
 
 ```mermaid
@@ -287,7 +305,7 @@ POST /session/start
 }
 ```
 
-`protected_context` 只描述服务端只读上下文门控，不影响基础 Quest 对话。`authorized=false` 时不得自行读取或推断关系数据；常见原因包括可信配置缺失、客户端不匹配、提供方缺失/不兼容、超时、群聊、owner 未配置或五段绑定未命中。重复 `session_id` 返回 `409 session_conflict`。
+`protected_context` 只描述服务端只读上下文门控，不影响协议建连。`authorized=false` 时不得自行读取或推断关系数据；常见原因包括可信配置缺失、客户端不匹配、提供方缺失/不兼容、超时、群聊、owner 未配置或五段绑定未命中。相同所有者以完全相同的 client/user/bot/group/profile 字段重复提交同一 `session_id` 时，服务端复用会话并刷新授权结果；任一身份字段变化仍返回 `409 session_conflict`。
 
 ## 7. SSE 事件流
 
@@ -561,14 +579,6 @@ GET /health
     "transport": "http+sse",
     "input_audio": {
       "format": "pcm16",
-    "pairing_listener": {
-      "enabled": true,
-      "ready": true,
-      "bind_host": "0.0.0.0",
-      "port": 8520,
-      "upstream_kind": "loopback_http",
-      "reason": "ready"
-    },
       "sample_rate": 16000,
       "channels": 1,
       "stt_available": false
@@ -578,6 +588,41 @@ GET /health
       "sample_rate": 24000,
       "channels": 1,
       "tts_available": false
+    },
+    "pairing_listener": {
+      "enabled": true,
+      "ready": true,
+      "bind_host": "0.0.0.0",
+      "port": 8520,
+      "upstream_kind": "loopback_http",
+      "reason": "ready"
+    },
+    "service": {
+      "enabled": true,
+      "ready": true,
+      "status": "running",
+      "reason": "ready",
+      "listener": {
+        "configured": true,
+        "ready": true,
+        "reason": "ready",
+        "bind_host": "0.0.0.0",
+        "port": 8520
+      },
+      "sessions": {
+        "active_sessions": 1,
+        "attached_streams": 1,
+        "queued_events": 0
+      },
+      "capabilities": {
+        "dialogue": true,
+        "eventbus": true,
+        "identity_configured": true,
+        "stt": false,
+        "tts": false,
+        "avatar_actions": true
+      },
+      "config_writable": true
     },
     "series_integrations": {
       "identity": {
@@ -776,6 +821,9 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | `turn_failed` | 普通文本轮生成失败 | 结束当前轮，不执行猜测动作 |
 | `interaction_failed` | 交互决策失败 | 保持安全 idle，不自行映射情绪 |
 | `tts_failed` | 文本可用但语音合成失败 | 保留文字，停止等待音频 |
+| `owner_not_configured` | “序”尚未配置主人 | 使用真实原始账号重新配对并在“序”中完成绑定 |
+| `quest_identity_not_allowlisted` | Quest 五段身份未命中“序”的白名单 | 检查平台、Bot、用户、客户端与 API principal 绑定 |
+| `trusted_platform_not_configured` | Bridge 尚未选择可信 AstrBot 平台 | 在「Quest 角色设置」Page 选择已加载的平台实例 |
 
 收到 interrupt 成功响应后，旧轮的 `asr.partial`、`asr.final`、`reply.text.delta`、`reply.audio.chunk`、`avatar.intent`、`error` 和 `reply.end` 均禁止继续生效。响应到达前已由网络发送的数据可能仍在客户端缓冲区，Unity 仍必须按当前 `(session_id, turn_id)` 丢弃旧轮数据。
 
@@ -796,6 +844,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | 422 | `schema_validation_failed` | 按本文档修正字段、枚举和范围 |
 | 500 | `internal_error` | 记录请求 ID/状态并查看 AstrBot 日志，不要无限重试 |
 | 503 | `bridge_not_configured` | 配置至少 32 字符的 bridge key |
+| 503 | `bridge_service_disabled` | 在「Quest 角色设置」Page 重新启动服务 |
 
 ## 17. Unity 实现检查表
 

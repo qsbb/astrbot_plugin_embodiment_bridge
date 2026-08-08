@@ -49,6 +49,9 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "turn_failed",
         "interaction_failed",
         "tts_failed",
+        "owner_not_configured",
+        "quest_identity_not_allowlisted",
+        "trusted_platform_not_configured",
     ]
     assert manifest["interrupt_semantics"]["forbidden_after_interrupt_ack"] == [
         "asr.partial",
@@ -66,6 +69,8 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "queued_unconsumed_critical_events_retained": True,
     }
     assert manifest["session_start_semantics"] == {
+        "same_owner_and_identity_is_idempotent_and_reauthorized": True,
+        "identity_change_for_existing_session_is_conflict": True,
         "protected_context_status_in_response": True,
         "protected_context_default_access": "denied",
         "api_principal_source": "astrbot_authenticated_request",

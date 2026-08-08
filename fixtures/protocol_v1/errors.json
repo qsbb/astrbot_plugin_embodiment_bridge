@@ -52,6 +52,10 @@
     {
       "status_code": 503,
       "body": {"status": "error", "message": "Quest bridge API key is not configured", "data": {"code": "bridge_not_configured"}}
+    },
+    {
+      "status_code": 503,
+      "body": {"status": "error", "message": "Quest Bridge 服务已由管理员关闭", "data": {"code": "bridge_service_disabled"}}
     }
   ]
 }

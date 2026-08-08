@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.4.7 - 2026-08-09
+
+### Added
+
+- 「Quest 角色设置」Page 新增服务总状态、监听地址、活跃会话、SSE、队列与六项能力摘要，并提供受 Dashboard 身份保护的即时启动/关闭按钮。
+- 新增受保护的 `GET pairing/service-status` 与 `POST pairing/service-control`；关闭会持久化设置、停止内置 listener、取消并清空现有 Quest 会话，管理 Page 与认证 health 保持可用以便诊断和重新开启。
+
+### Changed
+
+- 相同所有者和完全相同身份字段重复执行 `session/start` 时刷新“序”的授权结果并复用会话；任何身份字段变化仍返回 `409 session_conflict`。
+- 消息链路失败事件保留经过白名单收敛的授权原因，Quest 可区分原始账号未绑定、客户端不匹配和可信平台不可用；未知内部原因继续统一收敛。
+
+### Fixed
+
+- 服务关闭现在稳定返回 `503 bridge_service_disabled`，不再因异常类型未映射而误报 500。
+- 内置 listener 可在不热重载插件的情况下停止、释放端口并重新启动。
+
 ## 0.4.6 - 2026-08-09
 
 ### Added

@@ -24,6 +24,7 @@ from ..core.pairing import (
     PairingStatusRequest,
 )
 from ..core.operator_settings import OperatorSettingsError
+from ..core.service_control import BridgeServiceControlError
 
 
 PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
@@ -46,6 +47,12 @@ class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     trusted_platform_id: str = Field(default="", max_length=128)
+
+
+class ServiceControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enabled: bool
 
 
 class RelationshipPersonSelectionRequest(BaseModel):
@@ -80,6 +87,7 @@ class PairingHttpApi:
         manager: PairingManager,
         exchange_service: PairingExchangeService,
         listener: Any,
+        service: Any,
         logger: Any,
         trusted_client_id: str,
         trusted_platform_id: str,
@@ -94,6 +102,7 @@ class PairingHttpApi:
         self.manager = manager
         self.exchange_service = exchange_service
         self.listener = listener
+        self.service = service
         self.logger = logger
         self.trusted_client_id = str(trusted_client_id or "").strip()
         self.trusted_platform_id = str(trusted_platform_id or "").strip()
@@ -106,6 +115,18 @@ class PairingHttpApi:
 
     def register(self) -> None:
         routes = (
+            (
+                "pairing/service-status",
+                self.service_status,
+                ["GET"],
+                "Read Quest Bridge service status",
+            ),
+            (
+                "pairing/service-control",
+                self.service_control,
+                ["POST"],
+                "Start or stop Quest Bridge service",
+            ),
             (
                 "pairing/operator-settings",
                 self.operator_settings_overview,
@@ -198,6 +219,24 @@ class PairingHttpApi:
                 methods,
                 description,
             )
+
+    async def service_status(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {"success": True, "service": await self.service.status_snapshot()}
+            )
+        except Exception as exc:
+            return self._error(exc, "service_status")
+
+    async def service_control(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(ServiceControlRequest)
+            service = await self.service.set_enabled(payload.enabled)
+            return _json_no_store({"success": True, "service": service})
+        except Exception as exc:
+            return self._error(exc, "service_control")
 
     async def operator_settings_overview(self) -> Any:
         try:
@@ -626,7 +665,10 @@ class PairingHttpApi:
             error_type=type(exc).__name__,
         )
         headers = dict(NO_STORE_HEADERS)
-        if isinstance(exc, (PairingError, OperatorSettingsError)):
+        if isinstance(
+            exc,
+            (PairingError, OperatorSettingsError, BridgeServiceControlError),
+        ):
             data: dict[str, object] = {"code": exc.code}
             retry_after = getattr(exc, "retry_after", None)
             if retry_after is not None:

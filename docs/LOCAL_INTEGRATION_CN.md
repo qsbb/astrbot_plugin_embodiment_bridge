@@ -44,6 +44,7 @@ $bridgeBytes = New-Object byte[] 32
 | 配置 | 联调要求 |
 |---|---|
 | `bridge_api_key` | 使用上一步生成的随机值，至少 32 字符 |
+| `bridge_service_enabled` | 总服务开关，默认 `true`；也可从「Quest 角色设置」Page 即时启停 |
 | `pairing_listener_enabled` | 默认 `false`；容器私网统一入口时显式设为 `true` |
 | `pairing_listener_host` / `pairing_listener_port` | 只允许 IP 字面量与 1024–65535 端口；容器通常用 `0.0.0.0` / `8520` |
 | `pairing_listener_upstream_url` | 只允许无路径、无认证信息的 loopback HTTP IP，例如 `http://127.0.0.1:6185` |
@@ -72,7 +73,7 @@ $bridgeBytes = New-Object byte[] 32
 | `stt_timeout_seconds` / `tts_timeout_seconds` | 按 Provider 延迟设置，保持有界，不要设为无限 |
 | `max_tts_audio_seconds` | 限制单轮 Provider WAV 读入和输出时长 |
 
-「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、人格、连接或身份设置。聊天模型、AstrBot 人格和自然人范围均由管理员在「Quest 角色设置」Page 或本插件专属配置中管理；Bridge 仍只接受公开 API/契约并在缺失、超时或畸形响应时安全降级，不访问 Core 或其他插件私有配置。
+「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、人格、连接或身份设置。聊天模型、AstrBot 人格、自然人范围和服务启停均由管理员在「Quest 角色设置」Page 或本插件专属配置中管理；Bridge 仍只接受公开 API/契约并在缺失、超时或畸形响应时安全降级，不访问 Core 或其他插件私有配置。
 
 还需要在 AstrBot 中创建一个具有 `plugin` scope 的 API Key。Unity 的每个请求必须同时携带：
 
@@ -269,6 +270,7 @@ python -m pytest -q tests/test_http_contract_smoke.py tests/test_protocol_fixtur
 | 403 `session_ownership_mismatch` | 后续请求是否换了 AstrBot API Key |
 | 404 `session_not_found` | 会话是否被关闭、插件是否重载、服务是否重启 |
 | 409 `session_conflict` | session 是否重复、是否已有活动轮或 SSE |
+| 503 `bridge_service_disabled` | 在「Quest 角色设置」Page 重新启动服务；关闭服务会主动清理旧会话 |
 | 422 `schema_validation_failed` | 对照 manifest、请求 fixture 和 Pydantic 字段范围 |
 | SSE 无事件 | 是否先创建会话、SSE 是否仍连接、interaction 是否被去抖 |
 | `stt_unavailable` | `enable_astrbot_stt` 是否打开，以及 AstrBot 是否选中了可用 STT Provider |

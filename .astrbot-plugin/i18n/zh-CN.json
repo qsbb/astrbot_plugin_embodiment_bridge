@@ -6,7 +6,7 @@
     },
     "operator": {
       "title": "Quest 角色设置",
-      "description": "设置 AstrBot 正式消息平台、人格、聊天模型与关系自然人"
+      "description": "控制 Quest 服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人"
     }
   }
 }

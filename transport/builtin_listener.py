@@ -379,23 +379,7 @@ class BuiltinQuestListener:
             if self._closed:
                 return
             self._closed = True
-            self._ready = False
-            self._reason = "closed"
-            site = self._site
-            self._site = None
-            if site is not None:
-                await site.stop()
-            current = asyncio.current_task()
-            tasks = [
-                task
-                for task in self._active_tasks
-                if task is not current and not task.done()
-            ]
-            for task in tasks:
-                task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            await self._shutdown_components()
+            await self._stop_locked("closed")
             self._diagnostic(
                 "listener.closed",
                 component="listener",
@@ -403,6 +387,39 @@ class BuiltinQuestListener:
                 ready=False,
                 duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
             )
+
+    async def stop(self, *, reason: str = "service_disabled") -> None:
+        started = asyncio.get_running_loop().time()
+        async with self._lifecycle_lock:
+            if self._closed:
+                return
+            await self._stop_locked(str(reason or "stopped")[:64])
+            self._diagnostic(
+                "listener.stopped",
+                component="listener",
+                status=self._reason,
+                ready=False,
+                duration_ms=(asyncio.get_running_loop().time() - started) * 1000,
+            )
+
+    async def _stop_locked(self, reason: str) -> None:
+        self._ready = False
+        self._reason = reason
+        site = self._site
+        self._site = None
+        if site is not None:
+            await site.stop()
+        current = asyncio.current_task()
+        tasks = [
+            task
+            for task in self._active_tasks
+            if task is not current and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await self._shutdown_components()
 
     async def _shutdown_components(self) -> None:
         runner = self._runner

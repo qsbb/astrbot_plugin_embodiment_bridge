@@ -2,6 +2,8 @@ let bridge = null;
 let operatorSettings = null;
 let personaSettings = null;
 let platformSettings = null;
+let serviceState = null;
+let serviceRefreshInFlight = false;
 
 async function resolveBridge(timeout = 3000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -70,8 +72,125 @@ function setButtonBusy(button, busy, busyText) {
     return true;
   }
   button.textContent = button.dataset.idleText || button.textContent;
+  button.disabled = false;
   button.setAttribute("aria-busy", "false");
   return true;
+}
+
+function serviceReasonLabel(reason) {
+  const labels = {
+    ready: "服务运行正常",
+    service_disabled: "服务已由管理员关闭",
+    disabled: "内置 8520 监听尚未启用",
+    not_started: "监听器尚未启动",
+    bind_failed: "监听端口绑定失败",
+    start_failed: "监听器启动失败",
+    invalid_enabled: "监听开关配置无效",
+    invalid_bind_host: "监听地址配置无效",
+    invalid_port: "监听端口配置无效",
+    invalid_upstream_url: "AstrBot 回环上游配置无效",
+    listener_unavailable: "内置监听器不可用",
+    pairing_listener_public_url_missing: "服务已运行，但尚未配置 Quest 可达地址"
+  };
+  return labels[String(reason || "")] || "服务状态需要检查";
+}
+
+function renderCapability(name, available, enabled) {
+  const item = document.querySelector(`[data-capability="${name}"]`);
+  if (!item) return;
+  const active = available === true;
+  item.classList.toggle("available", active && enabled);
+  item.classList.toggle("standby", active && !enabled);
+  item.classList.toggle("unavailable", !active);
+  item.querySelector("strong").textContent = active
+    ? enabled ? "可用" : "已配置"
+    : "不可用";
+}
+
+function renderServiceStatus(service) {
+  serviceState = service || {};
+  const enabled = serviceState.enabled === true;
+  const status = String(serviceState.status || "degraded");
+  const badge = document.getElementById("service-status-badge");
+  const statusLabels = {
+    running: "运行中",
+    stopped: "已关闭",
+    degraded: "需检查"
+  };
+  badge.textContent = statusLabels[status] || "未知";
+  badge.className = "status-badge " + status;
+
+  document.getElementById("service-summary").textContent =
+    serviceReasonLabel(serviceState.reason);
+  const listener = serviceState.listener || {};
+  const listenerConfigured = listener.configured === true;
+  const bindHost = String(listener.bind_host || "");
+  const port = Number(listener.port || 0);
+  let listenerText = "内置监听：未配置";
+  if (listenerConfigured && bindHost && port) {
+    listenerText = `内置监听：${bindHost}:${port}`;
+    if (listener.ready !== true) listenerText += "（当前未监听）";
+  }
+  document.getElementById("listener-address").textContent = listenerText;
+
+  const sessions = serviceState.sessions || {};
+  document.getElementById("active-session-count").textContent =
+    String(Number(sessions.active_sessions || 0));
+  document.getElementById("attached-stream-count").textContent =
+    String(Number(sessions.attached_streams || 0));
+  document.getElementById("queued-event-count").textContent =
+    String(Number(sessions.queued_events || 0));
+
+  const capabilities = serviceState.capabilities || {};
+  ["dialogue", "eventbus", "identity_configured", "stt", "tts", "avatar_actions"]
+    .forEach((name) => renderCapability(name, capabilities[name], enabled));
+
+  const control = document.getElementById("service-control-button");
+  control.dataset.nextEnabled = String(!enabled);
+  control.textContent = enabled ? "关闭服务" : "启动服务";
+  control.classList.toggle("danger", enabled);
+  control.classList.toggle("primary", !enabled);
+  control.disabled = serviceState.config_writable !== true;
+
+  if (status === "running") setRuntimeState("ready", "服务运行中");
+  else if (status === "stopped") setRuntimeState("error", "服务已关闭");
+  else setRuntimeState("warning", "服务需要检查");
+}
+
+async function loadServiceStatus({ silent = false } = {}) {
+  if (serviceRefreshInFlight) return;
+  serviceRefreshInFlight = true;
+  const button = document.getElementById("refresh-service-button");
+  if (!silent) setButtonBusy(button, true, "刷新中…");
+  try {
+    const response = await apiGet("pairing/service-status");
+    renderServiceStatus(response.service);
+  } catch (error) {
+    setRuntimeState("error", "服务状态读取失败");
+    if (!silent) toast("读取服务状态失败：" + error.message, true);
+  } finally {
+    serviceRefreshInFlight = false;
+    if (!silent) setButtonBusy(button, false);
+  }
+}
+
+async function toggleService() {
+  const button = document.getElementById("service-control-button");
+  const enabled = button.dataset.nextEnabled === "true";
+  if (!enabled && !window.confirm("关闭服务会断开当前 Quest 会话，确定继续吗？")) {
+    return;
+  }
+  if (!setButtonBusy(button, true, enabled ? "启动中…" : "关闭中…")) return;
+  try {
+    const response = await apiPost("pairing/service-control", { enabled });
+    renderServiceStatus(response.service);
+    toast(enabled ? "Quest Bridge 服务已启动" : "Quest Bridge 服务已关闭");
+  } catch (error) {
+    toast((enabled ? "启动" : "关闭") + "服务失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    if (serviceState) renderServiceStatus(serviceState);
+  }
 }
 
 function providerLabel(provider) {
@@ -439,6 +558,12 @@ async function loadDiagnostics() {
 }
 
 function bindEvents() {
+  document
+    .getElementById("refresh-service-button")
+    .addEventListener("click", () => loadServiceStatus());
+  document
+    .getElementById("service-control-button")
+    .addEventListener("click", toggleService);
   document.getElementById("chat-provider-id").addEventListener("change", (event) => {
     document.getElementById("save-model-button").disabled =
       !event.currentTarget.value;
@@ -477,11 +602,12 @@ async function init() {
   await bridge.ready();
   bindEvents();
   await Promise.all([
+    loadServiceStatus(),
     loadOperatorSettings(),
     loadPlatformSettings(),
     loadPersonaSettings()
   ]);
-  setRuntimeState("ready", "角色设置已就绪");
+  window.setInterval(() => loadServiceStatus({ silent: true }), 10000);
 }
 
 init().catch(showStartupError);

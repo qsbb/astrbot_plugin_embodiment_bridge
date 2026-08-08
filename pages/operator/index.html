@@ -12,14 +12,81 @@
   <main class="shell">
     <header class="page-header">
       <div>
-        <h1>Quest 角色设置</h1>
-        <p>凝心溯溪-临 · 继承 AstrBot 人格并管理对话模型与关系自然人</p>
+        <span class="page-kicker">凝心溯溪-临 · Quest 具身桥接</span>
+        <h1>伴夏服务控制台</h1>
+        <p>管理 Quest 对话服务、AstrBot 消息链路与角色身份</p>
       </div>
       <div class="runtime-state" role="status" aria-live="polite" aria-atomic="true">
         <span class="state-dot" aria-hidden="true"></span>
         <span id="runtime-label">正在读取设置</span>
       </div>
     </header>
+
+    <section class="service-console" aria-labelledby="service-title">
+      <div class="service-main">
+        <div>
+          <span class="section-label">服务</span>
+          <div class="service-title-row">
+            <h2 id="service-title">Quest Bridge</h2>
+            <span id="service-status-badge" class="status-badge loading">读取中</span>
+          </div>
+          <p id="service-summary">正在读取服务运行状态</p>
+          <p id="listener-address" class="listener-address">监听地址：读取中</p>
+        </div>
+        <div class="service-actions">
+          <button id="refresh-service-button" type="button" aria-busy="false">刷新状态</button>
+          <button id="service-control-button" class="danger" type="button" aria-busy="false" disabled>关闭服务</button>
+        </div>
+      </div>
+
+      <div class="service-metrics" aria-label="运行统计">
+        <div class="metric-item">
+          <span>活跃会话</span>
+          <strong id="active-session-count">0</strong>
+        </div>
+        <div class="metric-item">
+          <span>实时连接</span>
+          <strong id="attached-stream-count">0</strong>
+        </div>
+        <div class="metric-item">
+          <span>待发事件</span>
+          <strong id="queued-event-count">0</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="capability-strip" aria-label="Bridge 能力状态">
+      <div class="capability-item" data-capability="dialogue">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>对话模型</span>
+        <strong>读取中</strong>
+      </div>
+      <div class="capability-item" data-capability="eventbus">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>AstrBot 链路</span>
+        <strong>读取中</strong>
+      </div>
+      <div class="capability-item" data-capability="identity_configured">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>身份配置</span>
+        <strong>读取中</strong>
+      </div>
+      <div class="capability-item" data-capability="stt">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>语音识别</span>
+        <strong>读取中</strong>
+      </div>
+      <div class="capability-item" data-capability="tts">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>语音合成</span>
+        <strong>读取中</strong>
+      </div>
+      <div class="capability-item" data-capability="avatar_actions">
+        <span class="capability-dot" aria-hidden="true"></span>
+        <span>角色动作</span>
+        <strong>读取中</strong>
+      </div>
+    </section>
 
     <section class="settings-grid" aria-label="Quest 角色设置">
       <section class="setting-panel" aria-labelledby="model-title">

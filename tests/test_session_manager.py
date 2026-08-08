@@ -56,6 +56,46 @@ def test_session_isolation_and_ownership() -> None:
     asyncio.run(scenario())
 
 
+def test_identical_session_start_refreshes_authorization_but_identity_changes_conflict() -> (
+    None
+):
+    async def scenario() -> None:
+        manager = SessionManager(max_sessions=2)
+        request = session_request("s1")
+        first = await manager.start_session(
+            request,
+            "api_key:one",
+            protected_context_authorized=False,
+            context_authorization_reason="trusted_platform_id_missing",
+        )
+
+        refreshed = await manager.start_session(
+            request,
+            "api_key:one",
+            protected_context_authorized=True,
+            context_authorization_reason="authorized_private_owner_identity",
+        )
+
+        assert refreshed is first
+        assert refreshed.protected_context_authorized is True
+        assert (
+            refreshed.context_authorization_reason
+            == "authorized_private_owner_identity"
+        )
+        assert (await manager.stats())["active_sessions"] == 1
+
+        for changed, owner in (
+            (request.model_copy(update={"user_id": "other-user"}), "api_key:one"),
+            (request, "api_key:two"),
+        ):
+            with pytest.raises(SessionConflict, match="already exists"):
+                await manager.start_session(changed, owner)
+
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
 def test_interaction_dedupe_and_debounce() -> None:
     async def scenario() -> None:
         manager = SessionManager(interaction_debounce_ms=500)

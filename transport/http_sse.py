@@ -28,6 +28,7 @@ from ..core.session_manager import (
     SessionConflict,
     SessionManager,
 )
+from ..core.service_control import BridgeServiceUnavailable
 from ..core.turn_orchestrator import TurnOrchestrator
 
 
@@ -61,6 +62,7 @@ class HttpSseTransport:
         sessions: SessionManager,
         orchestrator: TurnOrchestrator,
         listener: Any,
+        service: Any,
         config: TransportConfig,
         logger: Any,
         diagnostic_log: Any | None = None,
@@ -69,6 +71,7 @@ class HttpSseTransport:
         self.sessions = sessions
         self.orchestrator = orchestrator
         self.listener = listener
+        self.service = service
         self.config = config
         self.logger = logger
         self.diagnostic_log = diagnostic_log
@@ -139,6 +142,7 @@ class HttpSseTransport:
     async def events(self, session_id: str) -> Any:
         try:
             owner = self._authenticate()
+            self.service.require_enabled()
             validated_session_id = self._identifier_adapter.validate_python(session_id)
             session = await self.sessions.get_owned(validated_session_id, owner)
             if not await self.sessions.attach_stream(session):
@@ -308,6 +312,7 @@ class HttpSseTransport:
             self._authenticate()
             await self.orchestrator.refresh_runtime_diagnostics()
             stats = await self.sessions.stats()
+            service = await self.service.status_snapshot()
             response = json_response(
                 {
                     "status": "ok",
@@ -327,6 +332,7 @@ class HttpSseTransport:
                             "tts_available": self.orchestrator.tts.available,
                         },
                         "pairing_listener": self.listener.status_snapshot(),
+                        "service": service,
                         "diagnostic_log": (
                             self.diagnostic_log.status_snapshot()
                             if self.diagnostic_log is not None
@@ -371,6 +377,7 @@ class HttpSseTransport:
         operation = model.__name__.removesuffix("Request").lower()
         try:
             owner = self._authenticate()
+            self.service.require_enabled()
             payload = await self._read_model(
                 model,
                 body_limit or self.config.max_json_body_bytes,
@@ -468,6 +475,12 @@ class HttpSseTransport:
         if isinstance(exc, BridgeStateError):
             return error_response(
                 str(exc),
+                status_code=exc.status_code,
+                data={"code": exc.code},
+            )
+        if isinstance(exc, BridgeServiceUnavailable):
+            return error_response(
+                exc.public_message,
                 status_code=exc.status_code,
                 data={"code": exc.code},
             )

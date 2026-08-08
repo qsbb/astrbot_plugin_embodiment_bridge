@@ -84,9 +84,9 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
                     headers=AUTH_HEADERS,
                     json=session_request,
                 )
-                assert duplicate.status == 409
+                assert duplicate.status == 201
                 assert await duplicate.json() == load_json(
-                    "duplicate_session.error.json"
+                    "session_start.response.json"
                 )
 
                 events = await client.get(

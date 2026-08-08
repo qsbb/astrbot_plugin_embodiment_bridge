@@ -39,6 +39,45 @@ from .models import (
 from .session_manager import SessionManager, SessionState, TurnState
 
 
+_PUBLIC_PIPELINE_REASONS = frozenset(
+    {
+        "api_principal_missing",
+        "astrbot_event_api_unavailable",
+        "astrbot_event_factory_invalid",
+        "astrbot_event_factory_unavailable",
+        "astrbot_event_queue_unavailable",
+        "astrbot_pipeline_empty_reply",
+        "astrbot_pipeline_timeout",
+        "authorization_denied",
+        "authorization_error",
+        "authorization_invalid_response",
+        "authorization_timeout",
+        "client_id_mismatch",
+        "contract_incompatible",
+        "identity_adapter_unavailable",
+        "invalid_api_principal",
+        "invalid_bot_id",
+        "invalid_client_id",
+        "invalid_platform_id",
+        "invalid_user_id",
+        "message_pipeline_disabled",
+        "missing_api_principal",
+        "missing_bot_id",
+        "missing_client_id",
+        "missing_platform_id",
+        "missing_user_id",
+        "owner_not_configured",
+        "provider_unavailable",
+        "quest_identity_not_allowlisted",
+        "trusted_client_id_missing",
+        "trusted_identity_config_invalid",
+        "trusted_platform_id_missing",
+        "trusted_platform_not_configured",
+        "trusted_platform_unavailable",
+    }
+)
+
+
 class TurnOrchestrator:
     def __init__(
         self,
@@ -196,17 +235,18 @@ class TurnOrchestrator:
         except asyncio.CancelledError:
             raise
         except MessagePipelineUnavailable as exc:
+            reason = self._public_pipeline_reason(session, exc)
             self._diagnostic(
                 "message_pipeline.blocked",
                 component="message_pipeline",
                 status="blocked",
-                reason_code=str(exc)[:64] or "unknown",
+                reason_code=reason,
             )
             await self._emit_terminal_error(
                 session,
                 turn,
-                "astrbot_message_pipeline_unavailable",
-                "AstrBot 消息链路不可用，请先配置可信平台并完成绑定",
+                reason,
+                self._pipeline_error_message(reason),
             )
         except AdapterUnavailable:
             self._diagnostic(
@@ -248,15 +288,16 @@ class TurnOrchestrator:
         except asyncio.CancelledError:
             raise
         except MessagePipelineUnavailable as exc:
+            reason = self._public_pipeline_reason(session, exc)
             self.logger.warning(
                 "[quest-avatar] AstrBot message pipeline unavailable: reason=%s",
-                str(exc) or "unknown",
+                reason,
             )
             await self._emit_terminal_error(
                 session,
                 turn,
-                "astrbot_message_pipeline_unavailable",
-                "AstrBot 消息链路不可用，请先配置可信平台并完成绑定",
+                reason,
+                self._pipeline_error_message(reason),
             )
         except Exception as exc:
             self.logger.warning(
@@ -510,6 +551,47 @@ class TurnOrchestrator:
                 "audio_sent": audio_sent,
             },
         )
+
+    @staticmethod
+    def _public_pipeline_reason(
+        session: SessionState,
+        error: MessagePipelineUnavailable,
+    ) -> str:
+        reason = str(error or "").strip()
+        if reason == "protected_context_not_authorized":
+            reason = str(session.context_authorization_reason or "").strip()
+        return (
+            reason
+            if reason in _PUBLIC_PIPELINE_REASONS
+            else "astrbot_message_pipeline_unavailable"
+        )
+
+    @staticmethod
+    def _pipeline_error_message(reason: str) -> str:
+        if reason in {"owner_not_configured", "quest_identity_not_allowlisted"}:
+            return "Quest 原始用户、机器人与序的五段绑定未完成"
+        if reason in {
+            "invalid_bot_id",
+            "invalid_user_id",
+            "missing_bot_id",
+            "missing_user_id",
+        }:
+            return "Quest 配对身份无效，请使用真实用户与机器人 ID 重新绑定"
+        if reason in {
+            "client_id_mismatch",
+            "invalid_client_id",
+            "missing_client_id",
+            "trusted_client_id_missing",
+        }:
+            return "Quest 客户端 ID 与服务端可信配置不匹配"
+        if reason in {
+            "missing_platform_id",
+            "trusted_platform_id_missing",
+            "trusted_platform_not_configured",
+            "trusted_platform_unavailable",
+        }:
+            return "AstrBot 可信平台未配置或当前不可用"
+        return "AstrBot 消息链路不可用，请检查临的独立日志"
 
     async def _read_relationship(
         self,
