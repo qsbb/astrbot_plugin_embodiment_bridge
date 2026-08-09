@@ -25,8 +25,8 @@ def pairing_create_body() -> dict[str, Any]:
         "port": 7443,
         "astrbot_api_key": "quest-plugin-scope-key",
         "client_id": "quest-living-room",
-        "user_id": "1483904397",
-        "bot_id": "2058141897",
+        "user_id": "user-test",
+        "bot_id": "bot-test",
         "group_id": "",
         "relationship_profile_id": "owner-profile",
         "expected_remote_ip": "127.0.0.1",
@@ -173,8 +173,8 @@ def test_quick_pairing_page_request_uses_server_only_defaults(
                     "quick-pair-plugin-scope-key"
                 )
                 assert configuration["client_id"] == "quest-living-room"
-                assert configuration["user_id"] == "1483904397"
-                assert configuration["bot_id"] == "2058141897"
+                assert configuration["user_id"] == "user-test"
+                assert configuration["bot_id"] == "bot-test"
 
     asyncio.run(scenario())
 
@@ -288,6 +288,68 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert bundle.plugin.message_pipeline.platform_id == (
                     "contract-platform"
                 )
+
+                identity_denied = await client.get(
+                    server.url("/pairing/quest-identity-settings")
+                )
+                assert identity_denied.status == 401
+
+                identity_response = await client.get(
+                    server.url("/pairing/quest-identity-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert identity_response.status == 200
+                identity = (await identity_response.json())["identity"]
+                assert identity["control_plane"]["source"] == "bridge_local"
+                assert identity["control_plane"]["authoritative"] is False
+                assert "quick-pair-plugin-scope-key" not in repr(identity)
+
+                saved_identity = await client.post(
+                    server.url("/pairing/quest-identity-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "client_id": "quest-room",
+                        "platform_id": "contract-platform",
+                        "bot_id": "bot-test",
+                        "user_id": "user-test",
+                        "api_key": "contract-plugin-token",
+                    },
+                )
+                assert saved_identity.status == 200
+                saved_identity_body = (await saved_identity.json())["identity"]
+                assert saved_identity_body["status"] == "ready"
+                assert saved_identity_body["local_fallback_configured"] is True
+                assert "contract-plugin-token" not in repr(saved_identity_body)
+                assert bundle.plugin.pairing_api.pairing_defaults["client_id"] == (
+                    "quest-room"
+                )
+                assert bundle.plugin.pairing_api.pairing_defaults["user_id"] == (
+                    "user-test"
+                )
+                assert bundle.plugin.pairing_api.pairing_defaults["bot_id"] == (
+                    "bot-test"
+                )
+
+                local_session = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "session.start",
+                        "protocol_version": "1.0",
+                        "session_id": "local-fallback-session",
+                        "client_id": "quest-room",
+                        "user_id": "user-test",
+                        "bot_id": "bot-test",
+                        "group_id": "",
+                        "relationship_profile_id": "",
+                    },
+                )
+                assert local_session.status == 201
+                protected = (await local_session.json())["data"]["protected_context"]
+                assert protected == {
+                    "authorized": True,
+                    "reason": "authorized_local_owner_identity",
+                }
 
                 saved = await client.post(
                     server.url("/pairing/operator-settings"),
@@ -583,9 +645,7 @@ def test_service_control_is_dashboard_protected_and_gates_quest_sessions(
                     headers=AUTH_HEADERS,
                 )
                 assert health.status == 200
-                assert (await health.json())["data"]["service"]["status"] == (
-                    "stopped"
-                )
+                assert (await health.json())["data"]["service"]["status"] == ("stopped")
 
                 restarted = await client.post(
                     server.url("/pairing/service-control"),
@@ -617,7 +677,7 @@ def test_trusted_proxy_source_header_binds_exchange_to_quest_ip(
         async with LiveHttpServer(bundle) as server:
             async with ClientSession() as client:
                 body = pairing_create_body()
-                body["expected_remote_ip"] = "192.168.5.70"
+                body["expected_remote_ip"] = "192.168.50.20"
                 created = await client.post(
                     server.url("/pairing/create"),
                     headers=PAGE_AUTH,
@@ -630,7 +690,7 @@ def test_trusted_proxy_source_header_binds_exchange_to_quest_ip(
                     server.url("/pairing/exchange"),
                     headers={
                         **PAGE_AUTH,
-                        "X-Quest-Pairing-Source": "192.168.5.71",
+                        "X-Quest-Pairing-Source": "192.168.50.21",
                     },
                     json={"protocol_version": "1.0", "code": code},
                 )
@@ -643,7 +703,7 @@ def test_trusted_proxy_source_header_binds_exchange_to_quest_ip(
                     server.url("/pairing/exchange"),
                     headers={
                         **PAGE_AUTH,
-                        "X-Quest-Pairing-Source": "192.168.5.70",
+                        "X-Quest-Pairing-Source": "192.168.50.20",
                     },
                     json={"protocol_version": "1.0", "code": code},
                 )

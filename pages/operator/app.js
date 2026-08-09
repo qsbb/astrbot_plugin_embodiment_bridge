@@ -2,6 +2,7 @@ let bridge = null;
 let operatorSettings = null;
 let personaSettings = null;
 let platformSettings = null;
+let questIdentitySettings = null;
 let serviceState = null;
 let serviceRefreshInFlight = false;
 
@@ -373,6 +374,84 @@ async function loadPersonaSettings() {
   renderPersonaSettings(response.persona);
 }
 
+function renderQuestIdentitySettings(identity) {
+  questIdentitySettings = identity || {};
+  const writable = questIdentitySettings.config_writable === true;
+  document.getElementById("quest-client-id").value =
+    String(questIdentitySettings.client_id || "quest-living-room");
+  document.getElementById("quest-bot-id").value =
+    String(questIdentitySettings.bot_id || "");
+  document.getElementById("quest-user-id").value =
+    String(questIdentitySettings.user_id || "");
+  document.getElementById("quest-api-key").value = "";
+  document.getElementById("quest-api-key").placeholder =
+    questIdentitySettings.astrbot_auth_configured
+      ? "已配置，留空保持不变"
+      : "请填写 Quest 专用 API Key";
+  ["quest-client-id", "quest-bot-id", "quest-user-id", "quest-api-key"]
+    .forEach((id) => { document.getElementById(id).disabled = !writable; });
+
+  const control = questIdentitySettings.control_plane || {};
+  let source = "未安装“序”，由“临”本地精确绑定";
+  if (control.source === "identity_guardian") {
+    source = `由“序”统一管理 · ${Number(control.owner_count || 0)} 位主人 · ` +
+      `${Number(control.quest_binding_count || 0)} 个 Quest 绑定`;
+    if (control.status !== "ready") {
+      const reasons = {
+        identity_control_plane_incompatible: "请升级“序”后再保存",
+        identity_control_plane_timeout: "“序”响应超时",
+        identity_control_plane_error: "“序”控制面读取失败",
+        plugin_disabled: "“序”已停用",
+        guard_stopped: "“序”已暂停"
+      };
+      source += `；${reasons[control.reason] || "统一身份控制面当前不可用"}`;
+    }
+  }
+  const missing = [];
+  if (!questIdentitySettings.astrbot_auth_configured) missing.push("AstrBot API Key");
+  if (!questIdentitySettings.bridge_auth_configured) missing.push("Bridge Key 将在保存时自动生成");
+  if (!questIdentitySettings.client_id) missing.push("客户端 ID");
+  if (!questIdentitySettings.platform_id) missing.push("平台实例");
+  if (!questIdentitySettings.bot_id) missing.push("Bot ID");
+  if (!questIdentitySettings.user_id) missing.push("主人用户 ID");
+  const validation = questIdentitySettings.binding_validation;
+  const validationText = validation?.authorized === true ? "；保存后授权校验通过" : "";
+  document.getElementById("quest-identity-status").textContent = writable
+    ? source + (missing.length ? `；待补充：${missing.join("、")}` : "；身份配置完整") + validationText
+    : "当前 AstrBot 配置对象不支持异步保存";
+  document.getElementById("save-quest-identity-button").disabled = !writable;
+}
+
+async function loadQuestIdentitySettings() {
+  const response = await apiGet("pairing/quest-identity-settings");
+  renderQuestIdentitySettings(response.identity);
+}
+
+async function saveQuestIdentitySettings() {
+  const button = document.getElementById("save-quest-identity-button");
+  if (!setButtonBusy(button, true, "正在保存并验证…")) return;
+  try {
+    const response = await apiPost("pairing/quest-identity-settings", {
+      client_id: document.getElementById("quest-client-id").value,
+      platform_id: document.getElementById("trusted-platform-id").value,
+      bot_id: document.getElementById("quest-bot-id").value,
+      user_id: document.getElementById("quest-user-id").value,
+      api_key: document.getElementById("quest-api-key").value
+    });
+    renderQuestIdentitySettings(response.identity);
+    await loadPlatformSettings();
+    toast(response.identity.control_plane?.source === "identity_guardian"
+      ? "Quest 身份已保存到“序”并验证"
+      : "Quest 身份已保存到“临”的本地精确绑定");
+  } catch (error) {
+    document.getElementById("quest-api-key").value = "";
+    toast("Quest 身份保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = questIdentitySettings?.config_writable !== true;
+  }
+}
+
 async function savePersonaSettings() {
   const button = document.getElementById("save-persona-button");
   if (!setButtonBusy(button, true, "正在保存…")) return;
@@ -531,6 +610,9 @@ function diagnosticReasonLabel(code) {
   const labels = {
     owner_not_configured: "“序”尚未为这组 Quest 原始身份配置主人",
     quest_identity_not_allowlisted: "Quest 原始身份不在“序”的允许列表",
+    local_identity_not_configured: "“临”的本地 Quest 身份尚未配置完整",
+    local_api_principal_mismatch: "Quest 使用的 AstrBot API Key 与本地绑定不一致",
+    local_quest_identity_mismatch: "Quest 客户端、平台、Bot 或主人用户与本地绑定不一致",
     invalid_user_id: "Quest 用户 ID 无效或仍是占位值",
     missing_user_id: "Quest 用户 ID 缺失",
     invalid_bot_id: "Quest Bot ID 无效",
@@ -560,18 +642,25 @@ function diagnosticReasonLabel(code) {
 
 function diagnosticStageLabel(value) {
   const labels = {
+    configuration: "配置",
+    authorization: "身份授权",
     identity: "身份授权",
     session: "会话",
     health: "健康检查",
     sse: "实时事件",
     transport: "HTTP 传输",
     audio_input: "音频上传",
+    audio_upload: "音频上传",
+    microphone: "麦克风",
     stt: "语音识别",
     message_pipeline: "AstrBot/EventBus",
+    eventbus: "AstrBot/EventBus",
     llm: "模型生成",
     tts: "语音合成",
     reply: "回复交付",
-    turn: "对话轮次"
+    turn: "对话轮次",
+    audio_playback: "音频播放",
+    interrupt: "打断"
   };
   return labels[String(value || "")] || String(value || "运行链路");
 }
@@ -613,6 +702,7 @@ function diagnosticStatusLabel(value) {
     connected: "已连接",
     completed: "完成",
     processing: "处理中",
+    uploading: "上传中",
     awaiting_audio: "等待音频",
     limited: "受限",
     unavailable: "不可用",
@@ -620,6 +710,9 @@ function diagnosticStatusLabel(value) {
     blocked: "已阻止",
     error: "错误",
     failed: "失败",
+    timeout: "超时",
+    disconnected: "已断开",
+    cancelled: "已取消",
     closed: "已关闭"
   };
   return labels[String(value || "")] || String(value || "状态未知");
@@ -647,27 +740,53 @@ function renderDiagnosticEvents(events) {
     container.append(empty);
     return;
   }
-  events.slice().reverse().forEach((event) => {
-    const item = document.createElement("article");
+  events.slice(-40).forEach((event) => {
+    const item = document.createElement("div");
     const status = String(event.status || "");
-    item.className = `diagnostic-event status-${status || "unknown"}`;
-    const heading = document.createElement("div");
-    heading.className = "diagnostic-event-heading";
-    const title = document.createElement("strong");
-    title.textContent = `${diagnosticStageLabel(event.component)} · ${diagnosticEventLabel(event.event)}`;
-    const badge = document.createElement("span");
-    badge.textContent = diagnosticStatusLabel(status);
-    heading.append(title, badge);
-    const detail = document.createElement("p");
+    item.className = `diagnostic-line status-${status || "unknown"}`;
     const reason = event.reason_code || event.code;
-    detail.textContent = reason
-      ? diagnosticReasonLabel(reason)
-      : diagnosticMeta(event) || "没有附加错误信息";
-    const footer = document.createElement("small");
-    const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString("zh-CN") : "时间未知";
-    footer.textContent = [timestamp, diagnosticMeta(event)].filter(Boolean).join(" · ");
-    item.append(heading, detail, footer);
+    const timestamp = event.timestamp
+      ? new Date(event.timestamp).toLocaleTimeString("zh-CN", { hour12: false })
+      : "--:--:--";
+    const parts = [
+      `${timestamp} [${diagnosticStageLabel(event.component)}] ${diagnosticStatusLabel(status)}`,
+      diagnosticEventLabel(event.event),
+      reason ? diagnosticReasonLabel(reason) : "",
+      diagnosticMeta(event)
+    ].filter(Boolean);
+    item.textContent = parts.join(" · ");
     container.append(item);
+  });
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderDiagnosticSummary(events) {
+  const summary = document.getElementById("diagnostics-summary");
+  const latestHttp = events.slice().reverse().find((event) =>
+    Number.isFinite(event.http_status));
+  const latestInput = events.slice().reverse().find((event) =>
+    Number.isFinite(event.chunks) || Number.isFinite(event.bytes));
+  const durations = {};
+  events.forEach((event) => {
+    if (Number.isFinite(event.duration_ms)) {
+      durations[String(event.component || "runtime")] = Math.round(event.duration_ms);
+    }
+  });
+  const durationText = Object.entries(durations).slice(-5)
+    .map(([stage, value]) => `${diagnosticStageLabel(stage)} ${value}ms`)
+    .join(" · ") || "暂无耗时记录";
+  summary.replaceChildren();
+  [
+    `链路：${serviceState?.status === "running" ? "服务运行中" : "服务需要检查"} · ${events.length} 个事件` +
+      (latestHttp ? ` · HTTP ${latestHttp.http_status}` : ""),
+    latestInput
+      ? `输入：${Number(latestInput.chunks || 0)}块/${Number(latestInput.bytes || 0)}B`
+      : "输入：暂无音频块记录",
+    `耗时：${durationText}`
+  ].forEach((value) => {
+    const line = document.createElement("p");
+    line.textContent = value;
+    summary.append(line);
   });
 }
 
@@ -691,12 +810,14 @@ async function loadDiagnostics() {
     document.getElementById("diagnostics-root-cause").textContent = rootCause.code
       ? `当前根因：${diagnosticStageLabel(rootCause.stage)} · ${diagnosticReasonLabel(rootCause.code)}`
       : "当前根因：未发现明确的失败事件";
+    renderDiagnosticSummary(events);
     renderDiagnosticEvents(events);
   } catch (error) {
     document.getElementById("diagnostics-status").textContent =
       "诊断日志暂不可用";
     document.getElementById("diagnostics-root-cause").textContent =
       "当前根因：诊断接口读取失败";
+    renderDiagnosticSummary([]);
     renderDiagnosticEvents([]);
     toast("读取诊断日志失败：" + error.message, true);
   } finally {
@@ -725,6 +846,9 @@ function bindEvents() {
     .getElementById("save-persona-button")
     .addEventListener("click", savePersonaSettings);
   document
+    .getElementById("save-quest-identity-button")
+    .addEventListener("click", saveQuestIdentitySettings);
+  document
     .getElementById("persona-source-mode")
     .addEventListener("change", () => {
       renderPersonaSettings({
@@ -752,7 +876,8 @@ async function init() {
     loadServiceStatus(),
     loadOperatorSettings(),
     loadPlatformSettings(),
-    loadPersonaSettings()
+    loadPersonaSettings(),
+    loadQuestIdentitySettings()
   ]);
   window.setInterval(() => loadServiceStatus({ silent: true }), 10000);
 }

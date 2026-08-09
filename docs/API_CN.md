@@ -41,7 +41,7 @@ http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_b
 启用内置 listener 后，Quest 私网统一入口可改为：
 
 ```text
-http://192.168.5.88:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://192.168.50.10:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
 ```
 
 两者的 Protocol 1.0 请求和 SSE 字段完全一致。8520 只是严格白名单入口，不是 Dashboard 或通用反向代理。
@@ -186,7 +186,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/operator-settings`、`pairing/persona-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/operator-settings`、`pairing/persona-settings`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -209,6 +209,8 @@ sequenceDiagram
 | POST | `/pairing/platform-settings` | 200 | 验证并持久化 `trusted_platform_id`，成功后立即启用正式消息链路 |
 | GET | `/pairing/persona-settings` | 200 | 读取 AstrBot 人格安全 ID、来源、状态和手动兼容字段 |
 | POST | `/pairing/persona-settings` | 200 | 原子持久化人格来源、服务端人格选择和手动兼容字段 |
+| GET | `/pairing/quest-identity-settings` | 200 | 读取脱敏的 Quest 客户端、平台、Bot、主人和统一身份控制面状态 |
+| POST | `/pairing/quest-identity-settings` | 200 | 保存 Quest 身份；有“序”时原子写入主人和摘要白名单，缺失时启用“临”本地精确绑定 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
@@ -633,7 +635,9 @@ GET /health
         "api_principal_source": "astrbot_authenticated_request",
         "client_id_source": "bridge_server_config",
         "platform_id_source": "bridge_server_config",
-        "unity_trusted_source_fields": false
+        "unity_trusted_source_fields": false,
+        "fallback_mode": "exact_local_binding",
+        "local_binding_configured": false
       },
       "knowledge": {
         "contract": "active_learner.knowledge@1.0",
@@ -688,6 +692,8 @@ GET /health
 ```
 
 每次显式 `GET /health` 都会在 2 秒预算内刷新“核”的只读运行态快照。缺少任何系列插件不会让 health 或基础聊天失败；前端只用这些状态控制提示和功能可用性，不应据此自行生成关系、动作或情绪。
+
+管理员通过 `pairing/quest-identity-settings` 保存时，“临”优先消费“序”的 `identity.control_plane@1.0`：只提交 API principal 的 SHA-256 摘要以及 client/platform/bot/user，响应只包含状态和计数。“序”未安装时使用 `exact_local_binding`；一旦检测到“序”，拒绝、超时或契约不兼容都不得与本地配置合并放行。
 
 `pairing_listener` 只公开脱敏状态。`enabled=false` 是默认兼容状态；`enabled=true, ready=false` 表示配置、绑定或启动降级。`ready=true` 只表示 socket 已监听；若 `reason` 仍为 public URL 缺失/非法，Page 的 `bootstrap_ready` 可能仍为 false。字段不包含完整上游 URL、认证头或任何密钥。
 

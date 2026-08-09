@@ -11,6 +11,7 @@ from .adapters.astrbot_persona import AstrBotPersonaAdapter
 from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
+from .adapters.identity_control_plane import IdentityControlPlaneAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
 from .adapters.relationship import RelationshipSnapshotAdapter
 from .adapters.relationship_candidates import RelationshipIdentityCandidatesAdapter
@@ -40,7 +41,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.8"
+__version__ = "0.4.9"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -162,6 +163,10 @@ class QuestAvatarBridgePlugin(Star):
             self._component_logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
+            local_api_key=str(config.get("pairing_astrbot_api_key", "") or ""),
+            local_bot_id=str(config.get("pairing_bot_id", "") or ""),
+            local_user_id=str(config.get("pairing_user_id", "") or ""),
+            local_group_id=str(config.get("pairing_group_id", "") or ""),
         )
         self.message_pipeline = AstrBotMessagePipelineAdapter(
             context,
@@ -279,6 +284,10 @@ class QuestAvatarBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
         )
+        self.identity_control_plane = IdentityControlPlaneAdapter(
+            context,
+            self._component_logger,
+        )
         self.operator_settings = OperatorSettings(
             context=context,
             config=config,
@@ -289,6 +298,9 @@ class QuestAvatarBridgePlugin(Star):
             diagnostic_log=self.diagnostic_log,
             identity=self.identity,
             message_pipeline=self.message_pipeline,
+            identity_control_plane=self.identity_control_plane,
+            pairing_manager=self.pairing,
+            transport=self.transport,
         )
         self.pairing_api = PairingHttpApi(
             context=context,

@@ -91,7 +91,7 @@ pairing_listener_enabled=true
 pairing_listener_host=0.0.0.0
 pairing_listener_port=8520
 pairing_listener_upstream_url=http://127.0.0.1:6185
-pairing_listener_public_url=http://192.168.5.88:8520
+pairing_listener_public_url=http://192.168.50.10:8520
 allow_private_http_pairing=true
 ```
 

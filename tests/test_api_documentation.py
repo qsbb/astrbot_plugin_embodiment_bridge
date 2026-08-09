@@ -53,6 +53,7 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         assert f"`{error_code}`" in document
     for integration_contract in (
         "identity.quest_session_authorization@1.0",
+        "identity.control_plane@1.0",
         "active_learner.knowledge@1.0",
         "relationship.snapshot@1.0",
         "environment.opportunity@1.0",

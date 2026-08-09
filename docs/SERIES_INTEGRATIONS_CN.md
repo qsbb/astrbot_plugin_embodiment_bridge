@@ -7,7 +7,7 @@ Quest Unity 客户端只连接 `astrbot_plugin_quest_avatar_bridge` 的 HTTP/SSE
 | 模块 | 契约 | Bridge 调用 | 频率 | 失败行为 |
 |---|---|---|---|---|
 | 知 | `active_learner.knowledge@1.0` / `recall` | 仅 `scope="global"` | 普通文本/语音轮 | 不注入知识证据 |
-| 序 | `identity.quest_session_authorization@1.0` / `authorize_quest_session` | 原始平台身份只读授权 | 每次会话 | 关闭受保护上下文，基础隔离对话仍可用 |
+| 序 | `identity.control_plane@1.0` / `upsert_quest_owner_binding`；`identity.quest_session_authorization@1.0` / `authorize_quest_session` | 管理员保存时同步主人和摘要白名单；会话时使用原始平台身份只读授权 | 保存/每次会话 | 已安装但拒绝时失败关闭，不与本地配置合并放行 |
 | 情 | `relationship.snapshot@1.0` / `get_relationship_snapshot` | 只读派生快照 | 序授权成功后的每轮 | 使用中性关系，不阻断对话 |
 | 境 | `environment.opportunity@1.0` / `get_cached_opportunity` | 仅 `cached_read`，请求链不联网 | 每轮 | 不注入环境事实 |
 | 声 | `voice.audio_output@1.0` / `render_pcm_wav` | 读取 provider 管理的 PCM16 WAV，下混/重采样到 24 kHz 单声道 | 每次有文字回复且需要音频 | 保留文字；可使用已显式启用的 AstrBot Core TTS fallback |
@@ -19,12 +19,14 @@ Quest Unity 客户端只连接 `astrbot_plugin_quest_avatar_bridge` 的 HTTP/SSE
 
 ## 受保护上下文授权
 
-关系快照默认关闭。要启用，Bridge 服务端必须配置：
+关系快照默认关闭。可直接在“临”的「Quest 角色设置」Page 集中配置：
 
 - `trusted_client_id`：固定 Quest 客户端标识；`session.start.client_id` 必须精确匹配。
 - `trusted_platform_id`：原始 AstrBot 平台 ID，例如 `aiocqhttp`。
 
 `api_principal` 来自 AstrBot 已认证请求的 `request.username`，不是 Unity JSON。`platform_id` 和授权使用的 `client_id` 来自 Bridge 配置。`bot_id`、`user_id` 保持原始权限身份，禁止用“情”的自然人映射替换。
+
+“序”已安装时，“临”通过 `identity.control_plane@1.0` 提交 `sha256:<64hex>` principal 摘要以及 client/platform/bot/user 五项结构化字段；“序”一次原子保存主人和 Quest 精确白名单，永不保存或返回原始 API principal。未安装“序”时，“临”只对自身配置的 API principal、client、platform、bot、user 和私聊范围全部精确匹配后开放受保护上下文。只要检测到“序”提供方，任何契约不兼容、拒绝、超时或错误都不会回退本地授权。
 
 Bridge 向“序”提交的对象恰好包含：
 
@@ -33,8 +35,8 @@ Bridge 向“序”提交的对象恰好包含：
   "api_principal": "astrbot-api",
   "client_id": "quest-living-room",
   "platform_id": "aiocqhttp",
-  "bot_id": "2058141897",
-  "user_id": "1483904397",
+  "bot_id": "bot-test",
+  "user_id": "user-test",
   "group_id": null
 }
 ```

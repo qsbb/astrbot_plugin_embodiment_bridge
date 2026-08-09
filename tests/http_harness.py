@@ -406,8 +406,8 @@ def build_plugin(
             ),
             "pairing_public_url": "https://bot.example.com",
             "pairing_astrbot_api_key": "quick-pair-plugin-scope-key",
-            "pairing_user_id": "1483904397",
-            "pairing_bot_id": "2058141897",
+            "pairing_user_id": "user-test",
+            "pairing_bot_id": "bot-test",
         }
     )
     config.update(config_overrides or {})

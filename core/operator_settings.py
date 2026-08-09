@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 from typing import Any
 
 from ..adapters.astrbot_persona import (
@@ -9,9 +10,14 @@ from ..adapters.astrbot_persona import (
     normalize_persona_id,
     normalize_source_mode,
 )
+from ..adapters.identity_control_plane import (
+    IdentityControlPlaneAdapter,
+    IdentityControlPlaneError,
+)
 
 
 _PERSON_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 _PERSONA_KEYS = (
     "persona_source_mode",
     "astrbot_persona_id",
@@ -45,6 +51,9 @@ class OperatorSettings:
         diagnostic_log: Any | None = None,
         identity: Any | None = None,
         message_pipeline: Any | None = None,
+        identity_control_plane: IdentityControlPlaneAdapter | None = None,
+        pairing_manager: Any | None = None,
+        transport: Any | None = None,
     ) -> None:
         self.context = context
         self.config = config
@@ -55,6 +64,9 @@ class OperatorSettings:
         self.diagnostic_log = diagnostic_log
         self.identity = identity
         self.message_pipeline = message_pipeline
+        self.identity_control_plane = identity_control_plane
+        self.pairing_manager = pairing_manager
+        self.transport = transport
         self._save_lock = asyncio.Lock()
 
     def snapshot(self) -> dict[str, Any]:
@@ -168,6 +180,155 @@ class OperatorSettings:
         )
         return snapshot
 
+    async def quest_identity_overview(self) -> dict[str, Any]:
+        try:
+            control_plane = (
+                await self.identity_control_plane.snapshot()
+                if self.identity_control_plane is not None
+                else {
+                    "source": "bridge_local",
+                    "authoritative": False,
+                    "status": "ready",
+                    "reason": "identity_guardian_not_installed",
+                    "config_writable": True,
+                    "owner_count": 0,
+                    "quest_binding_count": 0,
+                }
+            )
+        except IdentityControlPlaneError as exc:
+            control_plane = {
+                "source": "identity_guardian",
+                "authoritative": True,
+                "status": "unavailable",
+                "reason": exc.code,
+                "config_writable": False,
+                "owner_count": 0,
+                "quest_binding_count": 0,
+            }
+        api_key = str(self.config.get("pairing_astrbot_api_key", "") or "")
+        bridge_key = str(self.config.get("bridge_api_key", "") or "")
+        client_id = str(self.config.get("trusted_client_id", "") or "").strip()
+        platform = self.platform_snapshot()
+        bot_id = str(self.config.get("pairing_bot_id", "") or "").strip()
+        user_id = str(self.config.get("pairing_user_id", "") or "").strip()
+        ready = bool(
+            len(api_key) >= 16
+            and len(bridge_key) >= 32
+            and client_id
+            and platform["trusted_platform_id"]
+            and bot_id
+            and user_id
+            and control_plane.get("status") == "ready"
+        )
+        return {
+            "status": "ready" if ready else "incomplete",
+            "client_id": client_id,
+            "platform_id": platform["trusted_platform_id"],
+            "bot_id": bot_id,
+            "user_id": user_id,
+            "astrbot_auth_configured": len(api_key) >= 16,
+            "bridge_auth_configured": len(bridge_key) >= 32,
+            "control_plane": control_plane,
+            "local_fallback_configured": bool(
+                getattr(self.identity, "local_binding_configured", False)
+            ),
+            "config_writable": callable(
+                getattr(self.config, "save_config_async", None)
+            ),
+        }
+
+    async def save_quest_identity(
+        self,
+        *,
+        client_id: str,
+        platform_id: str,
+        bot_id: str,
+        user_id: str,
+        astrbot_api_key: str,
+    ) -> dict[str, Any]:
+        client = str(client_id or "").strip()
+        platform = str(platform_id or "").strip()
+        bot = _identity_value(bot_id, "bot_id")
+        user = _identity_value(user_id, "user_id")
+        if not _CLIENT_ID_RE.fullmatch(client):
+            raise OperatorSettingsError(
+                "invalid_trusted_client_id",
+                422,
+                "Quest 客户端 ID 无效",
+            )
+        self._validate_platform_id(platform)
+        api_key = str(astrbot_api_key or "").strip() or str(
+            self.config.get("pairing_astrbot_api_key", "") or ""
+        )
+        if len(api_key) < 16 or len(api_key) > 4096:
+            raise OperatorSettingsError(
+                "pairing_astrbot_api_key_missing",
+                422,
+                "请填写可访问“临”的 AstrBot API Key",
+            )
+        bridge_key = str(self.config.get("bridge_api_key", "") or "")
+        if len(bridge_key) < 32:
+            bridge_key = secrets.token_urlsafe(32)
+
+        control_result: dict[str, Any] = {
+            "source": "bridge_local",
+            "authorized": True,
+            "reason": "saved_to_bridge_local_fallback",
+        }
+        if self.identity_control_plane is not None:
+            try:
+                control_result = await (
+                    self.identity_control_plane.upsert_quest_owner_binding(
+                        api_key=api_key,
+                        client_id=client,
+                        platform_id=platform,
+                        bot_id=bot,
+                        user_id=user,
+                    )
+                )
+            except IdentityControlPlaneError as exc:
+                raise OperatorSettingsError(exc.code, 503, str(exc)) from exc
+
+        changes = {
+            "trusted_client_id": client,
+            "trusted_platform_id": platform,
+            "pairing_bot_id": bot,
+            "pairing_user_id": user,
+            "pairing_group_id": "",
+            "pairing_astrbot_api_key": api_key,
+            "bridge_api_key": bridge_key,
+        }
+        await self._persist_many(changes)
+        if self.identity is not None:
+            self.identity.configure_local_binding(
+                api_key=api_key,
+                client_id=client,
+                platform_id=platform,
+                bot_id=bot,
+                user_id=user,
+                group_id="",
+            )
+        if self.message_pipeline is not None:
+            self.message_pipeline.configure_platform(platform)
+        if self.pairing_manager is not None:
+            self.pairing_manager.bridge_api_key = bridge_key
+        if self.transport is not None:
+            self.transport.configure_bridge_api_key(bridge_key)
+        self._diagnostic(
+            "identity.updated",
+            component="identity",
+            status="ready",
+            configured=True,
+            available=True,
+        )
+        snapshot = await self.quest_identity_overview()
+        snapshot["binding_validation"] = {
+            "authorized": control_result.get("authorized") is True,
+            "source": str(control_result.get("source") or "bridge_local")[:32],
+            "reason": str(control_result.get("reason") or "")[:64],
+        }
+        return snapshot
+
     async def save_chat_provider_id(self, value: str) -> dict[str, Any]:
         provider_id = str(value or "").strip()
         if not provider_id or len(provider_id) > 256:
@@ -201,38 +362,7 @@ class OperatorSettings:
 
     async def save_trusted_platform_id(self, value: str) -> dict[str, Any]:
         platform_id = str(value or "").strip()
-        if (
-            len(platform_id) > 128
-            or "|" in platform_id
-            or any(char.isspace() or ord(char) < 33 for char in platform_id)
-        ):
-            raise OperatorSettingsError(
-                "invalid_trusted_platform_id",
-                422,
-                "AstrBot platform ID is invalid",
-            )
-        if platform_id:
-            getter = getattr(self.context, "get_platform_inst", None)
-            if not callable(getter):
-                raise OperatorSettingsError(
-                    "astrbot_platform_api_unavailable",
-                    503,
-                    "AstrBot platform lookup API is unavailable",
-                )
-            try:
-                platform = getter(platform_id)
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                raise OperatorSettingsError(
-                    "astrbot_platform_lookup_failed",
-                    503,
-                    "AstrBot platform lookup failed",
-                ) from exc
-            if platform is None:
-                raise OperatorSettingsError(
-                    "trusted_platform_not_available",
-                    422,
-                    "The selected AstrBot platform is not available",
-                )
+        self._validate_platform_id(platform_id, allow_empty=True)
 
         await self._persist("trusted_platform_id", platform_id)
         if self.identity is not None:
@@ -248,6 +378,44 @@ class OperatorSettings:
             available=snapshot["available"],
         )
         return snapshot
+
+    def _validate_platform_id(
+        self, platform_id: str, *, allow_empty: bool = False
+    ) -> None:
+        if not platform_id and allow_empty:
+            return
+        if (
+            not platform_id
+            or len(platform_id) > 128
+            or "|" in platform_id
+            or any(char.isspace() or ord(char) < 33 for char in platform_id)
+        ):
+            raise OperatorSettingsError(
+                "invalid_trusted_platform_id",
+                422,
+                "AstrBot 平台实例 ID 无效",
+            )
+        getter = getattr(self.context, "get_platform_inst", None)
+        if not callable(getter):
+            raise OperatorSettingsError(
+                "astrbot_platform_api_unavailable",
+                503,
+                "AstrBot 平台查询接口不可用",
+            )
+        try:
+            platform = getter(platform_id)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            raise OperatorSettingsError(
+                "astrbot_platform_lookup_failed",
+                503,
+                "AstrBot 平台查询失败",
+            ) from exc
+        if platform is None:
+            raise OperatorSettingsError(
+                "trusted_platform_not_available",
+                422,
+                "所选 AstrBot 平台实例当前不可用",
+            )
 
     async def save_character_persona(
         self,
@@ -389,7 +557,9 @@ class OperatorSettings:
                 metadata = platform.meta()
                 platform_id = str(metadata.id or "").strip()
                 adapter_type = str(metadata.name or "").strip()
-                display_name = str(metadata.adapter_display_name or adapter_type).strip()
+                display_name = str(
+                    metadata.adapter_display_name or adapter_type
+                ).strip()
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 continue
             if (
@@ -428,6 +598,12 @@ class OperatorSettings:
                 "chat_provider_id",
                 "relationship_person_id",
                 "trusted_platform_id",
+                "trusted_client_id",
+                "pairing_bot_id",
+                "pairing_user_id",
+                "pairing_group_id",
+                "pairing_astrbot_api_key",
+                "bridge_api_key",
             }
             for key in changes
         ):
@@ -506,3 +682,19 @@ def _multi_line(value: object, limit: int) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
     cleaned = "".join(char for char in text if char == "\n" or ord(char) >= 32)
     return cleaned[:limit].strip()
+
+
+def _identity_value(value: object, field: str) -> str:
+    normalized = str(value or "").strip()
+    if (
+        not normalized
+        or len(normalized) > 128
+        or "|" in normalized
+        or any(char.isspace() or ord(char) < 33 for char in normalized)
+    ):
+        raise OperatorSettingsError(
+            f"invalid_{field}",
+            422,
+            f"Quest {field} 无效",
+        )
+    return normalized

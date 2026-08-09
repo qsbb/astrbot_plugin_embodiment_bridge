@@ -35,8 +35,8 @@ def create_payload(**changes: Any) -> PairingCreateRequest:
         "port": 7443,
         "astrbot_api_key": "plugin-scope-api-key",
         "client_id": "quest-living-room",
-        "user_id": "1483904397",
-        "bot_id": "2058141897",
+        "user_id": "user-test",
+        "bot_id": "bot-test",
         "group_id": "",
         "relationship_profile_id": "owner-profile",
         "expected_remote_ip": "192.0.2.10",
@@ -233,13 +233,13 @@ def test_exchange_is_bound_to_the_expected_remote_ip() -> None:
 
 def test_private_http_requires_server_and_session_opt_in() -> None:
     private_manager = pairing_manager(
-        exchange_url="http://192.168.5.88:8520/quest/pairing/exchange",
+        exchange_url="http://192.168.50.10:8520/quest/pairing/exchange",
         allow_private_http=True,
     )
     created = private_manager.create(
         "owner",
         create_payload(
-            public_url="http://192.168.5.88",
+            public_url="http://192.168.50.10",
             port=8520,
             allow_insecure_http=True,
         ),
@@ -249,7 +249,7 @@ def test_private_http_requires_server_and_session_opt_in() -> None:
         remote="192.0.2.10",
     )
     assert exchanged.configuration["base_url"] == (
-        f"http://192.168.5.88:8520{PUBLIC_API_PATH}"
+        f"http://192.168.50.10:8520{PUBLIC_API_PATH}"
     )
     assert exchanged.configuration["allow_insecure_http"] is True
 

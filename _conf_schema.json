@@ -40,7 +40,7 @@
   "bridge_api_key": {
     "description": "Quest 桥接二次认证密钥",
     "type": "string",
-    "hint": "至少 32 个随机字符。Unity 通过 X-Quest-Avatar-Key 发送；它不能替代带 plugin scope 的 AstrBot API Key。",
+    "hint": "至少 32 个随机字符。留空后也可在「Quest 角色设置」保存身份时由服务端自动生成；Unity 通过 X-Quest-Avatar-Key 发送，它不能替代带 plugin scope 的 AstrBot API Key。",
     "obvious_hint": true,
     "default": ""
   },
@@ -72,20 +72,20 @@
   "pairing_astrbot_api_key": {
     "description": "Quest 专用 AstrBot API Key",
     "type": "string",
-    "hint": "必须具有 plugin scope，仅由快速绑定服务端注入 Quest，不在 Page、二维码、日志或状态接口中返回。",
+    "hint": "必须具有 plugin scope。可在「Quest 角色设置」的密码框写入；后端只保存不回显，并由快速绑定服务端注入 Quest，不进入二维码、日志或状态接口。",
     "obvious_hint": true,
     "default": ""
   },
   "pairing_user_id": {
     "description": "Quest 会话用户 ID",
     "type": "string",
-    "hint": "由服务端固定并在快速绑定时注入，不在扫码页显示。",
+    "hint": "由服务端固定并在快速绑定时注入；可在「Quest 角色设置」统一填写，不在扫码页显示。",
     "default": ""
   },
   "pairing_bot_id": {
     "description": "Quest 会话机器人 ID",
     "type": "string",
-    "hint": "由服务端固定并在快速绑定时注入，不在扫码页显示。",
+    "hint": "由服务端固定并在快速绑定时注入；可在「Quest 角色设置」统一填写，不在扫码页显示。",
     "default": ""
   },
   "pairing_group_id": {
@@ -214,7 +214,7 @@
   "trusted_client_id": {
     "description": "服务端固定的 Quest 客户端身份",
     "type": "string",
-    "hint": "由 AstrBot 管理员在服务端配置，不能信任 Unity 自报。留空会明确关闭受保护关系上下文；配置后 session.start.client_id 必须精确匹配。",
+    "hint": "由 AstrBot 管理员在服务端或「Quest 角色设置」配置，不能信任 Unity 自报。留空会明确关闭受保护关系上下文；配置后 session.start.client_id 必须精确匹配。",
     "default": ""
   },
   "trusted_platform_id": {

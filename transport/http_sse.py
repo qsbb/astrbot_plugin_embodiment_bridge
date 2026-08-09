@@ -77,6 +77,14 @@ class HttpSseTransport:
         self.diagnostic_log = diagnostic_log
         self._identifier_adapter = TypeAdapter(Identifier)
 
+    def configure_bridge_api_key(self, value: str) -> None:
+        self.config = TransportConfig(
+            bridge_api_key=str(value or ""),
+            max_json_body_bytes=self.config.max_json_body_bytes,
+            max_audio_request_bytes=self.config.max_audio_request_bytes,
+            sse_heartbeat_seconds=self.config.sse_heartbeat_seconds,
+        )
+
     def register(self) -> None:
         routes = (
             (

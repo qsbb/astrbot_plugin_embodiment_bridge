@@ -142,6 +142,22 @@
         <button id="save-persona-button" class="primary" type="button" aria-busy="false" disabled>保存人格来源</button>
       </section>
 
+      <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">
+        <span class="section-label">身份与绑定</span>
+        <h2 id="quest-identity-title">Quest 身份</h2>
+        <p>一次填写 Quest 客户端、Bot、用户和专用 API Key。“序”已安装时由它统一保存主人和精确白名单；未安装时“临”使用同样严格的本地绑定。</p>
+        <label for="quest-client-id">Quest 客户端 ID</label>
+        <input id="quest-client-id" type="text" maxlength="64" autocomplete="off" placeholder="quest-living-room" />
+        <label for="quest-bot-id">Bot ID</label>
+        <input id="quest-bot-id" type="text" maxlength="128" autocomplete="off" />
+        <label for="quest-user-id">主人用户 ID</label>
+        <input id="quest-user-id" type="text" maxlength="128" autocomplete="off" />
+        <label for="quest-api-key">Quest 专用 AstrBot API Key</label>
+        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="已配置时可留空" />
+        <p id="quest-identity-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-quest-identity-button" class="primary" type="button" aria-busy="false" disabled>保存并验证身份</button>
+      </section>
+
       <section class="setting-panel" aria-labelledby="identity-title">
         <span class="section-label">关系</span>
         <h2 id="identity-title">自然人绑定</h2>
@@ -166,6 +182,12 @@
         </div>
         <p id="diagnostics-status" class="field-status" role="status">尚未读取</p>
         <p id="diagnostics-root-cause" class="diagnostics-root-cause" role="status">当前根因：尚未读取</p>
+        <div id="diagnostics-summary" class="diagnostics-summary" aria-live="polite">
+          <p>链路：尚未读取</p>
+          <p>输入：尚未读取</p>
+          <p>耗时：尚未读取</p>
+        </div>
+        <strong class="diagnostics-timeline-title">阶段时间线（最新在下）</strong>
         <div id="diagnostics-events" class="diagnostics-events" aria-live="polite"></div>
       </section>
     </section>

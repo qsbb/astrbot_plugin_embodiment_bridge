@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.4.9 - 2026-08-09
+
+### Added
+
+- 「Quest 角色设置」Page 可集中保存 Quest 客户端、平台、Bot、主人用户与专用 API Key；Bridge Key 缺失时自动生成且所有密钥始终只写不回显。
+- 新增 `identity.control_plane@1.0` 消费端：“序”存在时写入统一主人与 SHA-256 principal 摘要白名单，未安装时使用“临”自身的精确本地绑定。
+
+### Changed
+
+- 管理页诊断改为与 Quest 设备端相同的“当前根因、链路、输入、耗时、阶段时间线（最新在下）”视图，不显示原始 JSON。
+- 文档与测试中的部署专用账号和局域网地址已替换为通用测试样例。
+
+### Fixed
+
+- 修复只安装“临”时无法授权受保护 Quest 上下文的问题；本地回退仍要求 API principal、client、platform、bot、user 与私聊范围全部精确匹配。
+- 修复身份保存后快速绑定仍使用旧 Bot、用户或 API Key 的问题。
+
 ## 0.4.8 - 2026-08-09
 
 ### Added

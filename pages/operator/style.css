@@ -121,10 +121,13 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 
 .diagnostics-events {
   display: grid;
-  gap: 8px;
+  gap: 2px;
   max-height: 24rem;
   overflow: auto;
-  padding-right: 4px;
+  border: 1px solid #2c3d3b;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #0d1516;
 }
 .diagnostics-root-cause {
   margin: 0;
@@ -133,33 +136,31 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   color: #ffd7d3;
   background: #291716;
 }
-.diagnostic-event {
-  display: grid;
-  gap: 5px;
-  border: 1px solid #2c3d3b;
-  border-left: 3px solid #60736d;
-  border-radius: 6px;
-  padding: 10px 12px;
-  background: #111a1b;
+.diagnostics-summary { display: grid; gap: 4px; }
+.diagnostics-summary p { margin: 0; color: #bdcbc7; font-size: 12px; }
+.diagnostics-timeline-title { color: #eef5f2; font-size: 13px; }
+.diagnostic-line {
+  border-left: 2px solid #60736d;
+  padding: 5px 8px;
+  color: #aebfba;
+  font-family: "Cascadia Mono", "Microsoft YaHei UI", monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
-.diagnostic-event-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.diagnostic-event-heading strong { font-size: 13px; color: #eef5f2; }
-.diagnostic-event-heading span { flex: 0 0 auto; color: #9fb0ab; font-size: 11px; font-weight: 800; }
-.diagnostic-event p { margin: 0; color: #bdcbc7; font-size: 12px; }
-.diagnostic-event small { color: #71837d; font-size: 11px; }
-.diagnostic-event.status-ok,
-.diagnostic-event.status-ready,
-.diagnostic-event.status-authorized,
-.diagnostic-event.status-completed,
-.diagnostic-event.status-connected { border-left-color: #55d7aa; }
-.diagnostic-event.status-limited,
-.diagnostic-event.status-fallback,
-.diagnostic-event.status-unavailable { border-left-color: #d3a84a; }
-.diagnostic-event.status-blocked,
-.diagnostic-event.status-error,
-.diagnostic-event.status-failed { border-left-color: #df6d69; }
+.diagnostic-line.status-ok,
+.diagnostic-line.status-ready,
+.diagnostic-line.status-authorized,
+.diagnostic-line.status-completed,
+.diagnostic-line.status-connected { border-left-color: #55d7aa; color: #c8e8dc; }
+.diagnostic-line.status-limited,
+.diagnostic-line.status-fallback,
+.diagnostic-line.status-unavailable { border-left-color: #d3a84a; color: #dfc57d; }
+.diagnostic-line.status-blocked,
+.diagnostic-line.status-error,
+.diagnostic-line.status-failed,
+.diagnostic-line.status-timeout { border-left-color: #df6d69; color: #efaaa5; }
 .diagnostics-empty { margin: 0; color: #84958f; font-size: 13px; }
-}
 .setting-panel h2 { margin: 0; font-size: 22px; letter-spacing: 0; }
 .section-label { color: #55d7aa; font-size: 12px; font-weight: 800; }
 .field-status { min-height: 48px; font-size: 13px; }

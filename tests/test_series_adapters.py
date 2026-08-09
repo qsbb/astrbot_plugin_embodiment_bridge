@@ -14,6 +14,7 @@ from astrbot_plugin_quest_avatar_bridge.adapters.environment import (
     CachedEnvironmentAdapter,
 )
 from astrbot_plugin_quest_avatar_bridge.adapters.identity import (
+    ProtectedContextDecision,
     QuestSessionAuthorizationAdapter,
 )
 from astrbot_plugin_quest_avatar_bridge.adapters.knowledge import (
@@ -182,6 +183,8 @@ def test_missing_series_providers_degrade_without_enabling_private_context() -> 
             "client_id_source": "bridge_server_config",
             "platform_id_source": "bridge_server_config",
             "unity_trusted_source_fields": False,
+            "fallback_mode": "exact_local_binding",
+            "local_binding_configured": False,
         }
         decision = await identity.authorize(
             api_principal="api",
@@ -209,6 +212,67 @@ def test_missing_series_providers_degrade_without_enabling_private_context() -> 
         assert voice.status == "provider_unavailable"
         with pytest.raises(AdapterUnavailable):
             _ = [chunk async for chunk in voice.synthesize("hello", emotion="")]
+
+    asyncio.run(scenario())
+
+
+def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
+    async def scenario() -> None:
+        adapter = QuestSessionAuthorizationAdapter(
+            EmptyContextStub(),
+            LoggerStub(),
+            trusted_client_id="quest-room",
+            trusted_platform_id="platform-test",
+            local_api_key="plugin-scope-key",
+            local_bot_id="bot-test",
+            local_user_id="user-test",
+            local_group_id="",
+        )
+        authorized = await adapter.authorize(
+            api_principal="api_key:plugin-scope-key",
+            declared_client_id="quest-room",
+            bot_id="bot-test",
+            user_id="user-test",
+            group_id="",
+        )
+        assert authorized == ProtectedContextDecision(
+            True,
+            "authorized_local_owner_identity",
+        )
+
+        attempts = (
+            {"api_principal": "api_key:other"},
+            {"declared_client_id": "other-client"},
+            {"bot_id": "other-bot"},
+            {"user_id": "other-user"},
+            {"group_id": "group-test"},
+        )
+        baseline = {
+            "api_principal": "api_key:plugin-scope-key",
+            "declared_client_id": "quest-room",
+            "bot_id": "bot-test",
+            "user_id": "user-test",
+            "group_id": "",
+        }
+        for changes in attempts:
+            denied = await adapter.authorize(**{**baseline, **changes})
+            assert denied.authorized is False
+
+        incompatible = QuestSessionAuthorizationAdapter(
+            ContextStub(
+                "astrbot_plugin_identity_guardian",
+                IdentityProvider(version="2.0"),
+            ),
+            LoggerStub(),
+            trusted_client_id="quest-room",
+            trusted_platform_id="platform-test",
+            local_api_key="plugin-scope-key",
+            local_bot_id="bot-test",
+            local_user_id="user-test",
+        )
+        denied = await incompatible.authorize(**baseline)
+        assert denied.authorized is False
+        assert denied.reason == "contract_incompatible"
 
     asyncio.run(scenario())
 

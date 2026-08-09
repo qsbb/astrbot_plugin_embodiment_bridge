@@ -51,12 +51,19 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "character-user-relationship",
         "character-self-description",
         "save-persona-button",
+        "quest-client-id",
+        "quest-bot-id",
+        "quest-user-id",
+        "quest-api-key",
+        "quest-identity-status",
+        "save-quest-identity-button",
         "load-identity-candidates",
         "relationship-person-select",
         "save-identity-button",
         "load-diagnostics",
         "diagnostics-status",
         "diagnostics-root-cause",
+        "diagnostics-summary",
         "diagnostics-events",
     ):
         assert f'id="{element_id}"' in html
@@ -87,6 +94,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "persona_source_mode" in js
     assert "astrbot_persona_id" in js
     assert "personaSettings.personas" in js
+    assert 'apiGet("pairing/quest-identity-settings")' in js
+    assert 'apiPost("pairing/quest-identity-settings"' in js
+    assert 'id="quest-api-key" type="password"' in html
+    assert 'autocomplete="new-password"' in html
+    assert "由“序”统一管理" in js
+    assert "本地精确绑定" in js
     assert 'apiGet("pairing/identity-candidates")' in js
     assert 'apiPost("pairing/identity-selection"' in js
     assert "provider.id" in js
@@ -101,7 +114,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "当前根因" in js
     assert "renderDiagnosticEvents" in js
     assert "JSON.stringify" not in js
-    assert ".diagnostic-event.status-failed" in css
+    assert ".diagnostic-line.status-failed" in css
+    assert "阶段时间线（最新在下）" in html
     assert 'button[aria-busy="true"]' in css
     assert ".capability-strip" in css
     assert ".status-badge.running" in css

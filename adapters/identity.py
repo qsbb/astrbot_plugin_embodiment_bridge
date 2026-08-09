@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,11 +39,24 @@ class QuestSessionAuthorizationAdapter:
         *,
         trusted_client_id: str,
         trusted_platform_id: str,
+        local_api_key: str = "",
+        local_bot_id: str = "",
+        local_user_id: str = "",
+        local_group_id: str = "",
     ) -> None:
         self.context = context
         self.logger = logger
         self.trusted_client_id = trusted_client_id.strip()
         self.trusted_platform_id = trusted_platform_id.strip()
+        principal = f"api_key:{str(local_api_key or '')}"
+        self._local_principal_fingerprint = (
+            hashlib.sha256(principal.encode("utf-8")).hexdigest()
+            if local_api_key
+            else ""
+        )
+        self.local_bot_id = str(local_bot_id or "").strip()
+        self.local_user_id = str(local_user_id or "").strip()
+        self.local_group_id = str(local_group_id or "").strip()
         self.status = (
             "ready_for_authorization" if self.configured else self.configuration_reason
         )
@@ -77,7 +92,42 @@ class QuestSessionAuthorizationAdapter:
             "client_id_source": "bridge_server_config",
             "platform_id_source": "bridge_server_config",
             "unity_trusted_source_fields": False,
+            "fallback_mode": "exact_local_binding",
+            "local_binding_configured": self.local_binding_configured,
         }
+
+    @property
+    def local_binding_configured(self) -> bool:
+        return bool(
+            self._local_principal_fingerprint
+            and self.trusted_client_id
+            and self.trusted_platform_id
+            and self.local_bot_id
+            and self.local_user_id
+        )
+
+    def configure_local_binding(
+        self,
+        *,
+        api_key: str,
+        client_id: str,
+        platform_id: str,
+        bot_id: str,
+        user_id: str,
+        group_id: str,
+    ) -> None:
+        principal = f"api_key:{str(api_key or '')}"
+        self._local_principal_fingerprint = (
+            hashlib.sha256(principal.encode("utf-8")).hexdigest() if api_key else ""
+        )
+        self.trusted_client_id = str(client_id or "").strip()
+        self.trusted_platform_id = str(platform_id or "").strip()
+        self.local_bot_id = str(bot_id or "").strip()
+        self.local_user_id = str(user_id or "").strip()
+        self.local_group_id = str(group_id or "").strip()
+        self.status = (
+            "ready_for_authorization" if self.configured else self.configuration_reason
+        )
 
     def configure_trusted_platform(self, platform_id: str) -> None:
         self.trusted_platform_id = str(platform_id or "").strip()
@@ -107,13 +157,19 @@ class QuestSessionAuthorizationAdapter:
 
         provider = find_active_provider(self.context, IDENTITY_PLUGIN_NAME)
         if provider is None:
-            self.status = "provider_unavailable"
+            decision = self._authorize_local(
+                api_principal=principal,
+                bot_id=bot_id,
+                user_id=user_id,
+                group_id=group_id,
+            )
+            self.status = decision.reason
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] identity guardian not installed; protected context disabled"
+                    "[quest-avatar] identity guardian not installed; using exact local Quest binding fallback"
                 )
                 self._missing_logged = True
-            return ProtectedContextDecision(False, self.status)
+            return decision
 
         if not self._contract_compatible(provider):
             self.status = "contract_incompatible"
@@ -182,6 +238,38 @@ class QuestSessionAuthorizationAdapter:
 
         self.status = "authorized"
         return ProtectedContextDecision(True, "authorized_private_owner_identity")
+
+    def _authorize_local(
+        self,
+        *,
+        api_principal: str,
+        bot_id: str,
+        user_id: str,
+        group_id: str,
+    ) -> ProtectedContextDecision:
+        if not self.local_binding_configured:
+            return ProtectedContextDecision(False, "local_identity_not_configured")
+        actual_fingerprint = hashlib.sha256(
+            str(api_principal or "").encode("utf-8")
+        ).hexdigest()
+        if not hmac.compare_digest(
+            actual_fingerprint,
+            self._local_principal_fingerprint,
+        ):
+            return ProtectedContextDecision(False, "local_api_principal_mismatch")
+        expected = (
+            self.local_bot_id,
+            self.local_user_id,
+            self.local_group_id,
+        )
+        actual = (
+            str(bot_id or "").strip(),
+            str(user_id or "").strip(),
+            str(group_id or "").strip(),
+        )
+        if not hmac.compare_digest("\x1f".join(actual), "\x1f".join(expected)):
+            return ProtectedContextDecision(False, "local_quest_identity_mismatch")
+        return ProtectedContextDecision(True, "authorized_local_owner_identity")
 
     @staticmethod
     def _contract_compatible(provider: Any) -> bool:

@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 
 import qrcode
 from astrbot.api.web import error_response, json_response, request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from qrcode.constants import ERROR_CORRECT_M
 from qrcode.image.svg import SvgPathImage
 
@@ -47,6 +47,16 @@ class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     trusted_platform_id: str = Field(default="", max_length=128)
+
+
+class QuestIdentitySettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    client_id: str = Field(min_length=1, max_length=64)
+    platform_id: str = Field(min_length=1, max_length=128)
+    bot_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    api_key: SecretStr = SecretStr("")
 
 
 class ServiceControlRequest(BaseModel):
@@ -162,6 +172,18 @@ class PairingHttpApi:
                 self.save_persona_settings,
                 ["POST"],
                 "Save Quest character persona settings",
+            ),
+            (
+                "pairing/quest-identity-settings",
+                self.quest_identity_settings_overview,
+                ["GET"],
+                "Read redacted Quest identity settings",
+            ),
+            (
+                "pairing/quest-identity-settings",
+                self.save_quest_identity_settings,
+                ["POST"],
+                "Save Quest identity through the optional identity control plane",
             ),
             (
                 "pairing/diagnostics",
@@ -313,6 +335,45 @@ class PairingHttpApi:
         except Exception as exc:
             return self._error(exc, "save_persona_settings")
 
+    async def quest_identity_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "identity": await self.operator_settings.quest_identity_overview(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "quest_identity_settings_overview")
+
+    async def save_quest_identity_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(QuestIdentitySettingsRequest)
+            identity = await self.operator_settings.save_quest_identity(
+                client_id=payload.client_id,
+                platform_id=payload.platform_id,
+                bot_id=payload.bot_id,
+                user_id=payload.user_id,
+                astrbot_api_key=payload.api_key.get_secret_value(),
+            )
+            self.trusted_client_id = identity["client_id"]
+            self.trusted_platform_id = identity["platform_id"]
+            self.pairing_defaults.update(
+                client_id=identity["client_id"],
+                user_id=identity["user_id"],
+                bot_id=identity["bot_id"],
+                group_id="",
+                astrbot_api_key=str(
+                    self.operator_settings.config.get("pairing_astrbot_api_key", "")
+                    or ""
+                ),
+            )
+            return _json_no_store({"success": True, "identity": identity})
+        except Exception as exc:
+            return self._error(exc, "save_quest_identity_settings")
+
     async def diagnostics_overview(self) -> Any:
         try:
             self._dashboard_owner()
@@ -358,6 +419,7 @@ class PairingHttpApi:
                 "error",
                 "failed",
                 "limited",
+                "timeout",
                 "unavailable",
             }
             success_statuses = {"ok", "ready", "authorized", "completed", "connected"}

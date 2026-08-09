@@ -60,6 +60,9 @@ _PUBLIC_PIPELINE_REASONS = frozenset(
         "invalid_client_id",
         "invalid_platform_id",
         "invalid_user_id",
+        "local_api_principal_mismatch",
+        "local_identity_not_configured",
+        "local_quest_identity_mismatch",
         "message_pipeline_disabled",
         "missing_api_principal",
         "missing_bot_id",
@@ -448,7 +451,9 @@ class TurnOrchestrator:
             authorized=session.protected_context_authorized,
             reason_code=selected_reason,
         )
-        pipeline_required = interaction is None and not self.allow_direct_provider_fallback
+        pipeline_required = (
+            interaction is None and not self.allow_direct_provider_fallback
+        )
         if pipeline_required and not use_message_pipeline:
             reason = (
                 self.message_pipeline.availability_reason
@@ -688,8 +693,15 @@ class TurnOrchestrator:
 
     @staticmethod
     def _pipeline_error_message(reason: str) -> str:
-        if reason in {"owner_not_configured", "quest_identity_not_allowlisted"}:
+        if reason in {
+            "local_identity_not_configured",
+            "local_quest_identity_mismatch",
+            "owner_not_configured",
+            "quest_identity_not_allowlisted",
+        }:
             return "Quest 原始用户、机器人与序的五段绑定未完成"
+        if reason == "local_api_principal_mismatch":
+            return "Quest 使用的 AstrBot API Key 与服务端身份绑定不一致"
         if reason in {
             "invalid_bot_id",
             "invalid_user_id",

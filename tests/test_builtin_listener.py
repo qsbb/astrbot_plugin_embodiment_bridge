@@ -158,7 +158,7 @@ def test_listener_config_is_strict_and_private_http_is_explicit() -> None:
             "pairing_listener_host": "0.0.0.0",
             "pairing_listener_port": 8520,
             "pairing_listener_upstream_url": "http://127.0.0.1:6185",
-            "pairing_listener_public_url": "http://192.168.5.88:8520",
+            "pairing_listener_public_url": "http://192.168.50.10:8520",
         },
         allow_private_http=True,
         max_json_body_bytes=65_536,
@@ -166,7 +166,7 @@ def test_listener_config_is_strict_and_private_http_is_explicit() -> None:
     )
     assert valid.validation_reason == ""
     assert valid.public_url_reason == ""
-    assert valid.public_exchange_url == (f"http://192.168.5.88:8520{EXCHANGE_PATH}")
+    assert valid.public_exchange_url == (f"http://192.168.50.10:8520{EXCHANGE_PATH}")
 
     invalid = BuiltinListenerConfig.from_mapping(
         {
@@ -174,7 +174,7 @@ def test_listener_config_is_strict_and_private_http_is_explicit() -> None:
             "pairing_listener_host": "localhost",
             "pairing_listener_port": 80,
             "pairing_listener_upstream_url": "http://example.com:6185",
-            "pairing_listener_public_url": "http://192.168.5.88:8520",
+            "pairing_listener_public_url": "http://192.168.50.10:8520",
         },
         allow_private_http=False,
         max_json_body_bytes=65_536,
@@ -188,7 +188,7 @@ def test_listener_config_is_strict_and_private_http_is_explicit() -> None:
     for upstream in (
         "https://127.0.0.1:6185",
         "http://localhost:6185",
-        "http://192.168.5.88:6185",
+        "http://192.168.50.10:6185",
         "http://user@127.0.0.1:6185",
         "http://127.0.0.1:6185/path",
         "http://127.0.0.1:6185?target=x",

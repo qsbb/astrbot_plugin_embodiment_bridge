@@ -35,6 +35,8 @@
       {"method": "POST", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "GET", "path": "/pairing/quest-identity-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "POST", "path": "/pairing/quest-identity-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/diagnostics", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/identity-candidates", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/identity-selection", "success_status": 200, "authentication": "astrbot_dashboard"},
