@@ -234,6 +234,9 @@ def test_stage_fields_and_aggregate_counters_survive_redaction(tmp_path: Path) -
         authorized=False,
         text_sent=True,
         audio_sent=False,
+        event_woken=True,
+        event_stopped=True,
+        send_observed=False,
         session_id="hidden-session",
         reply_text="hidden-reply",
     )
@@ -255,6 +258,9 @@ def test_stage_fields_and_aggregate_counters_survive_redaction(tmp_path: Path) -
         "authorized": False,
         "text_sent": True,
         "audio_sent": False,
+        "event_woken": True,
+        "event_stopped": True,
+        "send_observed": False,
     }
 
 

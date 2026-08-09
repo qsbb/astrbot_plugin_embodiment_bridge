@@ -825,6 +825,11 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | `stt_empty` | 没有识别到有效文本 | 提示重说，不自动重放旧音频 |
 | `stt_unavailable` | 后端未配置 PCM16 STT | 切换到文本输入或 Unity 侧 STT |
 | `stt_failed` | STT 执行失败 | 结束当前轮，允许用户重试 |
+| `astrbot_pipeline_not_woken` | 合成消息未通过 AstrBot 唤醒规则 | 检查私聊/群聊范围和唤醒配置 |
+| `astrbot_pipeline_event_stopped` | 消息在唤醒后被白名单、会话状态或插件中止 | 检查真实平台、Bot、用户 ID 和 AstrBot 白名单 |
+| `astrbot_pipeline_reply_capture_empty` | AstrBot 执行了发送但没有可捕获文字 | 检查下游插件是否只发送非文字组件 |
+| `astrbot_pipeline_no_response` | 消息链完成但没有发送或结果 | 检查 Provider 开关与消息处理插件 |
+| `astrbot_pipeline_empty_reply` | 无法进一步分类的空回复 | 查看“临”独立日志中的事件状态字段 |
 | `turn_failed` | 普通文本轮生成失败 | 结束当前轮，不执行猜测动作 |
 | `interaction_failed` | 交互决策失败 | 保持安全 idle，不自行映射情绪 |
 | `tts_failed` | 文本可用但语音合成失败 | 保留文字，停止等待音频 |

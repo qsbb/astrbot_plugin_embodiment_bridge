@@ -35,9 +35,21 @@ class ContextStub:
 
 
 class CaptureEventStub:
-    def __init__(self, text: str = "", plan: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        plan: dict[str, Any] | None = None,
+        *,
+        woken: bool = True,
+        stopped: bool = False,
+        send_observed: bool = False,
+    ) -> None:
         self.text = text
         self.plan = plan
+        self.is_wake = woken
+        self.is_at_or_wake_command = woken
+        self._stopped = stopped
+        self._has_send_oper = send_observed
 
     async def wait_completed(self) -> None:
         await asyncio.sleep(0)
@@ -47,6 +59,9 @@ class CaptureEventStub:
 
     def get_extra(self, key: str) -> Any:
         return self.plan if key == "conversation_flow.delivery_plan" else None
+
+    def is_stopped(self) -> bool:
+        return self._stopped
 
 
 def session(*, authorized: bool = True) -> Any:
@@ -139,21 +154,44 @@ def test_pipeline_reports_precise_platform_availability_and_reconfigures() -> No
     assert adapter.availability_reason == "disabled"
 
 
-def test_empty_pipeline_reply_is_not_reported_as_success(
+@pytest.mark.parametrize(
+    ("event", "expected_reason"),
+    (
+        (
+            CaptureEventStub(woken=False, stopped=True),
+            "astrbot_pipeline_not_woken",
+        ),
+        (
+            CaptureEventStub(woken=True, stopped=True),
+            "astrbot_pipeline_event_stopped",
+        ),
+        (
+            CaptureEventStub(send_observed=True),
+            "astrbot_pipeline_reply_capture_empty",
+        ),
+        (CaptureEventStub(), "astrbot_pipeline_no_response"),
+    ),
+)
+def test_empty_pipeline_reply_preserves_precise_event_outcome(
     monkeypatch: pytest.MonkeyPatch,
+    event: CaptureEventStub,
+    expected_reason: str,
 ) -> None:
     async def scenario() -> None:
         context = ContextStub()
-        event = CaptureEventStub()
         monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
         adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
             context,
             SimpleNamespace(),
             platform_id="qq",
         )
-        with pytest.raises(astrbot_pipeline.MessagePipelineEmpty):
+        with pytest.raises(astrbot_pipeline.MessagePipelineEmpty, match=expected_reason):
             await adapter.generate(session=session(), user_text="hello")
         assert adapter.status == "empty_reply"
+        assert adapter.last_error == expected_reason
+        assert adapter.status_snapshot()["last_event_woken"] is event.is_wake
+        assert adapter.status_snapshot()["last_event_stopped"] is event._stopped
+        assert adapter.status_snapshot()["last_send_observed"] is event._has_send_oper
 
     asyncio.run(scenario())
 

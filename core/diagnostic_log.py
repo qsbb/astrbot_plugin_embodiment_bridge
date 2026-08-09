@@ -52,6 +52,9 @@ _SAFE_FIELD_NAMES = frozenset(
         "authorized",
         "text_sent",
         "audio_sent",
+        "event_woken",
+        "event_stopped",
+        "send_observed",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
@@ -67,6 +70,9 @@ _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
         "authorized",
         "text_sent",
         "audio_sent",
+        "event_woken",
+        "event_stopped",
+        "send_observed",
     }
 )
 _SAFE_AGGREGATE_FIELDS = frozenset({"active_sessions", "attached_streams"})

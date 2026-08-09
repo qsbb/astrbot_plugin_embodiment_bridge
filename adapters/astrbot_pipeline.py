@@ -44,6 +44,9 @@ class AstrBotMessagePipelineAdapter:
         self.status = "enabled" if self.enabled else "disabled"
         self.last_error = ""
         self.last_duration_ms = 0
+        self.last_event_woken: bool | None = None
+        self.last_event_stopped: bool | None = None
+        self.last_send_observed: bool | None = None
 
     @property
     def available(self) -> bool:
@@ -82,6 +85,9 @@ class AstrBotMessagePipelineAdapter:
     ) -> ModelDecision:
         started = time.perf_counter()
         self.last_error = ""
+        self.last_event_woken = None
+        self.last_event_stopped = None
+        self.last_send_observed = None
         if not self.enabled:
             self.last_error = "message_pipeline_disabled"
             raise MessagePipelineUnavailable("message_pipeline_disabled")
@@ -136,13 +142,14 @@ class AstrBotMessagePipelineAdapter:
             self.last_error = "astrbot_pipeline_timeout"
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
 
+        self._record_event_outcome(event)
         reply = event.captured_text().strip()
         if not reply:
             reply = _delivery_plan_text(event).strip()
         if not reply:
             self.status = "empty_reply"
-            self.last_error = "astrbot_pipeline_empty_reply"
-            raise MessagePipelineEmpty("astrbot_pipeline_empty_reply")
+            self.last_error = self._empty_reply_reason()
+            raise MessagePipelineEmpty(self.last_error)
 
         self.status = "ok"
         self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
@@ -168,6 +175,9 @@ class AstrBotMessagePipelineAdapter:
             "status": self.status,
             "last_error": self.last_error,
             "last_duration_ms": self.last_duration_ms,
+            "last_event_woken": self.last_event_woken,
+            "last_event_stopped": self.last_event_stopped,
+            "last_send_observed": self.last_send_observed,
             "mode": "astrbot_event_bus",
             "admin_inheritance": False,
             "server_tts_suppressed": True,
@@ -175,6 +185,31 @@ class AstrBotMessagePipelineAdapter:
 
     async def close(self) -> None:
         return None
+
+    def _record_event_outcome(self, event: Any) -> None:
+        self.last_event_woken = bool(
+            getattr(event, "is_wake", False)
+            or getattr(event, "is_at_or_wake_command", False)
+        )
+        stopped = getattr(event, "is_stopped", None)
+        try:
+            self.last_event_stopped = bool(stopped()) if callable(stopped) else False
+        except Exception:
+            self.last_event_stopped = None
+        self.last_send_observed = bool(getattr(event, "_has_send_oper", False))
+
+    def _empty_reply_reason(self) -> str:
+        if self.last_event_stopped is True:
+            return (
+                "astrbot_pipeline_event_stopped"
+                if self.last_event_woken
+                else "astrbot_pipeline_not_woken"
+            )
+        if self.last_send_observed is True:
+            return "astrbot_pipeline_reply_capture_empty"
+        if self.last_event_stopped is False:
+            return "astrbot_pipeline_no_response"
+        return "astrbot_pipeline_empty_reply"
 
 
 def _build_capture_event(

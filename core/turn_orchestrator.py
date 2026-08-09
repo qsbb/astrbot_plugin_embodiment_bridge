@@ -10,6 +10,7 @@ from typing import Any
 from ..adapters.astrbot_llm import DecisionGenerator
 from ..adapters.astrbot_pipeline import (
     AstrBotMessagePipelineAdapter,
+    MessagePipelineEmpty,
     MessagePipelineUnavailable,
 )
 from ..adapters.environment import CachedEnvironmentAdapter
@@ -47,6 +48,10 @@ _PUBLIC_PIPELINE_REASONS = frozenset(
         "astrbot_event_factory_unavailable",
         "astrbot_event_queue_unavailable",
         "astrbot_pipeline_empty_reply",
+        "astrbot_pipeline_event_stopped",
+        "astrbot_pipeline_no_response",
+        "astrbot_pipeline_not_woken",
+        "astrbot_pipeline_reply_capture_empty",
         "astrbot_pipeline_timeout",
         "authorization_denied",
         "authorization_error",
@@ -285,6 +290,8 @@ class TurnOrchestrator:
             await self._decide_and_deliver(session, turn, text, interaction=None)
         except asyncio.CancelledError:
             raise
+        except MessagePipelineEmpty as exc:
+            await self._emit_pipeline_empty_error(session, turn, exc, phase="voice")
         except MessagePipelineUnavailable as exc:
             reason = self._public_pipeline_reason(session, exc)
             self._diagnostic(
@@ -338,6 +345,8 @@ class TurnOrchestrator:
             await self._decide_and_deliver(session, turn, text, interaction=None)
         except asyncio.CancelledError:
             raise
+        except MessagePipelineEmpty as exc:
+            await self._emit_pipeline_empty_error(session, turn, exc, phase="text")
         except MessagePipelineUnavailable as exc:
             reason = self._public_pipeline_reason(session, exc)
             self._diagnostic(
@@ -523,6 +532,8 @@ class TurnOrchestrator:
                         knowledge=knowledge,
                         environment=environment,
                     )
+                except MessagePipelineEmpty:
+                    raise
             else:
                 decision = await self.llm.generate(
                     user_text=user_text,
@@ -546,6 +557,8 @@ class TurnOrchestrator:
                 status="ok",
                 result="reply" if decision.should_reply else "silent",
             )
+        except (MessagePipelineUnavailable, MessagePipelineEmpty):
+            raise
         except Exception as exc:
             self._diagnostic(
                 "llm.error",
@@ -723,7 +736,54 @@ class TurnOrchestrator:
             "trusted_platform_unavailable",
         }:
             return "AstrBot 可信平台未配置或当前不可用"
+        if reason == "astrbot_pipeline_not_woken":
+            return "AstrBot 消息事件未被唤醒规则接受"
+        if reason == "astrbot_pipeline_event_stopped":
+            return "AstrBot 消息事件在唤醒后被白名单、会话状态或插件中止"
+        if reason == "astrbot_pipeline_reply_capture_empty":
+            return "AstrBot 已执行发送，但临未捕获到可用文字"
+        if reason in {
+            "astrbot_pipeline_empty_reply",
+            "astrbot_pipeline_no_response",
+        }:
+            return "AstrBot 消息链已完成，但没有产生可用回复"
         return "AstrBot 消息链路不可用，请检查临的独立日志"
+
+    async def _emit_pipeline_empty_error(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        error: MessagePipelineEmpty,
+        *,
+        phase: str,
+    ) -> None:
+        reason = self._public_pipeline_reason(session, error)
+        snapshot = (
+            self.message_pipeline.status_snapshot()
+            if self.message_pipeline is not None
+            else {}
+        )
+        self._diagnostic(
+            "message_pipeline.empty",
+            component="message_pipeline",
+            phase=phase,
+            status="failed",
+            reason_code=reason,
+            error_type=type(error).__name__,
+            event_woken=snapshot.get("last_event_woken"),
+            event_stopped=snapshot.get("last_event_stopped"),
+            send_observed=snapshot.get("last_send_observed"),
+        )
+        self.logger.warning(
+            "[quest-avatar] AstrBot message pipeline returned no reply: reason=%s",
+            reason,
+        )
+        await self._emit_terminal_error(
+            session,
+            turn,
+            reason,
+            self._pipeline_error_message(reason),
+        )
 
     async def _read_relationship(
         self,

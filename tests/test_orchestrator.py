@@ -6,6 +6,7 @@ from typing import Any
 
 from astrbot_plugin_quest_avatar_bridge.adapters.stt import DisabledSTTAdapter
 from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_pipeline import (
+    MessagePipelineEmpty,
     MessagePipelineUnavailable,
 )
 from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import InteractionPolicy
@@ -95,6 +96,28 @@ class FailingDecisionStub(DecisionStub):
     async def generate(self, **kwargs: Any) -> ModelDecision:
         del kwargs
         raise RuntimeError("provider failed")
+
+
+class EmptyMessagePipelineStub:
+    available = True
+    availability_reason = "ready"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    async def generate(self, **kwargs: Any) -> ModelDecision:
+        del kwargs
+        raise MessagePipelineEmpty(self.reason)
+
+    def status_snapshot(self) -> dict[str, Any]:
+        return {
+            "last_event_woken": True,
+            "last_event_stopped": True,
+            "last_send_observed": False,
+        }
+
+    async def close(self) -> None:
+        return None
 
 
 class LateDecisionStub(DecisionStub):
@@ -338,6 +361,34 @@ def test_text_and_interaction_failures_emit_terminal_reply_end() -> None:
         ]
         assert interaction_events[0]["code"] == "interaction_failed"
         assert interaction_events[1]["status"] == "failed"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_empty_reply_is_not_compressed_to_turn_failed() -> None:
+    async def scenario() -> None:
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(safe_neutral_decision("unused"))
+        )
+        session.protected_context_authorized = True
+        orchestrator.message_pipeline = EmptyMessagePipelineStub(
+            "astrbot_pipeline_event_stopped"
+        )
+        orchestrator.allow_direct_provider_fallback = False
+
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t1", text="hello"),
+        )
+        events = [
+            (await asyncio.wait_for(session.queue.get(), timeout=1)).payload
+            for _ in range(2)
+        ]
+        assert [event["type"] for event in events] == ["error", "reply.end"]
+        assert events[0]["code"] == "astrbot_pipeline_event_stopped"
+        assert "白名单" in events[0]["message"]
+        assert events[1]["status"] == "failed"
         await orchestrator.close()
 
     asyncio.run(scenario())
