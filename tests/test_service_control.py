@@ -31,6 +31,7 @@ class ConfigStub(dict[str, Any]):
 
 class ListenerStub:
     def __init__(self) -> None:
+        self.config = SimpleNamespace(port=8520)
         self.ready = False
         self.reason = "not_started"
         self.starts = 0
@@ -52,13 +53,18 @@ class ListenerStub:
         self.ready = False
         self.reason = "closed"
 
+    def configure_port(self, port: int) -> None:
+        assert self.ready is False
+        self.config.port = port
+        self.reason = "not_started"
+
     def status_snapshot(self) -> dict[str, Any]:
         return {
             "enabled": True,
             "ready": self.ready,
             "reason": self.reason,
             "bind_host": "0.0.0.0",
-            "port": 8520,
+            "port": self.config.port,
             "secret": "not-projected",
         }
 
@@ -160,5 +166,44 @@ def test_service_save_failure_does_not_change_runtime() -> None:
         assert failed.value.code == "config_save_failed"
         assert control.enabled is True
         assert listener.ready is True
+
+    asyncio.run(scenario())
+
+
+def test_listener_port_persists_rewrites_urls_and_restarts() -> None:
+    async def scenario() -> None:
+        control, config, listener, sessions = build_control()
+        config.update(
+            pairing_listener_public_url="http://192.168.50.10:8520",
+            pairing_public_url="http://192.168.50.10:8520",
+        )
+        await control.initialize()
+        await sessions.start_session(
+            SessionStartRequest(
+                session_id="port-session",
+                client_id="quest",
+                user_id="user-test",
+                bot_id="bot-test",
+            ),
+            "owner",
+        )
+
+        updated = await control.set_listener_port(9020)
+
+        assert updated["status"] == "running"
+        assert updated["listener"]["port"] == 9020
+        assert updated["sessions"]["active_sessions"] == 0
+        assert listener.config.port == 9020
+        assert listener.stops == 1
+        assert listener.starts == 2
+        assert config.saves[-1] == {
+            "pairing_listener_port": 9020,
+            "pairing_listener_public_url": "http://192.168.50.10:9020",
+            "pairing_public_url": "http://192.168.50.10:9020",
+        }
+
+        with pytest.raises(BridgeServiceControlError) as invalid:
+            await control.set_listener_port(80)
+        assert invalid.value.code == "invalid_listener_port"
 
     asyncio.run(scenario())

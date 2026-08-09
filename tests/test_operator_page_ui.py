@@ -37,6 +37,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "service-status-badge",
         "refresh-service-button",
         "service-control-button",
+        "listener-port",
+        "save-listener-port-button",
         "active-session-count",
         "attached-stream-count",
         "queued-event-count",
@@ -70,6 +72,9 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
 
     assert 'apiGet("pairing/service-status")' in js
     assert 'apiPost("pairing/service-control", { enabled })' in js
+    assert 'apiPost("pairing/listener-port", { port })' in js
+    assert 'value="8520"' in html
+    assert "修改端口会断开当前 Quest 会话" in js
     assert "关闭服务会断开当前 Quest 会话" in js
     for capability in (
         "dialogue",

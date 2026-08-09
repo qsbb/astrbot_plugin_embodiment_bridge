@@ -60,6 +60,13 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .service-main p { margin: 0; color: #a9bbb6; line-height: 1.55; }
 .listener-address { margin-top: 6px !important; color: #7f9690 !important; font-size: 13px; }
 .service-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.port-control {
+  display: grid;
+  grid-template-columns: auto 96px auto;
+  align-items: center;
+  gap: 8px;
+}
+.port-control input { min-height: 44px; padding-inline: 10px; }
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -205,6 +212,7 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   .service-main { align-items: stretch; flex-direction: column; }
   .service-actions { justify-content: stretch; }
   .service-actions button { flex: 1 1 0; }
+  .port-control { grid-template-columns: 1fr 96px 1fr; width: 100%; }
   .service-metrics { grid-template-columns: 1fr; }
   .metric-item { padding: 12px 0; }
   .metric-item + .metric-item { border-top: 1px solid #2c3d3b; border-left: 0; }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 class BridgeServiceUnavailable(RuntimeError):
@@ -117,10 +118,52 @@ class BridgeServiceControl:
             )
             return snapshot
 
+    async def set_listener_port(self, port: int) -> dict[str, Any]:
+        if (
+            isinstance(port, bool)
+            or not isinstance(port, int)
+            or not 1024 <= port <= 65_535
+        ):
+            raise BridgeServiceControlError(
+                "invalid_listener_port",
+                422,
+                "监听端口必须在 1024 到 65535 之间",
+            )
+        async with self._lock:
+            current_port = int(getattr(self.listener.config, "port", 8520))
+            if port == current_port:
+                return await self.status_snapshot()
+
+            changes: dict[str, Any] = {"pairing_listener_port": port}
+            for key in ("pairing_listener_public_url", "pairing_public_url"):
+                current_url = str(self.config.get(key, "") or "").strip()
+                if current_url:
+                    changes[key] = _url_with_port(current_url, port)
+            await self._persist_changes(changes)
+
+            if self.listener.ready:
+                await self.sessions.close_all_sessions()
+            await self.listener.stop(reason="port_reconfiguring")
+            self.listener.configure_port(port)
+            if self.enabled:
+                await self.listener.start()
+            snapshot = await self.status_snapshot()
+            self._diagnostic(
+                "listener.port_updated",
+                component="listener",
+                status=snapshot["status"],
+                ready=snapshot["ready"],
+                port=port,
+            )
+            return snapshot
+
     async def close(self) -> None:
         await self.listener.close()
 
     async def _persist(self, enabled: bool) -> None:
+        await self._persist_changes({"bridge_service_enabled": enabled})
+
+    async def _persist_changes(self, changes: dict[str, Any]) -> None:
         save = getattr(self.config, "save_config_async", None)
         if not callable(save):
             raise BridgeServiceControlError(
@@ -129,7 +172,7 @@ class BridgeServiceControl:
                 "当前 AstrBot 配置对象不支持安全异步保存",
             )
         try:
-            committed = await save({"bridge_service_enabled": enabled})
+            committed = await save(dict(changes))
         except Exception as exc:
             self.logger.warning(
                 "[quest-avatar] service setting save failed: error_type=%s",
@@ -154,3 +197,24 @@ class BridgeServiceControl:
             self.diagnostic_log.record(event, **fields)
         except Exception:
             return
+
+
+def _url_with_port(value: str, port: int) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw
+    host = parsed.hostname
+    if not parsed.scheme or not host or parsed.username or parsed.password:
+        return raw
+    normalized_host = f"[{host}]" if ":" in host else host
+    return urlunsplit(
+        (
+            parsed.scheme,
+            f"{normalized_host}:{port}",
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )

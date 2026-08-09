@@ -133,6 +133,13 @@ function renderServiceStatus(service) {
     if (listener.ready !== true) listenerText += "（当前未监听）";
   }
   document.getElementById("listener-address").textContent = listenerText;
+  const portInput = document.getElementById("listener-port");
+  if (document.activeElement !== portInput && port > 0) {
+    portInput.value = String(port);
+  }
+  portInput.disabled = serviceState.config_writable !== true;
+  document.getElementById("save-listener-port-button").disabled =
+    serviceState.config_writable !== true;
 
   const sessions = serviceState.sessions || {};
   document.getElementById("active-session-count").textContent =
@@ -188,6 +195,33 @@ async function toggleService() {
     toast(enabled ? "Quest Bridge 服务已启动" : "Quest Bridge 服务已关闭");
   } catch (error) {
     toast((enabled ? "启动" : "关闭") + "服务失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    if (serviceState) renderServiceStatus(serviceState);
+  }
+}
+
+async function saveListenerPort() {
+  const button = document.getElementById("save-listener-port-button");
+  const input = document.getElementById("listener-port");
+  const port = Number(input.value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    toast("监听端口必须在 1024 到 65535 之间", true);
+    return;
+  }
+  const active = Number(serviceState?.sessions?.active_sessions || 0);
+  if (active > 0 && !window.confirm("修改端口会断开当前 Quest 会话，确定继续吗？")) {
+    return;
+  }
+  if (!setButtonBusy(button, true, "应用中…")) return;
+  try {
+    const response = await apiPost("pairing/listener-port", { port });
+    renderServiceStatus(response.service);
+    toast(response.service?.status === "running"
+      ? `监听端口已切换为 ${port}；Docker 部署请确认宿主机映射相同端口`
+      : `端口已保存为 ${port}，请检查监听状态和 Docker 端口映射`);
+  } catch (error) {
+    toast("监听端口保存失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     if (serviceState) renderServiceStatus(serviceState);
@@ -832,6 +866,9 @@ function bindEvents() {
   document
     .getElementById("service-control-button")
     .addEventListener("click", toggleService);
+  document
+    .getElementById("save-listener-port-button")
+    .addEventListener("click", saveListenerPort);
   document.getElementById("chat-provider-id").addEventListener("change", (event) => {
     document.getElementById("save-model-button").disabled =
       !event.currentTarget.value;

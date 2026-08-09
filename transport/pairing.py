@@ -65,6 +65,12 @@ class ServiceControlRequest(BaseModel):
     enabled: bool
 
 
+class ListenerPortSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    port: int = Field(ge=1024, le=65_535)
+
+
 class RelationshipPersonSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -136,6 +142,12 @@ class PairingHttpApi:
                 self.service_control,
                 ["POST"],
                 "Start or stop Quest Bridge service",
+            ),
+            (
+                "pairing/listener-port",
+                self.save_listener_port,
+                ["POST"],
+                "Persist and apply the built-in Quest listener port",
             ),
             (
                 "pairing/operator-settings",
@@ -259,6 +271,34 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "service": service})
         except Exception as exc:
             return self._error(exc, "service_control")
+
+    async def save_listener_port(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(ListenerPortSettingsRequest)
+            service = await self.service.set_listener_port(payload.port)
+            public_url = str(
+                self.operator_settings.config.get("pairing_public_url", "") or ""
+            ).strip()
+            if public_url:
+                self.pairing_defaults["public_url"] = public_url
+            if self.listener.config.enabled:
+                if self.listener.ready and self.listener.public_exchange_url:
+                    self.manager.configure_exchange_url(
+                        self.listener.public_exchange_url,
+                        missing_reason="pairing_listener_public_url_missing",
+                    )
+                else:
+                    status = self.listener.status_snapshot()
+                    self.manager.configure_exchange_url(
+                        "",
+                        missing_reason=str(
+                            status.get("reason") or "listener_unavailable"
+                        ),
+                    )
+            return _json_no_store({"success": True, "service": service})
+        except Exception as exc:
+            return self._error(exc, "save_listener_port")
 
     async def operator_settings_overview(self) -> Any:
         try:

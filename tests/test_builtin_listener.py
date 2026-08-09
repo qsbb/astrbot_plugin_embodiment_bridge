@@ -209,6 +209,26 @@ def test_listener_config_is_strict_and_private_http_is_explicit() -> None:
     )
 
 
+def test_stopped_listener_port_can_be_reconfigured_without_changing_default() -> None:
+    listener = BuiltinQuestListener(
+        config=listener_config(
+            upstream_port=9,
+            bind_port=8520,
+            enabled=False,
+            public_exchange_url=f"http://192.168.50.10:8520{EXCHANGE_PATH}",
+        ),
+        exchange_service=PairingExchangeService(make_manager()),
+        logger=LogCapture(),
+    )
+
+    assert listener.status_snapshot()["port"] == 8520
+    listener.configure_port(9020)
+    assert listener.status_snapshot()["port"] == 9020
+    assert listener.config.public_exchange_url == (
+        f"http://192.168.50.10:9020{EXCHANGE_PATH}"
+    )
+
+
 def test_listener_lifecycle_bind_degrades_and_port_is_reusable() -> None:
     async def scenario() -> None:
         manager = make_manager()
@@ -241,6 +261,16 @@ def test_listener_lifecycle_bind_degrades_and_port_is_reusable() -> None:
         first = await start_listener(manager)
         assert first.ready is True
         rebound_port = int(first.status_snapshot()["port"])
+
+        probe = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
+        changed_port = int(probe.sockets[0].getsockname()[1])
+        probe.close()
+        await probe.wait_closed()
+        await first.stop(reason="port_reconfiguring")
+        first.configure_port(changed_port)
+        await first.start()
+        assert first.ready is True
+        assert first.status_snapshot()["port"] == changed_port
         await first.close()
 
         second = await start_listener(manager, bind_port=rebound_port)

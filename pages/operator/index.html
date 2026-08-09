@@ -34,6 +34,11 @@
           <p id="listener-address" class="listener-address">监听地址：读取中</p>
         </div>
         <div class="service-actions">
+          <div class="port-control">
+            <label for="listener-port">监听端口</label>
+            <input id="listener-port" type="number" min="1024" max="65535" step="1" value="8520" inputmode="numeric" />
+            <button id="save-listener-port-button" type="button" aria-busy="false">应用端口</button>
+          </div>
           <button id="refresh-service-button" type="button" aria-busy="false">刷新状态</button>
           <button id="service-control-button" class="danger" type="button" aria-busy="false" disabled>关闭服务</button>
         </div>

@@ -593,6 +593,26 @@ def test_service_control_is_dashboard_protected_and_gates_quest_sessions(
                     "avatar_actions": True,
                 }
 
+                port_denied = await client.post(
+                    server.url("/pairing/listener-port"),
+                    json={"port": 9020},
+                )
+                assert port_denied.status == 401
+                invalid_port = await client.post(
+                    server.url("/pairing/listener-port"),
+                    headers=PAGE_AUTH,
+                    json={"port": 80},
+                )
+                assert invalid_port.status == 422
+                saved_port = await client.post(
+                    server.url("/pairing/listener-port"),
+                    headers=PAGE_AUTH,
+                    json={"port": 9020},
+                )
+                assert saved_port.status == 200
+                assert (await saved_port.json())["service"]["listener"]["port"] == 9020
+                assert bundle.plugin.config["pairing_listener_port"] == 9020
+
                 session_request = {
                     "type": "session.start",
                     "protocol_version": "1.0",

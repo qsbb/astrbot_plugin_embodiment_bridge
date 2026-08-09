@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
@@ -231,6 +231,29 @@ def normalize_listener_public_url(
     )
 
 
+def _replace_url_port(value: str, port: int) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return raw
+    host = parsed.hostname
+    if not parsed.scheme or not host or parsed.username or parsed.password:
+        return raw
+    normalized_host = f"[{host}]" if ":" in host else host
+    return urlunsplit(
+        (
+            parsed.scheme,
+            f"{normalized_host}:{int(port)}",
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+
+
 class BuiltinQuestListener:
     """Minimal standalone bootstrap and allowlist proxy bound by the plugin."""
 
@@ -274,6 +297,23 @@ class BuiltinQuestListener:
             "upstream_kind": "loopback_http",
             "reason": self._reason,
         }
+
+    def configure_port(self, port: int) -> None:
+        if self._ready or self._runner is not None or self._site is not None:
+            raise RuntimeError("listener must be stopped before changing port")
+        normalized = int(port)
+        if not 1024 <= normalized <= 65_535:
+            raise ValueError("listener port is outside the supported range")
+        self.config = replace(
+            self.config,
+            port=normalized,
+            public_exchange_url=_replace_url_port(
+                self.config.public_exchange_url,
+                normalized,
+            ),
+        )
+        self._bound_port = normalized
+        self._reason = "disabled" if not self.config.enabled else "not_started"
 
     async def start(self) -> None:
         started = asyncio.get_running_loop().time()

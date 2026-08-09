@@ -41,7 +41,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.9"
+__version__ = "0.4.10"
 
 
 class QuestAvatarBridgePlugin(Star):
