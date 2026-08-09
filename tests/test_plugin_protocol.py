@@ -88,9 +88,11 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     api = types.ModuleType("astrbot.api")
     api.AstrBotConfig = dict
     api.logger = LoggerStub()
-    api.filter = types.SimpleNamespace(
+    event = types.ModuleType("astrbot.api.event")
+    event.filter = types.SimpleNamespace(
         on_llm_request=lambda **_kwargs: lambda handler: handler
     )
+    api.event = event
 
     star = types.ModuleType("astrbot.api.star")
 
@@ -127,6 +129,7 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     astrbot.api = api
     monkeypatch.setitem(sys.modules, "astrbot", astrbot)
     monkeypatch.setitem(sys.modules, "astrbot.api", api)
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event)
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star)
     monkeypatch.setitem(sys.modules, "astrbot.api.web", web)
     sys.modules.pop("astrbot_plugin_quest_avatar_bridge.transport.http_sse", None)

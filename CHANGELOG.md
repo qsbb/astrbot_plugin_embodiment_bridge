@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.16 - 2026-08-10
+
+### Fixed
+
+- 改从公开的 `astrbot.api.event` 模块导入 AstrBot 事件过滤器，使插件可在
+  AstrBot 4.26.8 与 4.27.1 正常加载；测试桩同步官方模块结构，不再提供实际
+  不存在的 `astrbot.api.filter` 属性。
+
 ## 0.4.15 - 2026-08-10
 
 ### Added

@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from astrbot.api import AstrBotConfig, filter
+from astrbot.api import AstrBotConfig
+from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
@@ -52,7 +53,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.15"
+__version__ = "0.4.16"
 
 
 class QuestAvatarBridgePlugin(Star):

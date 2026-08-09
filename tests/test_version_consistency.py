@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.4.15"
+EXPECTED_VERSION = "0.4.16"
 
 
 def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
@@ -46,3 +47,23 @@ def test_page_assets_have_no_stale_version_cache_stamp_and_protocol_stays_1_0() 
     )
     assert manifest["protocol_version"] == "1.0"
     assert EXPECTED_VERSION not in json.dumps(manifest, ensure_ascii=False)
+
+
+def test_main_uses_public_astrbot_filter_import_path() -> None:
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    imports = [
+        node
+        for node in ast.walk(ast.parse(main_source))
+        if isinstance(node, ast.ImportFrom)
+    ]
+
+    assert any(
+        node.module == "astrbot.api.event"
+        and any(alias.name == "filter" for alias in node.names)
+        for node in imports
+    )
+    assert not any(
+        node.module == "astrbot.api"
+        and any(alias.name == "filter" for alias in node.names)
+        for node in imports
+    )
