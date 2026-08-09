@@ -95,6 +95,7 @@ class LlmStub:
         self.character_self_reference = ""
         self.character_self_description = ""
         self.character_user_relationship = ""
+        self.quest_persona_prompt = ""
 
     def configure_provider(self, provider_id: str) -> None:
         self.chat_provider_id = provider_id
@@ -117,6 +118,9 @@ class LlmStub:
     def configure_persona(self, **values: str) -> None:
         for key, value in values.items():
             setattr(self, key, value)
+
+    def configure_quest_persona(self, prompt: str) -> None:
+        self.quest_persona_prompt = str(prompt or "")
 
 
 class RelationshipStub:
@@ -360,14 +364,14 @@ def test_resolved_relationship_identity_updates_event_identity_in_one_save() -> 
 
         assert snapshot["relationship_person_id"] == "person-a"
         assert config.saves == [
-                {
-                    "relationship_person_id": "person-a",
-                    "trusted_platform_id": "platform-a",
-                    "pairing_bot_id": "",
-                    "pairing_user_id": "",
-                    "pairing_group_id": "",
-                    "pairing_identity_source": "relationship",
-                    "pairing_identity_sync_state": "pending",
+            {
+                "relationship_person_id": "person-a",
+                "trusted_platform_id": "platform-a",
+                "pairing_bot_id": "",
+                "pairing_user_id": "",
+                "pairing_group_id": "",
+                "pairing_identity_source": "relationship",
+                "pairing_identity_sync_state": "pending",
             },
             {"pairing_identity_sync_state": "ready"},
         ]
@@ -399,7 +403,9 @@ def test_resolved_relationship_identity_requires_existing_principal_proof() -> N
     asyncio.run(scenario())
 
 
-def test_failed_authoritative_relationship_sync_stays_pending_and_does_not_switch_runtime() -> None:
+def test_failed_authoritative_relationship_sync_stays_pending_and_does_not_switch_runtime() -> (
+    None
+):
     class FailingControlPlane:
         async def upsert_quest_read_only_binding(self, **values: str) -> dict[str, Any]:
             del values
@@ -440,9 +446,7 @@ def test_clear_relationship_identity_revokes_and_removes_server_identity() -> No
         def __init__(self) -> None:
             self.requests: list[dict[str, str]] = []
 
-        async def revoke_quest_read_only_binding(
-            self, **values: str
-        ) -> dict[str, Any]:
+        async def revoke_quest_read_only_binding(self, **values: str) -> dict[str, Any]:
             self.requests.append(dict(values))
             return {"status": "revoked"}
 
@@ -565,6 +569,48 @@ def test_persona_persists_atomically_and_save_failure_keeps_runtime() -> None:
         assert failed.value.code == "config_save_failed"
         assert settings.llm.character_name == "Lingxi"
         assert config["character_name"] == "Lingxi"
+
+    asyncio.run(scenario())
+
+
+def test_live_persona_save_atomically_deactivates_quest_profile() -> None:
+    async def scenario() -> None:
+        active_id = "qp_" + "a" * 32
+        config = NativeConfigStub({"active_quest_persona_id": active_id})
+        settings = build_settings(config=config)
+        settings.llm.quest_persona_prompt = "旧临人格"
+
+        await settings.save_character_persona(
+            persona_source_mode="astrbot",
+            astrbot_persona_id="persona-a",
+            character_name="",
+            character_self_reference="",
+            character_self_description="",
+            character_user_relationship="",
+            deactivate_quest_persona=True,
+        )
+
+        assert config["active_quest_persona_id"] == ""
+        assert config.saves[-1]["active_quest_persona_id"] == ""
+        assert settings.llm.quest_persona_prompt == ""
+
+        config["active_quest_persona_id"] = active_id
+        settings.llm.quest_persona_prompt = "不得丢失的临人格"
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_character_persona(
+                persona_source_mode="astrbot",
+                astrbot_persona_id="persona-a",
+                character_name="",
+                character_self_reference="",
+                character_self_description="",
+                character_user_relationship="",
+                deactivate_quest_persona=True,
+            )
+
+        assert failed.value.code == "config_save_failed"
+        assert config["active_quest_persona_id"] == active_id
+        assert settings.llm.quest_persona_prompt == "不得丢失的临人格"
 
     asyncio.run(scenario())
 

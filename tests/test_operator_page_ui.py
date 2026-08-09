@@ -164,3 +164,67 @@ def test_operator_page_does_not_expose_secrets_or_private_relationship_storage()
 
     assert "http://" not in combined.lower()
     assert "https://" not in combined.lower()
+
+
+def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    for element_id in (
+        "persona-workflow-tabs",
+        "persona-mode-live",
+        "persona-mode-import",
+        "persona-mode-independent",
+        "active-persona-name",
+        "persona-converter-provider",
+        "save-persona-converter-provider",
+        "persona-import-source",
+        "persona-profile-name",
+        "persona-profile-aliases",
+        "persona-admin-requirements",
+        "persona-source-prompt",
+        "quest-persona-prompt",
+        "persona-profile-list",
+        "new-persona-profile-button",
+        "persona-conversion-report",
+        "persona-unresolved-warning",
+        "convert-persona-button",
+        "save-persona-profile-button",
+        "activate-persona-profile-button",
+    ):
+        assert f'id="{element_id}"' in html
+
+    assert 'apiGet("pairing/persona-library")' in js
+    assert 'apiPost("pairing/persona-converter-settings"' in js
+    assert 'apiPost("pairing/persona-convert"' in js
+    assert 'apiPost("pairing/persona-profile-open"' in js
+    assert 'apiPost("pairing/persona-profile-save"' in js
+    assert 'apiPost("pairing/persona-profile-activate"' in js
+    assert 'apiPost("pairing/persona-profile-delete"' in js
+    assert "source_type: sourceType" in js
+    assert "source_persona_id:" in js
+    assert "source_prompt:" in js
+    assert "admin_requirements:" in js
+    assert "conversion_report:" in js
+    assert "draft_token: personaConversionDraftToken" in js
+    assert "invalidatePersonaDraft" in js
+    assert "await loadPersonaProfiles()" in js
+    assert "实时人格来源已保存并启用" in js
+    assert 'event.key === "ArrowRight"' in js
+    assert "button.tabIndex = selected ? 0 : -1" in js
+    assert "profiles:[" not in js
+    assert "innerHTML" not in js
+    assert "textContent" in js
+    assert "人格已保存，但没有自动启用" in js
+    assert "人格已保存，尚未启用" in js
+    assert "后端封存" in html
+    assert "原人格由后端读取并封存" in html
+    assert "保存并启用实时人格" in html
+    assert 'maxlength="24000"' in html
+    assert 'maxlength="12000"' in html
+    assert 'role="tablist"' in html
+    assert 'aria-label="人格来源方式"' in html
+    assert ".persona-prompt-columns" in css
+    assert ".conversion-report-grid" in css
+    assert ".persona-profile-row.active" in css

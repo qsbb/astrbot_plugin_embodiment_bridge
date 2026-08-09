@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from astrbot.api import AstrBotConfig
+from astrbot.api import AstrBotConfig, filter
 from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
 from .adapters.astrbot_persona import AstrBotPersonaAdapter
 from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
+from .adapters.persona_converter import PersonaConverter
 from .adapters.api_principal import AstrBotApiPrincipalVerifier
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
@@ -34,6 +35,11 @@ from .core.diagnostic_log import (
 from .core.interaction_policy import InteractionPolicy
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
+from .core.persona_profiles import PersonaProfileStore
+from .core.persona_service import (
+    QuestPersonaService,
+    build_eventbus_persona_overlay,
+)
 from .core.session_manager import SessionManager
 from .core.service_control import BridgeServiceControl
 from .core.server_identity import ServerIdentityStore
@@ -46,7 +52,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.14"
+__version__ = "0.4.15"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -62,6 +68,8 @@ class QuestAvatarBridgePlugin(Star):
 
         self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.persona_profiles = PersonaProfileStore(self.data_dir)
+        self.persona_converter = PersonaConverter(context)
         self.server_identity_store = ServerIdentityStore(
             self.data_dir / "server_identity.json"
         )
@@ -94,9 +102,10 @@ class QuestAvatarBridgePlugin(Star):
         trusted_client_id = str(config.get("trusted_client_id", "") or "")
         trusted_platform_id = str(config.get("trusted_platform_id", "") or "")
         relationship_person_id = str(config.get("relationship_person_id", "") or "")
-        identity_sync_ready = str(
-            config.get("pairing_identity_sync_state", "ready") or "ready"
-        ) == "ready"
+        identity_sync_ready = (
+            str(config.get("pairing_identity_sync_state", "ready") or "ready")
+            == "ready"
+        )
         pairing_exchange_proxy_url = str(
             config.get("pairing_exchange_proxy_url", "") or ""
         )
@@ -345,6 +354,16 @@ class QuestAvatarBridgePlugin(Star):
             transport=self.transport,
             identity_store=self.server_identity_store,
         )
+        self.persona_service = QuestPersonaService(
+            config=config,
+            llm=self.llm,
+            persona=self.persona,
+            store=self.persona_profiles,
+            converter=self.persona_converter,
+            persist_setting=self.operator_settings.save_quest_persona_setting,
+            provider_catalog=self.operator_settings.list_chat_providers,
+            logger=self._component_logger,
+        )
         self.pairing_api = PairingHttpApi(
             context=context,
             manager=self.pairing,
@@ -356,6 +375,7 @@ class QuestAvatarBridgePlugin(Star):
             trusted_platform_id=trusted_platform_id,
             trusted_proxy_ip=pairing_trusted_proxy_ip,
             operator_settings=self.operator_settings,
+            persona_service=self.persona_service,
             relationship_candidates=self.relationship_candidates,
             relationship_event_identity=self.relationship_event_identity,
             api_principal_verifier=self.api_principal_verifier,
@@ -367,8 +387,7 @@ class QuestAvatarBridgePlugin(Star):
                 "user_id": "server-managed-user",
                 "bot_id": "server-managed-bot",
                 "server_identity_ready": bool(
-                    identity_sync_ready
-                    and server_identity is not None
+                    identity_sync_ready and server_identity is not None
                 ),
                 "group_id": str(config.get("pairing_group_id", "") or ""),
                 "relationship_profile_id": str(
@@ -394,11 +413,14 @@ class QuestAvatarBridgePlugin(Star):
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
         await self.server_identity_store.flush()
+        await self.persona_service.initialize()
         if self._legacy_identity_migrated:
             save = getattr(self.config, "save_config_async", None)
             if callable(save):
                 await save({"pairing_bot_id": "", "pairing_user_id": ""})
-        identity_refresh = await self.pairing_api.refresh_selected_relationship_identity()
+        identity_refresh = (
+            await self.pairing_api.refresh_selected_relationship_identity()
+        )
         self.diagnostic_log.record(
             "identity.relationship_refresh",
             component="identity",
@@ -480,6 +502,23 @@ class QuestAvatarBridgePlugin(Star):
             ),
         )
 
+    @filter.on_llm_request(priority=250)
+    async def inject_quest_persona(self, event: Any, req: Any) -> None:
+        """Append the active embodied persona only to Bridge-created EventBus turns."""
+        try:
+            is_bridge_turn = event.get_extra("quest_avatar_bridge") is True
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if not is_bridge_turn:
+            return
+        overlay = build_eventbus_persona_overlay(self.llm.quest_persona_prompt)
+        if not overlay:
+            return
+        current = str(getattr(req, "system_prompt", "") or "")
+        if "# 临：Quest 具象人格覆盖" in current:
+            return
+        req.system_prompt = current + overlay
+
     def plugin_health(self) -> dict[str, object]:
         checks = {
             "bridge_service_enabled": self.service.enabled,
@@ -513,10 +552,32 @@ class QuestAvatarBridgePlugin(Star):
         )
         return result
 
+    def diagnostic_log_contract(self) -> dict[str, object]:
+        """Declare the series diagnostics provider without transferring log ownership."""
+        return {
+            "name": "series.diagnostics",
+            "version": "1.0",
+            "series_id": "ningxin_suxi",
+            "plugin_id": "astrbot_plugin_quest_avatar_bridge",
+            "plugin_name": "临",
+            "capabilities": ("read", "clear", "read_events", "clear_events"),
+            "storage": "memory_only",
+            "astrbot_log_propagation": False,
+        }
+
     def diagnostic_events(
         self, *, after_seq: int = 0, limit: int = 200
     ) -> dict[str, Any]:
-        return self.diagnostic_log.diagnostic_events(after_seq=after_seq, limit=limit)
+        payload = dict(
+            self.diagnostic_log.diagnostic_events(after_seq=after_seq, limit=limit)
+        )
+        # The series provider is always backed by the bounded in-memory stream;
+        # file logging is an independent persistence option for the Bridge API.
+        payload["contract"] = "series.diagnostics@1.0"
+        if payload.get("status") == "memory_only":
+            payload["status"] = "ready"
+            payload["reason"] = "READY"
+        return payload
 
     def diagnostic_clear(self) -> None:
         self.diagnostic_log.diagnostic_clear()

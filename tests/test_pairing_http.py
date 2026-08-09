@@ -363,18 +363,19 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert bundle.plugin.config["pairing_api_principal_digest"].startswith(
                     "sha256:"
                 )
-                assert "contract-plugin-token" not in bundle.plugin.config[
-                    "pairing_api_principal_digest"
-                ]
+                assert (
+                    "contract-plugin-token"
+                    not in bundle.plugin.config["pairing_api_principal_digest"]
+                )
 
                 api_key_cannot_call_management = await client.get(
                     server.url("/pairing/operator-settings"),
                     headers=AUTH_HEADERS,
                 )
                 assert api_key_cannot_call_management.status == 401
-                assert (await api_key_cannot_call_management.json())[
-                    "data"
-                ]["code"] == "astrbot_dashboard_auth_required"
+                assert (await api_key_cannot_call_management.json())["data"][
+                    "code"
+                ] == "astrbot_dashboard_auth_required"
 
                 local_session = await client.post(
                     server.url("/session/start"),
@@ -683,9 +684,7 @@ def test_natural_person_selection_resolves_real_event_identity_without_exposing_
                 "private_session_required": True,
             }
 
-        async def resolve_quest_event_identity(
-            self, **request: Any
-        ) -> dict[str, Any]:
+        async def resolve_quest_event_identity(self, **request: Any) -> dict[str, Any]:
             assert request == {
                 "person_id": "person-a",
                 "platform_candidates": ["contract-platform"],
@@ -698,9 +697,7 @@ def test_natural_person_selection_resolves_real_event_identity_without_exposing_
                     "platform_id": "contract-platform",
                     "bot_id": "real-private-bot",
                     "user_id": "real-private-user",
-                    "session_id": (
-                        "contract-platform:FriendMessage:real-private-user"
-                    ),
+                    "session_id": ("contract-platform:FriendMessage:real-private-user"),
                 },
             }
 
@@ -780,13 +777,12 @@ def test_natural_person_selection_resolves_real_event_identity_without_exposing_
                     json={"person_id": ""},
                 )
                 assert cleared.status == 200
-                assert (await cleared.json())["event_identity"]["status"] == (
-                    "revoked"
-                )
+                assert (await cleared.json())["event_identity"]["status"] == ("revoked")
                 assert bundle.plugin.server_identity_store.identity is None
-                assert bundle.plugin.pairing_api.pairing_defaults[
-                    "server_identity_ready"
-                ] is False
+                assert (
+                    bundle.plugin.pairing_api.pairing_defaults["server_identity_ready"]
+                    is False
+                )
 
     asyncio.run(scenario())
 
@@ -862,6 +858,189 @@ def test_persona_settings_are_dashboard_protected_and_prompt_redacted(
                     },
                 )
                 assert injection.status == 422
+
+    asyncio.run(scenario())
+
+
+def test_quest_persona_library_conversion_activation_and_live_fallback(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        converted_prompt = "面对面具身人格规则。" * 250
+
+        async def convert_persona(**kwargs: Any) -> Any:
+            assert kwargs["chat_provider_id"] == "fake-provider"
+            assert kwargs["tools"] is None
+            assert kwargs["temperature"] == 0.1
+            assert "private contract persona prompt" in kwargs["prompt"]
+            return SimpleNamespace(
+                completion_text=json.dumps(
+                    {
+                        "schema_version": "banxia.quest_persona/1.0",
+                        "display_name": "心夏",
+                        "aliases": ["Kokona"],
+                        "quest_persona_prompt": converted_prompt,
+                        "conversion_report": {
+                            "preserved": ["身份与性格"],
+                            "adapted": ["面对面表达"],
+                            "removed": ["QQ 渠道规则"],
+                            "unresolved_questions": [],
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+        bundle.context.llm_generate = convert_persona
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/persona-library"))
+                assert denied.status == 401
+
+                library_response = await client.get(
+                    server.url("/pairing/persona-library"), headers=PAGE_AUTH
+                )
+                assert library_response.status == 200
+                library = (await library_response.json())["library"]
+                assert library["profiles"] == []
+                assert library["providers"] == [
+                    {
+                        "id": "fake-provider",
+                        "model": "contract-model",
+                        "adapter_type": "openai",
+                        "provider_type": "chat_completion",
+                    }
+                ]
+                assert {item["id"] for item in library["source_personas"]} == {
+                    "@astrbot-default",
+                    "quest-persona",
+                }
+                assert "private contract persona prompt" not in repr(library)
+
+                selected = await client.post(
+                    server.url("/pairing/persona-converter-settings"),
+                    headers=PAGE_AUTH,
+                    json={"persona_converter_provider_id": "fake-provider"},
+                )
+                assert selected.status == 200
+
+                preview_response = await client.post(
+                    server.url("/pairing/persona-convert"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "source_type": "astrbot",
+                        "source_persona_id": "quest-persona",
+                        "display_name": "心夏",
+                        "admin_requirements": "保持自然的面对面交流。",
+                    },
+                )
+                assert preview_response.status == 200
+                preview = await preview_response.json()
+                assert preview["draft_token"]
+                assert preview["conversion"]["quest_persona_prompt"] == (
+                    converted_prompt
+                )
+                assert "private contract persona prompt" not in repr(preview)
+                assert await bundle.plugin.persona_profiles.list_profiles() == []
+
+                save_payload = {
+                    "profile_id": "",
+                    "draft_token": preview["draft_token"],
+                    "display_name": preview["conversion"]["display_name"],
+                    "aliases": preview["conversion"]["aliases"],
+                    "source_type": "astrbot",
+                    "source_persona_id": "quest-persona",
+                    "source_prompt": "",
+                    "quest_persona_prompt": converted_prompt,
+                    "conversion_report": preview["conversion"]["conversion_report"],
+                }
+                saved_response = await client.post(
+                    server.url("/pairing/persona-profile-save"),
+                    headers=PAGE_AUTH,
+                    json=save_payload,
+                )
+                assert saved_response.status == 200
+                profile = (await saved_response.json())["profile"]
+                profile_id = profile["profile_id"]
+                assert profile["status"] == "ready"
+                assert profile["source_snapshot"] == ("private contract persona prompt")
+
+                reused = await client.post(
+                    server.url("/pairing/persona-profile-save"),
+                    headers=PAGE_AUTH,
+                    json=save_payload,
+                )
+                assert reused.status == 409
+                assert (await reused.json())["data"]["code"] == (
+                    "conversion_draft_expired"
+                )
+
+                summary = (
+                    await (
+                        await client.get(
+                            server.url("/pairing/persona-library"),
+                            headers=PAGE_AUTH,
+                        )
+                    ).json()
+                )["library"]
+                assert "quest_persona_prompt" not in repr(summary)
+                assert "private contract persona prompt" not in repr(summary)
+
+                opened = await client.post(
+                    server.url("/pairing/persona-profile-open"),
+                    headers=PAGE_AUTH,
+                    json={"profile_id": profile_id},
+                )
+                assert opened.status == 200
+                assert (await opened.json())["profile"][
+                    "quest_persona_prompt"
+                ] == converted_prompt
+
+                activated = await client.post(
+                    server.url("/pairing/persona-profile-activate"),
+                    headers=PAGE_AUTH,
+                    json={"profile_id": profile_id},
+                )
+                assert activated.status == 200
+                assert bundle.plugin.config["active_quest_persona_id"] == profile_id
+                assert bundle.plugin.persona_service.llm.quest_persona_prompt == (
+                    converted_prompt
+                )
+
+                active_delete = await client.post(
+                    server.url("/pairing/persona-profile-delete"),
+                    headers=PAGE_AUTH,
+                    json={"profile_id": profile_id},
+                )
+                assert active_delete.status == 409
+
+                live = await client.post(
+                    server.url("/pairing/persona-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "persona_source_mode": "astrbot",
+                        "astrbot_persona_id": "quest-persona",
+                    },
+                )
+                assert live.status == 200
+                assert bundle.plugin.config["active_quest_persona_id"] == ""
+                assert bundle.plugin.persona_service.llm.quest_persona_prompt == ""
+                assert (
+                    bundle.context.persona_manager.personas[
+                        "quest-persona"
+                    ].system_prompt
+                    == "private contract persona prompt"
+                )
+
+                deleted = await client.post(
+                    server.url("/pairing/persona-profile-delete"),
+                    headers=PAGE_AUTH,
+                    json={"profile_id": profile_id},
+                )
+                assert deleted.status == 200
+                assert await bundle.plugin.persona_profiles.list_profiles() == []
 
     asyncio.run(scenario())
 

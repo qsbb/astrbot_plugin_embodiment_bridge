@@ -228,8 +228,7 @@ class OperatorSettings:
             and bot_id
             and user_id
             and control_plane.get("status") == "ready"
-            and str(self.config.get("pairing_identity_sync_state", "ready"))
-            == "ready"
+            and str(self.config.get("pairing_identity_sync_state", "ready")) == "ready"
         )
         return {
             "status": "ready" if ready else "incomplete",
@@ -413,6 +412,21 @@ class OperatorSettings:
         await self._persist("chat_provider_id", provider_id)
         self.llm.configure_provider(provider_id)
         return self.snapshot()
+
+    def list_chat_providers(self) -> list[dict[str, str]]:
+        return self._list_chat_providers()
+
+    async def save_quest_persona_setting(self, key: str, value: str) -> None:
+        if key not in {
+            "persona_converter_provider_id",
+            "active_quest_persona_id",
+        }:
+            raise OperatorSettingsError(
+                "invalid_persona_config_key",
+                422,
+                "人格配置字段无效",
+            )
+        await self._persist(key, str(value or "").strip())
 
     async def save_relationship_person_id(self, value: str) -> dict[str, Any]:
         person_id = str(value or "").strip()
@@ -683,6 +697,7 @@ class OperatorSettings:
         character_self_reference: str,
         character_self_description: str,
         character_user_relationship: str,
+        deactivate_quest_persona: bool = False,
     ) -> dict[str, Any]:
         source_mode = normalize_source_mode(persona_source_mode)
         if str(persona_source_mode or "").strip().lower() not in {
@@ -725,6 +740,8 @@ class OperatorSettings:
                 character_user_relationship, 256
             ),
         }
+        if deactivate_quest_persona:
+            values["active_quest_persona_id"] = ""
         await self._persist_many(values)
         self.persona.configure(
             source_mode=source_mode,
@@ -736,6 +753,8 @@ class OperatorSettings:
             character_self_description=values["character_self_description"],
             character_user_relationship=values["character_user_relationship"],
         )
+        if deactivate_quest_persona:
+            self.llm.configure_quest_persona("")
         resolved = await self.persona.resolve()
         self._diagnostic(
             "persona.updated",
@@ -853,6 +872,8 @@ class OperatorSettings:
             not in {
                 *_PERSONA_KEYS,
                 "chat_provider_id",
+                "persona_converter_provider_id",
+                "active_quest_persona_id",
                 "relationship_person_id",
                 "trusted_platform_id",
                 "trusted_client_id",

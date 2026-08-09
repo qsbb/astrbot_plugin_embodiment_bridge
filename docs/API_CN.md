@@ -186,7 +186,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/listener-port`、`pairing/operator-settings`、`pairing/persona-settings`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/listener-port`、`pairing/operator-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -209,7 +209,14 @@ sequenceDiagram
 | GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |
 | POST | `/pairing/platform-settings` | 200 | 验证并持久化 `trusted_platform_id`，成功后立即启用正式消息链路 |
 | GET | `/pairing/persona-settings` | 200 | 读取 AstrBot 人格安全 ID、来源、状态和手动兼容字段 |
-| POST | `/pairing/persona-settings` | 200 | 原子持久化人格来源、服务端人格选择和手动兼容字段 |
+| POST | `/pairing/persona-settings` | 200 | 原子持久化实时人格来源与兼容字段，并停用当前临专用人格 |
+| GET | `/pairing/persona-library` | 200 | 读取安全 Provider/来源人格目录与临人格摘要，不返回人格正文 |
+| POST | `/pairing/persona-converter-settings` | 200 | 验证并保存单独的人格转换 Provider ID |
+| POST | `/pairing/persona-convert` | 200 | 从服务端 AstrBot 人格或管理员手动来源生成仅内存转换预览与一次性草稿 token |
+| POST | `/pairing/persona-profile-open` | 200 | 通过服务端随机 ID 显式打开一个完整临人格文件 |
+| POST | `/pairing/persona-profile-save` | 200 | 保存已审阅的转换草稿或手动人格；保存不自动启用 |
+| POST | `/pairing/persona-profile-activate` | 200 | 验证并启用临人格；空 `profile_id` 表示停用并实时继承 AstrBot |
+| POST | `/pairing/persona-profile-delete` | 200 | 删除未启用的临人格；当前启用项返回 409 |
 | GET | `/pairing/quest-identity-settings` | 200 | 读取脱敏的 Quest 客户端、平台、Bot、主人和统一身份控制面状态 |
 | POST | `/pairing/quest-identity-settings` | 200 | 保存 Quest 身份；有“序”时原子写入主人和摘要白名单，缺失时启用“临”本地精确绑定 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |

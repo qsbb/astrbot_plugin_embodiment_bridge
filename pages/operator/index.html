@@ -119,32 +119,156 @@
       </section>
 
       <section class="setting-panel persona-panel" aria-labelledby="persona-title">
-        <span class="section-label">角色</span>
-        <h2 id="persona-title">自我身份</h2>
-        <p>AstrBot 人格正文只在后端使用；本页只显示安全 ID、来源和状态。</p>
-        <label for="persona-source-mode">人格来源</label>
-        <select id="persona-source-mode" disabled>
-          <option value="astrbot">继承 AstrBot 人格</option>
-          <option value="manual_override">手动兼容覆盖</option>
-        </select>
-        <div id="astrbot-persona-fields" class="persona-source-fields">
-          <label for="astrbot-persona-id">AstrBot 人格</label>
-          <select id="astrbot-persona-id" disabled>
-            <option value="">AstrBot 明确默认人格</option>
-          </select>
+        <div class="persona-heading">
+          <div>
+            <span class="section-label">角色</span>
+            <h2 id="persona-title">具身人格工作区</h2>
+            <p>AstrBot 原人格保持不变；转换结果只用于经过“临”的面对面对话与具身交互。</p>
+          </div>
+          <div class="persona-active-state" role="status" aria-live="polite">
+            <span>当前启用</span>
+            <strong id="active-persona-name">读取中</strong>
+          </div>
         </div>
-        <div id="manual-persona-fields" class="manual-persona-fields" hidden>
-        <label for="character-name">姓名</label>
-        <input id="character-name" type="text" maxlength="64" autocomplete="off" />
-        <label for="character-self-reference">自称</label>
-        <input id="character-self-reference" type="text" maxlength="64" autocomplete="off" placeholder="我" />
-        <label for="character-user-relationship">与用户的关系定位</label>
-        <input id="character-user-relationship" type="text" maxlength="256" autocomplete="off" />
-        <label for="character-self-description">自我描述</label>
-        <textarea id="character-self-description" maxlength="2000" rows="6"></textarea>
+
+        <div id="persona-workflow-tabs" class="segmented-control" role="tablist" aria-label="人格来源方式">
+          <button id="persona-mode-live" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="persona-live-workflow" data-persona-workflow-mode="live">实时继承 AstrBot</button>
+          <button id="persona-mode-import" class="segment" type="button" role="tab" aria-selected="false" aria-controls="persona-editor-workflow" data-persona-workflow-mode="import">导入并转换</button>
+          <button id="persona-mode-independent" class="segment" type="button" role="tab" aria-selected="false" aria-controls="persona-editor-workflow" data-persona-workflow-mode="independent">临独立人格</button>
         </div>
-        <p id="persona-status" class="field-status" role="status">尚未读取</p>
-        <button id="save-persona-button" class="primary" type="button" aria-busy="false" disabled>保存人格来源</button>
+
+        <div id="persona-live-workflow" class="persona-workflow" role="tabpanel" aria-labelledby="persona-mode-live">
+          <div class="persona-live-grid">
+            <div>
+              <label for="persona-source-mode">实时人格来源</label>
+              <select id="persona-source-mode" disabled>
+                <option value="astrbot">继承 AstrBot 人格</option>
+                <option value="manual_override">手动兼容覆盖</option>
+              </select>
+            </div>
+            <div id="astrbot-persona-fields" class="persona-source-fields">
+              <label for="astrbot-persona-id">AstrBot 人格</label>
+              <select id="astrbot-persona-id" disabled>
+                <option value="">AstrBot 明确默认人格</option>
+              </select>
+            </div>
+          </div>
+          <div id="manual-persona-fields" class="manual-persona-fields" hidden>
+            <div>
+              <label for="character-name">姓名</label>
+              <input id="character-name" type="text" maxlength="64" autocomplete="off" />
+            </div>
+            <div>
+              <label for="character-self-reference">自称</label>
+              <input id="character-self-reference" type="text" maxlength="64" autocomplete="off" placeholder="我" />
+            </div>
+            <div>
+              <label for="character-user-relationship">与用户的关系定位</label>
+              <input id="character-user-relationship" type="text" maxlength="256" autocomplete="off" />
+            </div>
+            <div class="span-full">
+              <label for="character-self-description">自我描述</label>
+              <textarea id="character-self-description" maxlength="2000" rows="5"></textarea>
+            </div>
+          </div>
+          <div class="persona-footer-row">
+            <p id="persona-status" class="field-status" role="status">尚未读取</p>
+            <button id="save-persona-button" class="primary" type="button" aria-busy="false" disabled>保存并启用实时人格</button>
+          </div>
+        </div>
+
+        <div id="persona-editor-workflow" class="persona-workflow" role="tabpanel" aria-labelledby="persona-mode-import" hidden>
+          <div class="persona-toolbar">
+            <div class="persona-toolbar-field">
+              <label for="persona-converter-provider">转换模型</label>
+              <select id="persona-converter-provider" aria-describedby="persona-converter-help" disabled>
+                <option value="">正在读取可用模型</option>
+              </select>
+              <p id="persona-converter-help" class="field-help">单独选择 AstrBot 已配置的模型，只用于人格转换。</p>
+            </div>
+            <button id="save-persona-converter-provider" type="button" aria-busy="false" disabled>保存转换模型</button>
+          </div>
+
+          <div class="persona-editor-layout">
+            <aside class="persona-library" aria-labelledby="persona-library-title">
+              <div class="persona-library-heading">
+                <div>
+                  <h3 id="persona-library-title">临人格</h3>
+                  <span id="persona-profile-count">0 个</span>
+                </div>
+                <button id="new-persona-profile-button" type="button" aria-label="新建临独立人格">新建</button>
+              </div>
+              <div id="persona-profile-list" class="persona-profile-list" role="list" aria-live="polite">
+                <p class="persona-empty">尚未创建独立人格</p>
+              </div>
+            </aside>
+
+            <div class="persona-editor-main">
+              <div class="persona-source-setup">
+                <div id="persona-import-source-fields">
+                  <label for="persona-import-source">AstrBot 来源人格</label>
+                  <select id="persona-import-source" disabled>
+                    <option value="">请选择来源人格</option>
+                  </select>
+                  <p class="field-help">原人格由后端读取并封存；保存后可通过左侧人格列表显式打开查看。</p>
+                </div>
+                <div>
+                  <label for="persona-profile-name">临人格名称</label>
+                  <input id="persona-profile-name" type="text" maxlength="80" autocomplete="off" placeholder="例如：心夏 · 具身版" />
+                </div>
+                <div class="span-full">
+                  <label for="persona-profile-aliases">角色别名</label>
+                  <input id="persona-profile-aliases" type="text" maxlength="800" autocomplete="off" placeholder="可选；多个别名用逗号分隔，例如：Kokona，心夏" />
+                </div>
+                <div class="span-full">
+                  <label for="persona-admin-requirements">本次转换补充要求</label>
+                  <textarea id="persona-admin-requirements" maxlength="2000" rows="3" placeholder="可选：补充希望保留的语气、交互边界或待确认事项"></textarea>
+                </div>
+              </div>
+
+              <div class="persona-prompt-columns">
+                <div class="prompt-column">
+                  <div class="prompt-heading">
+                    <label for="persona-source-prompt">来源人格</label>
+                    <span id="persona-source-visibility">后端封存</span>
+                  </div>
+                  <textarea id="persona-source-prompt" maxlength="24000" rows="18" placeholder="AstrBot 来源正文不会随列表或转换响应返回；保存后显式打开人格即可查看" readonly></textarea>
+                </div>
+                <div class="prompt-column">
+                  <div class="prompt-heading">
+                    <label for="quest-persona-prompt">临专用人格</label>
+                    <span>可在保存前修改</span>
+                  </div>
+                  <textarea id="quest-persona-prompt" maxlength="12000" rows="18" placeholder="转换结果会出现在这里；也可以在独立人格模式下手动编写"></textarea>
+                </div>
+              </div>
+
+              <section id="persona-conversion-report" class="conversion-report" aria-labelledby="conversion-report-title" hidden>
+                <div class="conversion-report-heading">
+                  <h3 id="conversion-report-title">转换报告</h3>
+                  <span id="persona-conversion-version"></span>
+                </div>
+                <div class="conversion-report-grid">
+                  <div><strong>保留</strong><ul id="persona-report-preserved"></ul></div>
+                  <div><strong>适配</strong><ul id="persona-report-adapted"></ul></div>
+                  <div><strong>移除</strong><ul id="persona-report-removed"></ul></div>
+                </div>
+                <div id="persona-unresolved-warning" class="unresolved-warning" role="alert" hidden>
+                  <strong>需要管理员确认</strong>
+                  <ul id="persona-report-unresolved"></ul>
+                </div>
+              </section>
+
+              <input id="persona-profile-id" type="hidden" value="" />
+              <p id="persona-profile-status" class="field-status" role="status">请选择来源或从左侧打开已有人格。</p>
+              <div class="persona-editor-actions">
+                <button id="convert-persona-button" type="button" aria-busy="false" disabled>转换为临人格</button>
+                <button id="save-persona-profile-button" class="primary" type="button" aria-busy="false" disabled>保存人格</button>
+                <button id="activate-persona-profile-button" type="button" aria-busy="false" disabled>启用已保存人格</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">

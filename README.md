@@ -80,7 +80,10 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - 页面顶部集中显示 Quest Bridge 运行状态、内置 listener 地址、活跃会话、SSE、待发事件以及对话/EventBus/身份/STT/TTS/动作能力；管理员可即时启停服务，并在 1024-65535 范围修改 listener 端口（默认仍为 8520）。修改端口会持久化设置、同步已配置公开 URL 的端口、关闭旧会话并重启 listener；Docker 部署仍需映射相同宿主机端口。
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
 - “正式消息链路”从 AstrBot 已加载平台目录选择 `trusted_platform_id`。目录仅投影实例 ID、适配器类型和显示名，保存时再通过公开 `Context.get_platform_inst()` 验证该实例当前存在；成功后立即同步身份授权和 EventBus 适配器。页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
-- “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
+- “具身人格工作区”提供实时继承、导入转换和临独立人格三种流程。导入时只提交 AstrBot 人格 ID，由后端精确读取来源；转换模型从 AstrBot 已配置的 Chat Completion Provider 中单独选择，不会替换普通对话模型。
+- 转换结果先作为 30 分钟、一次性、仅内存草稿返回预览，确认保存后才在插件数据目录的 `personas/qp_<随机ID>.json` 中创建一个独立文件。人格列表只返回摘要；正文只有显式打开单个人格或保存结果时才返回 Dashboard 管理页。
+- 保存与启用分离。启用后的临专用人格只覆盖带 `quest_avatar_bridge` 标记的 EventBus 轮次和 Bridge 受控回退决策；QQ 与其他 AstrBot 对话仍使用原人格。保存“实时人格来源”会在同一次配置提交中停用临专用人格。
+- 临专用人格把角色定义为与用户身处同一世界、同一物理空间的人；但只有系统本轮明确提供的视觉、听觉、空间、距离、姿态、环境和触碰事实可作为真实感知，不能补造房间物体、用户表情或身体接触。
 - “Quest 身份”一次保存 client/platform/bot/user 和专用 API Key；Bridge Key 缺失时由服务端生成。后端先通过 AstrBot 官方认证层的 loopback 证明取得 principal 摘要，再在检测到“序”时通过 `identity.control_plane@1.0` 原子同步主人和摘要白名单；未安装时使用“临”本地精确绑定，已安装但拒绝时绝不合并本地配置放行。
 - 只有统一或本地身份授权成功且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
@@ -93,6 +96,14 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - EventBus 模式由 AstrBot 正式会话与插件钩子负责人格、历史、工具和时间/环境上下文；回退模式每个 turn 异步取得一次人格稳定快照。两条路径都不能覆盖 Protocol 1.0、认证授权和动作白名单。
 
 模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点；管理端点拒绝 API Key principal。专用 API Key 只允许密码框写入、提交后立即清空，后端永不回显，页面不使用本地存储。
+
+临专用人格的平面配置只保存两个索引字段；完整人格正文不写入 AstrBot 插件配置：
+
+| 配置 | 默认 | 作用 |
+|---|---:|---|
+| `persona_converter_provider_id` | 空 | 单独用于人格转换的 AstrBot Provider ID |
+| `active_quest_persona_id` | 空 | 当前启用的服务端随机人格 ID；空值表示实时继承 AstrBot |
+
 ## 生产 STT/TTS 配置
 
 语音能力默认关闭。先在 AstrBot 的 Provider 设置中启用 STT/TTS，并分别选定默认 Provider，再在本插件配置中启用：
@@ -351,6 +362,6 @@ python -m compileall .
 
 ## Series plugin integrations
 
-“临”保留插件自有 JSONL、有界内存时间线和 Dashboard 脱敏诊断接口，但不声明 `series.diagnostics@1.0` 提供方，因此不会被“核”自动聚合。内存时间线始终记录会话授权、音频接收、STT、AstrBot EventBus、LLM、TTS 与回复交付的稳定状态；JSONL 落盘仍由 `diagnostic_log_enabled` 控制。可选配置 `diagnostic_platform_log_enabled=true` 后，固定脱敏摘要会写入 `astrbot.plugin.astrbot_plugin_quest_avatar_bridge` 专属 logger；默认关闭，不挂接 root handler。诊断只包含原因码、HTTP 状态、耗时和汇总计数，不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会阻塞其他请求。
+“临”声明 `series.diagnostics@1.0` 提供方，因此可被“核”自动发现并聚合；同时保留插件自有 JSONL、有界内存时间线和 Dashboard 脱敏诊断接口。系列读取始终使用这份内存时间线，文件落盘仍由 `diagnostic_log_enabled` 独立控制，且不会改变日志归属。可选配置 `diagnostic_platform_log_enabled=true` 后，固定脱敏摘要会写入 `astrbot.plugin.astrbot_plugin_quest_avatar_bridge` 专属 logger；默认关闭，不挂接 root handler。诊断只包含原因码、HTTP 状态、耗时和汇总计数，不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会阻塞其他请求。
 
 Quest calls only this Bridge. Backend reuse of knowledge, identity authorization, relationship snapshots, cached environment facts, Voice Hub PCM output, and runtime diagnostics is documented in [docs/SERIES_INTEGRATIONS_CN.md](docs/SERIES_INTEGRATIONS_CN.md). Conversation proactive delivery and orchestration-hub resolution are intentionally not consumed in normal Quest turns.

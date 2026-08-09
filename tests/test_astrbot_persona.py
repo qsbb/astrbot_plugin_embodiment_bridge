@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_persona import (
+    ASTRBOT_DEFAULT_PERSONA_SOURCE_ID,
     AstrBotPersonaAdapter,
     PersonaSelectionError,
 )
@@ -120,6 +121,25 @@ def test_safe_catalog_projects_only_ids_and_validation_is_exact() -> None:
         assert await adapter.validate_selection("quest-identity") == "quest-identity"
         with pytest.raises(PersonaSelectionError, match="persona_not_available"):
             await adapter.validate_selection("missing")
+
+    asyncio.run(scenario())
+
+
+def test_import_reads_only_the_explicit_source_or_default() -> None:
+    async def scenario() -> None:
+        manager = PersonaManagerStub()
+        adapter = AstrBotPersonaAdapter(ContextStub(manager))
+
+        assert await adapter.read_source_prompt("quest-identity") == (
+            "quest-identity",
+            "你是已配置的 Quest 角色。",
+        )
+        assert await adapter.read_source_prompt(ASTRBOT_DEFAULT_PERSONA_SOURCE_ID) == (
+            ASTRBOT_DEFAULT_PERSONA_SOURCE_ID,
+            "你是默认角色。",
+        )
+        with pytest.raises(PersonaSelectionError, match="persona_not_available"):
+            await adapter.read_source_prompt("")
 
     asyncio.run(scenario())
 

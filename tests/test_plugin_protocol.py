@@ -88,6 +88,9 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     api = types.ModuleType("astrbot.api")
     api.AstrBotConfig = dict
     api.logger = LoggerStub()
+    api.filter = types.SimpleNamespace(
+        on_llm_request=lambda **_kwargs: lambda handler: handler
+    )
 
     star = types.ModuleType("astrbot.api.star")
 
@@ -153,11 +156,28 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         health = plugin.plugin_health()
         assert health["version"] == module.__version__
         assert health["checks"]["pairing_bootstrap_ready"] is True
-        assert not hasattr(plugin, "diagnostic_log_contract")
+        assert plugin.diagnostic_log_contract() == {
+            "name": "series.diagnostics",
+            "version": "1.0",
+            "series_id": "ningxin_suxi",
+            "plugin_id": "astrbot_plugin_quest_avatar_bridge",
+            "plugin_name": "临",
+            "capabilities": ("read", "clear", "read_events", "clear_events"),
+            "storage": "memory_only",
+            "astrbot_log_propagation": False,
+        }
+        series_diagnostics = plugin.diagnostic_events()
+        assert series_diagnostics["contract"] == "series.diagnostics@1.0"
+        assert series_diagnostics["status"] == "ready"
+        assert series_diagnostics["reason"] == "READY"
+        bridge_diagnostics = plugin.diagnostic_log.diagnostic_events()
+        assert bridge_diagnostics["contract"] == ("quest_avatar_bridge.diagnostics@1.0")
+        assert bridge_diagnostics["status"] == "memory_only"
+        assert bridge_diagnostics["reason"] == "FILE_LOG_DISABLED"
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 29
+        assert len(registered) == 36
         assert (
             "/astrbot_plugin_quest_avatar_bridge/pairing/service-status",
             ("GET",),
@@ -210,6 +230,19 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
             "/astrbot_plugin_quest_avatar_bridge/pairing/persona-settings",
             ("POST",),
         ) in registered
+        for suffix, methods in {
+            "persona-library": ("GET",),
+            "persona-converter-settings": ("POST",),
+            "persona-convert": ("POST",),
+            "persona-profile-open": ("POST",),
+            "persona-profile-save": ("POST",),
+            "persona-profile-activate": ("POST",),
+            "persona-profile-delete": ("POST",),
+        }.items():
+            assert (
+                f"/astrbot_plugin_quest_avatar_bridge/pairing/{suffix}",
+                methods,
+            ) in registered
         assert (
             "/astrbot_plugin_quest_avatar_bridge/pairing/quest-identity-settings",
             ("GET",),
@@ -442,7 +475,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 29
+        assert len(context.routes) == 36
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

@@ -5,6 +5,12 @@ let platformSettings = null;
 let questIdentitySettings = null;
 let serviceState = null;
 let serviceRefreshInFlight = false;
+let personaProfiles = null;
+let personaWorkflowMode = "live";
+let personaConversionReport = null;
+let personaConversionDraftToken = "";
+let personaDraftRequiresConversion = false;
+let personaOpenedConverterPromptVersion = "";
 
 async function resolveBridge(timeout = 3000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -408,6 +414,585 @@ async function loadPersonaSettings() {
   renderPersonaSettings(response.persona);
 }
 
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function personaProfileId(profile) {
+  return String(profile?.profile_id || profile?.id || "");
+}
+
+function personaProfileName(profile) {
+  return String(profile?.display_name || profile?.name || "未命名人格");
+}
+
+function populatePersonaConverterProviders(catalog) {
+  const select = document.getElementById("persona-converter-provider");
+  const providers = safeArray(catalog.providers);
+  const selected = String(catalog.persona_converter_provider_id || "");
+  select.replaceChildren(new Option("请选择转换模型", ""));
+  providers.forEach((provider) => {
+    const id = String(provider?.id || "");
+    if (!id) return;
+    const model = String(provider?.model || "未标注模型");
+    const adapter = String(provider?.adapter_type || "未知适配器");
+    select.add(new Option(`${model} · ${adapter} · ${id}`, id));
+  });
+  if (selected && !providers.some((provider) => String(provider?.id || "") === selected)) {
+    select.add(new Option("已配置但当前不可用", selected));
+  }
+  select.value = selected;
+  select.disabled = catalog.config_writable === false || providers.length === 0;
+  document.getElementById("save-persona-converter-provider").disabled =
+    select.disabled || !select.value || select.value === selected;
+}
+
+function populatePersonaImportSources(catalog) {
+  const select = document.getElementById("persona-import-source");
+  const sources = safeArray(catalog.astrbot_personas).length
+    ? safeArray(catalog.astrbot_personas)
+    : safeArray(catalog.source_personas).length
+      ? safeArray(catalog.source_personas)
+      : safeArray(personaSettings?.personas);
+  const current = select.value;
+  select.replaceChildren(new Option("请选择 AstrBot 来源人格", ""));
+  sources.forEach((persona) => {
+    const id = String(persona?.id || persona?.persona_id || "");
+    if (!id) return;
+    const name = String(persona?.display_name || persona?.name || id);
+    select.add(new Option(name === id ? id : `${name} · ${id}`, id));
+  });
+  if (current && sources.some((persona) =>
+    String(persona?.id || persona?.persona_id || "") === current
+  )) select.value = current;
+  select.disabled = catalog.config_writable === false || sources.length === 0;
+}
+
+function appendReportItems(listId, values) {
+  const list = document.getElementById(listId);
+  list.replaceChildren();
+  safeArray(values).forEach((value) => {
+    const item = document.createElement("li");
+    item.textContent = String(value || "");
+    if (item.textContent) list.append(item);
+  });
+  if (!list.childElementCount) {
+    const item = document.createElement("li");
+    item.textContent = "无";
+    item.className = "muted";
+    list.append(item);
+  }
+}
+
+function setDisabledWhenIdle(buttonId, disabled) {
+  const button = document.getElementById(buttonId);
+  if (button.getAttribute("aria-busy") !== "true") button.disabled = disabled;
+}
+
+function invalidatePersonaDraft(message, forceConversion = false) {
+  const hadDraft = Boolean(personaConversionDraftToken);
+  personaConversionDraftToken = "";
+  personaDraftRequiresConversion =
+    personaDraftRequiresConversion || forceConversion || hadDraft;
+  if (personaDraftRequiresConversion && message) {
+    document.getElementById("persona-profile-status").textContent = message;
+  }
+  updatePersonaEditorActions();
+}
+
+function renderPersonaConversionReport(report, version = "") {
+  personaConversionReport = report && typeof report === "object" ? report : null;
+  const panel = document.getElementById("persona-conversion-report");
+  panel.hidden = !personaConversionReport;
+  if (!personaConversionReport) return;
+  document.getElementById("persona-conversion-version").textContent =
+    version ? `规则 ${String(version)}` : "";
+  appendReportItems("persona-report-preserved", personaConversionReport.preserved);
+  appendReportItems("persona-report-adapted", personaConversionReport.adapted);
+  appendReportItems("persona-report-removed", personaConversionReport.removed);
+  const unresolved = safeArray(personaConversionReport.unresolved_questions);
+  appendReportItems("persona-report-unresolved", unresolved);
+  document.getElementById("persona-unresolved-warning").hidden = unresolved.length === 0;
+}
+
+function updatePersonaEditorActions() {
+  const converter = document.getElementById("persona-converter-provider").value;
+  const configuredConverter = String(
+    personaProfiles?.persona_converter_provider_id ||
+    personaProfiles?.converter_provider_id ||
+    ""
+  );
+  const converterReady = Boolean(
+    converter &&
+    converter === configuredConverter &&
+    personaProfiles?.converter_selected_available !== false &&
+    safeArray(personaProfiles?.providers).some((provider) =>
+      String(provider?.id || "") === converter
+    )
+  );
+  const sourceReady = personaWorkflowMode === "import"
+    ? Boolean(document.getElementById("persona-import-source").value)
+    : Boolean(document.getElementById("persona-source-prompt").value.trim());
+  setDisabledWhenIdle(
+    "convert-persona-button",
+    !converterReady || !sourceReady || personaProfiles?.config_writable === false
+  );
+  const canSave = Boolean(
+    document.getElementById("persona-profile-name").value.trim() &&
+    (personaConversionDraftToken ||
+      document.getElementById("persona-source-prompt").value.trim()) &&
+    document.getElementById("quest-persona-prompt").value.trim()
+  );
+  const newAstrBotProfileNeedsDraft = Boolean(
+    personaWorkflowMode === "import" &&
+    !document.getElementById("persona-profile-id").value &&
+    !personaConversionDraftToken
+  );
+  setDisabledWhenIdle(
+    "save-persona-profile-button",
+    !canSave ||
+      newAstrBotProfileNeedsDraft ||
+      personaDraftRequiresConversion ||
+      personaProfiles?.config_writable === false
+  );
+  const profileId = document.getElementById("persona-profile-id").value;
+  setDisabledWhenIdle(
+    "activate-persona-profile-button",
+    !profileId ||
+      profileId === String(personaProfiles?.active_quest_persona_id || "") ||
+      personaProfiles?.config_writable === false
+  );
+}
+
+function setPersonaWorkflowMode(mode) {
+  personaWorkflowMode = ["live", "import", "independent"].includes(mode)
+    ? mode
+    : "live";
+  document.querySelectorAll("[data-persona-workflow-mode]").forEach((button) => {
+    const selected = button.dataset.personaWorkflowMode === personaWorkflowMode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  document.getElementById("persona-live-workflow").hidden =
+    personaWorkflowMode !== "live";
+  document.getElementById("persona-editor-workflow").hidden =
+    personaWorkflowMode === "live";
+  document.getElementById("persona-editor-workflow").setAttribute(
+    "aria-labelledby",
+    personaWorkflowMode === "independent"
+      ? "persona-mode-independent"
+      : "persona-mode-import"
+  );
+  const importing = personaWorkflowMode === "import";
+  document.getElementById("persona-import-source-fields").hidden = !importing;
+  const sourcePrompt = document.getElementById("persona-source-prompt");
+  sourcePrompt.readOnly = importing;
+  sourcePrompt.placeholder = importing
+    ? "AstrBot 来源正文由后端封存；保存后显式打开人格即可查看"
+    : "写入原始人格或人物设定，再由转换模型生成具身版本";
+  document.getElementById("persona-source-visibility").textContent = importing
+    ? "后端封存"
+    : "可编辑";
+  document.getElementById("convert-persona-button").textContent = importing
+    ? "导入并转换"
+    : "转换为临人格";
+  updatePersonaEditorActions();
+}
+
+function clearPersonaProfileEditor() {
+  personaConversionDraftToken = "";
+  personaDraftRequiresConversion = false;
+  personaOpenedConverterPromptVersion = "";
+  document.getElementById("persona-profile-id").value = "";
+  document.getElementById("persona-profile-name").value = "";
+  document.getElementById("persona-profile-aliases").value = "";
+  document.getElementById("persona-import-source").value = "";
+  document.getElementById("persona-source-prompt").value = "";
+  document.getElementById("persona-admin-requirements").value = "";
+  document.getElementById("quest-persona-prompt").value = "";
+  renderPersonaConversionReport(null);
+  document.getElementById("persona-profile-status").textContent =
+    "这是未保存的草稿；保存后仍需单独点击启用。";
+  updatePersonaEditorActions();
+}
+
+function renderPersonaProfileEditor(profile) {
+  personaConversionDraftToken = "";
+  personaDraftRequiresConversion = false;
+  personaOpenedConverterPromptVersion = String(
+    profile?.converter_prompt_version || profile?.prompt_version || ""
+  );
+  const id = personaProfileId(profile);
+  const sourceType = String(profile?.source_type || profile?.source_kind || "manual") === "astrbot"
+    ? "astrbot"
+    : "manual";
+  document.getElementById("persona-profile-id").value = id;
+  document.getElementById("persona-profile-name").value = personaProfileName(profile);
+  document.getElementById("persona-profile-aliases").value =
+    safeArray(profile?.aliases).join("，");
+  document.getElementById("persona-import-source").value =
+    String(profile?.source_persona_id || "");
+  document.getElementById("persona-source-prompt").value =
+    String(profile?.source_prompt || profile?.source_snapshot || "");
+  document.getElementById("persona-admin-requirements").value =
+    String(profile?.admin_requirements || "");
+  document.getElementById("quest-persona-prompt").value =
+    String(profile?.quest_persona_prompt || "");
+  renderPersonaConversionReport(
+    profile?.conversion_report,
+    personaOpenedConverterPromptVersion
+  );
+  setPersonaWorkflowMode(sourceType === "astrbot" ? "import" : "independent");
+  const active = id === String(personaProfiles?.active_quest_persona_id || "");
+  document.getElementById("persona-profile-status").textContent = active
+    ? personaProfiles?.active_available === false
+      ? "此人格已配置为当前人格，但文件尚不可用；请修正并保存后重新启用。"
+      : "此人格当前已启用。修改后请先保存；保存不会自动重新启用。"
+    : "已打开保存的人格；修改后需要保存，启用是独立操作。";
+  updatePersonaEditorActions();
+}
+
+async function openPersonaProfile(profile, trigger = null) {
+  const profileId = personaProfileId(profile);
+  if (!profileId || trigger?.getAttribute("aria-busy") === "true") return false;
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.setAttribute("aria-busy", "true");
+  }
+  try {
+    const response = await apiPost("pairing/persona-profile-open", {
+      profile_id: profileId
+    });
+    const fullProfile = response.profile || response.persona_profile;
+    if (!fullProfile || personaProfileId(fullProfile) !== profileId) {
+      throw new Error("人格文件响应不完整");
+    }
+    renderPersonaProfileEditor({ ...profile, ...fullProfile });
+    return true;
+  } catch (error) {
+    toast("读取人格文件失败：" + error.message, true);
+    return false;
+  } finally {
+    if (trigger?.isConnected) {
+      trigger.disabled = false;
+      trigger.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+function renderPersonaProfileList(catalog) {
+  const list = document.getElementById("persona-profile-list");
+  const profiles = safeArray(catalog.profiles);
+  const activeId = String(catalog.active_quest_persona_id || "");
+  list.replaceChildren();
+  document.getElementById("persona-profile-count").textContent = `${profiles.length} 个`;
+  if (!profiles.length) {
+    const empty = document.createElement("p");
+    empty.className = "persona-empty";
+    empty.textContent = "尚未创建独立人格";
+    list.append(empty);
+    return;
+  }
+  profiles.forEach((profile) => {
+    const id = personaProfileId(profile);
+    const row = document.createElement("div");
+    row.className = "persona-profile-row";
+    row.setAttribute("role", "listitem");
+    if (id === activeId) row.classList.add("active");
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "persona-profile-open";
+    open.setAttribute("aria-label", `打开人格 ${personaProfileName(profile)}`);
+    const name = document.createElement("strong");
+    name.textContent = personaProfileName(profile);
+    const meta = document.createElement("span");
+    const source = String(profile?.source_type || profile?.source_kind || "manual") === "astrbot"
+      ? "AstrBot 转换"
+      : "独立创建";
+    meta.textContent = id === activeId
+      ? `${source} · ${catalog.active_available === false ? "当前不可用" : "当前启用"}`
+      : source;
+    open.append(name, meta);
+    open.addEventListener("click", () => openPersonaProfile(profile, open));
+
+    const actions = document.createElement("div");
+    actions.className = "persona-profile-row-actions";
+    const reconvert = document.createElement("button");
+    reconvert.type = "button";
+    reconvert.className = "icon-text-button";
+    reconvert.textContent = "重转";
+    reconvert.setAttribute("aria-label", `重新转换人格 ${personaProfileName(profile)}`);
+    reconvert.addEventListener("click", async () => {
+      if (await openPersonaProfile(profile, reconvert)) await convertPersona();
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-text-button danger-quiet";
+    remove.textContent = "删除";
+    const isActive = id === activeId;
+    remove.setAttribute(
+      "aria-label",
+      isActive
+        ? `人格 ${personaProfileName(profile)} 当前已启用，不能删除`
+        : `删除人格 ${personaProfileName(profile)}`
+    );
+    remove.disabled = isActive;
+    if (isActive) remove.title = "请先启用另一个人格";
+    remove.addEventListener("click", () => deletePersonaProfile(profile, remove));
+    actions.append(reconvert, remove);
+    row.append(open, actions);
+    list.append(row);
+  });
+}
+
+function renderPersonaProfiles(catalog) {
+  personaProfiles = catalog && typeof catalog === "object" ? catalog : {};
+  if (!personaProfiles.active_quest_persona_id && personaProfiles.active_profile_id) {
+    personaProfiles.active_quest_persona_id = personaProfiles.active_profile_id;
+  }
+  if (!personaProfiles.persona_converter_provider_id && personaProfiles.converter_provider_id) {
+    personaProfiles.persona_converter_provider_id = personaProfiles.converter_provider_id;
+  }
+  populatePersonaConverterProviders(personaProfiles);
+  populatePersonaImportSources(personaProfiles);
+  renderPersonaProfileList(personaProfiles);
+  const active = safeArray(personaProfiles.profiles).find((profile) =>
+    personaProfileId(profile) === String(personaProfiles.active_quest_persona_id || "")
+  );
+  const activeId = String(personaProfiles.active_quest_persona_id || "");
+  let activeLabel = "实时继承 AstrBot";
+  if (activeId && active) {
+    activeLabel = personaProfileName(active) +
+      (personaProfiles.active_available === false ? "（不可用）" : "");
+  } else if (activeId) {
+    activeLabel = "已配置人格不可用";
+  }
+  document.getElementById("active-persona-name").textContent = activeLabel;
+  updatePersonaEditorActions();
+}
+
+async function loadPersonaProfiles() {
+  try {
+    const response = await apiGet("pairing/persona-library");
+    const catalog = response.library || response.persona_profiles || response.catalog || response;
+    renderPersonaProfiles(catalog);
+  } catch (error) {
+    document.getElementById("active-persona-name").textContent = "独立人格不可用";
+    document.getElementById("persona-profile-status").textContent =
+      "读取临人格失败：" + error.message;
+    toast("读取临人格失败：" + error.message, true);
+  }
+}
+
+async function savePersonaConverterProvider() {
+  const button = document.getElementById("save-persona-converter-provider");
+  const providerId = document.getElementById("persona-converter-provider").value;
+  if (!providerId || !setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const response = await apiPost("pairing/persona-converter-settings", {
+      persona_converter_provider_id: providerId
+    });
+    if (response.library) renderPersonaProfiles(response.library);
+    else if (personaProfiles) {
+      personaProfiles.persona_converter_provider_id = providerId;
+      personaProfiles.converter_provider_id = providerId;
+      personaProfiles.converter_selected_available = true;
+    }
+    toast("人格转换模型已保存");
+  } catch (error) {
+    toast("转换模型保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = !document.getElementById("persona-converter-provider").value ||
+      document.getElementById("persona-converter-provider").value ===
+        String(personaProfiles?.persona_converter_provider_id || "");
+    updatePersonaEditorActions();
+  }
+}
+
+function applyPersonaConversionResult(response) {
+  const result = response.profile || response.draft || response.conversion || response;
+  personaConversionDraftToken = String(
+    response.draft_token || result.draft_token || ""
+  );
+  personaDraftRequiresConversion = false;
+  const sourcePrompt = result.source_prompt ?? result.source_snapshot ?? response.source_prompt;
+  if (sourcePrompt !== undefined) {
+    document.getElementById("persona-source-prompt").value = String(sourcePrompt || "");
+  }
+  const converted = result.quest_persona_prompt ?? response.quest_persona_prompt;
+  document.getElementById("quest-persona-prompt").value = String(converted || "");
+  if (!document.getElementById("persona-profile-name").value.trim()) {
+    document.getElementById("persona-profile-name").value =
+      String(result.display_name || response.display_name || "");
+  }
+  const aliases = safeArray(result.aliases).length
+    ? safeArray(result.aliases)
+    : safeArray(response.aliases);
+  if (aliases.length) {
+    document.getElementById("persona-profile-aliases").value = aliases.join("，");
+  }
+  const report = result.conversion_report || response.conversion_report || null;
+  renderPersonaConversionReport(
+    report,
+    result.converter_prompt_version || response.converter_prompt_version || ""
+  );
+  document.getElementById("persona-profile-status").textContent =
+    "转换完成，当前仍是未保存草稿。请检查内容与待确认项后再保存。";
+  updatePersonaEditorActions();
+}
+
+function currentPersonaEditorProfile() {
+  const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
+  return {
+    profile_id: document.getElementById("persona-profile-id").value,
+    display_name: document.getElementById("persona-profile-name").value,
+    aliases: document.getElementById("persona-profile-aliases").value
+      .split(/[,，\n]/)
+      .map((value) => value.trim())
+      .filter((value, index, values) => value && values.indexOf(value) === index),
+    source_kind: sourceType,
+    source_persona_id: sourceType === "astrbot"
+      ? document.getElementById("persona-import-source").value
+      : "",
+    source_snapshot: document.getElementById("persona-source-prompt").value,
+    admin_requirements: document.getElementById("persona-admin-requirements").value,
+    quest_persona_prompt: document.getElementById("quest-persona-prompt").value,
+    conversion_report: personaConversionReport || {}
+  };
+}
+
+async function convertPersona() {
+  const button = document.getElementById("convert-persona-button");
+  if (button.disabled || !setButtonBusy(button, true, "正在转换…")) return;
+  const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
+  const requiresConversionOnFailure = Boolean(
+    personaConversionDraftToken ||
+    sourceType === "astrbot" ||
+    (document.getElementById("persona-profile-id").value &&
+      personaOpenedConverterPromptVersion !== "manual")
+  );
+  personaConversionDraftToken = "";
+  personaDraftRequiresConversion = requiresConversionOnFailure;
+  if (sourceType === "astrbot") {
+    document.getElementById("persona-source-prompt").value = "";
+  }
+  try {
+    const response = await apiPost("pairing/persona-convert", {
+      source_type: sourceType,
+      source_persona_id: sourceType === "astrbot"
+        ? document.getElementById("persona-import-source").value
+        : "",
+      source_prompt: sourceType === "manual"
+        ? document.getElementById("persona-source-prompt").value
+        : "",
+      display_name: document.getElementById("persona-profile-name").value,
+      admin_requirements: document.getElementById("persona-admin-requirements").value
+    });
+    applyPersonaConversionResult(response);
+    toast("人格转换完成，请确认后保存");
+  } catch (error) {
+    document.getElementById("persona-profile-status").textContent =
+      "转换失败：" + error.message;
+    toast("人格转换失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    updatePersonaEditorActions();
+  }
+}
+
+async function savePersonaProfile() {
+  const button = document.getElementById("save-persona-profile-button");
+  if (button.disabled || !setButtonBusy(button, true, "正在保存…")) return;
+  const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
+  const profileId = document.getElementById("persona-profile-id").value;
+  const editorSnapshot = currentPersonaEditorProfile();
+  try {
+    const response = await apiPost("pairing/persona-profile-save", {
+      profile_id: profileId,
+      draft_token: personaConversionDraftToken,
+      display_name: document.getElementById("persona-profile-name").value,
+      aliases: editorSnapshot.aliases,
+      source_type: sourceType,
+      source_persona_id: sourceType === "astrbot"
+        ? document.getElementById("persona-import-source").value
+        : "",
+      source_prompt: document.getElementById("persona-source-prompt").value,
+      quest_persona_prompt: document.getElementById("quest-persona-prompt").value,
+      conversion_report: personaConversionReport || {}
+    });
+    const saved = response.profile || response.saved_profile || {};
+    personaConversionDraftToken = "";
+    const savedId = personaProfileId(saved) || String(response.profile_id || profileId);
+    if (savedId) document.getElementById("persona-profile-id").value = savedId;
+    await loadPersonaProfiles();
+    const current = safeArray(personaProfiles?.profiles).find((profile) =>
+      personaProfileId(profile) === savedId
+    );
+    renderPersonaProfileEditor({
+      ...editorSnapshot,
+      ...(current || {}),
+      ...saved,
+      profile_id: savedId
+    });
+    document.getElementById("persona-profile-status").textContent =
+      "人格已保存，但没有自动启用。确认无误后可单独启用。";
+    toast("人格已保存，尚未启用");
+  } catch (error) {
+    toast("人格保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    updatePersonaEditorActions();
+  }
+}
+
+async function activatePersonaProfile() {
+  const button = document.getElementById("activate-persona-profile-button");
+  const profileId = document.getElementById("persona-profile-id").value;
+  if (!profileId || !setButtonBusy(button, true, "正在启用…")) return;
+  const editorSnapshot = currentPersonaEditorProfile();
+  try {
+    await apiPost("pairing/persona-profile-activate", { profile_id: profileId });
+    await loadPersonaProfiles();
+    const current = safeArray(personaProfiles?.profiles).find((profile) =>
+      personaProfileId(profile) === profileId
+    );
+    renderPersonaProfileEditor({
+      ...editorSnapshot,
+      ...(current || {}),
+      profile_id: profileId
+    });
+    toast("临人格已启用，只影响经过“临”的对话");
+  } catch (error) {
+    toast("人格启用失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    updatePersonaEditorActions();
+  }
+}
+
+async function deletePersonaProfile(profile, button) {
+  const id = personaProfileId(profile);
+  if (!id || !window.confirm(`确定删除“${personaProfileName(profile)}”吗？此操作不可撤销。`)) {
+    return;
+  }
+  if (!setButtonBusy(button, true, "删除中")) return;
+  try {
+    await apiPost("pairing/persona-profile-delete", { profile_id: id });
+    if (document.getElementById("persona-profile-id").value === id) {
+      clearPersonaProfileEditor();
+    }
+    await loadPersonaProfiles();
+    toast("人格已删除");
+  } catch (error) {
+    toast("人格删除失败：" + error.message, true);
+  } finally {
+    if (button.isConnected) setButtonBusy(button, false);
+  }
+}
+
 function renderQuestIdentitySettings(identity) {
   questIdentitySettings = identity || {};
   const writable = questIdentitySettings.config_writable === true;
@@ -498,6 +1083,7 @@ async function saveQuestIdentitySettings() {
 async function savePersonaSettings() {
   const button = document.getElementById("save-persona-button");
   if (!setButtonBusy(button, true, "正在保存…")) return;
+  let sourceSaved = false;
   try {
     const response = await apiPost("pairing/persona-settings", {
       persona_source_mode: document.getElementById("persona-source-mode").value,
@@ -514,9 +1100,16 @@ async function savePersonaSettings() {
       ).value
     });
     renderPersonaSettings(response.persona);
-    toast("人格来源已保存并立即生效");
+    sourceSaved = true;
+    await loadPersonaProfiles();
+    toast("实时人格来源已保存并启用");
   } catch (error) {
-    toast("角色身份保存失败：" + error.message, true);
+    toast(
+      sourceSaved
+        ? "实时人格来源已启用，但状态刷新失败：" + error.message
+        : "角色身份保存失败：" + error.message,
+      true
+    );
   } finally {
     setButtonBusy(button, false);
     button.disabled = personaSettings?.config_writable !== true;
@@ -904,6 +1497,87 @@ function bindEvents() {
         source_mode: document.getElementById("persona-source-mode").value
       });
     });
+  document.querySelectorAll("[data-persona-workflow-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMode = button.dataset.personaWorkflowMode;
+      if (nextMode !== personaWorkflowMode) {
+        clearPersonaProfileEditor();
+      }
+      setPersonaWorkflowMode(nextMode);
+    });
+    button.addEventListener("keydown", (event) => {
+      const tabs = Array.from(
+        document.querySelectorAll("[data-persona-workflow-mode]")
+      );
+      const current = tabs.indexOf(event.currentTarget);
+      let target = -1;
+      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target < 0) return;
+      event.preventDefault();
+      tabs[target].click();
+      tabs[target].focus();
+    });
+  });
+  document
+    .getElementById("persona-converter-provider")
+    .addEventListener("change", () => {
+      invalidatePersonaDraft("转换模型已改变，请重新转换后再保存。", false);
+      document.getElementById("save-persona-converter-provider").disabled =
+        !document.getElementById("persona-converter-provider").value ||
+        document.getElementById("persona-converter-provider").value ===
+          String(personaProfiles?.persona_converter_provider_id || "");
+      updatePersonaEditorActions();
+    });
+  document
+    .getElementById("save-persona-converter-provider")
+    .addEventListener("click", savePersonaConverterProvider);
+  document
+    .getElementById("new-persona-profile-button")
+    .addEventListener("click", () => {
+      clearPersonaProfileEditor();
+      setPersonaWorkflowMode("independent");
+      document.getElementById("persona-profile-name").focus();
+    });
+  document
+    .getElementById("persona-import-source")
+    .addEventListener("change", () => {
+      document.getElementById("persona-source-prompt").value = "";
+      invalidatePersonaDraft("来源人格已改变，请重新转换后再保存。", true);
+    });
+  document
+    .getElementById("persona-source-prompt")
+    .addEventListener("input", () => {
+      const convertedProfile = Boolean(
+        document.getElementById("persona-profile-id").value &&
+        personaOpenedConverterPromptVersion &&
+        personaOpenedConverterPromptVersion !== "manual"
+      );
+      invalidatePersonaDraft(
+        "来源正文已改变，请重新转换后再保存。",
+        convertedProfile
+      );
+    });
+  document
+    .getElementById("persona-admin-requirements")
+    .addEventListener("input", () => {
+      invalidatePersonaDraft("转换补充要求已改变，请重新转换后再保存。", false);
+    });
+  ["persona-profile-name", "persona-profile-aliases", "quest-persona-prompt"]
+    .forEach((id) => {
+      document.getElementById(id).addEventListener("input", updatePersonaEditorActions);
+    });
+  document
+    .getElementById("convert-persona-button")
+    .addEventListener("click", convertPersona);
+  document
+    .getElementById("save-persona-profile-button")
+    .addEventListener("click", savePersonaProfile);
+  document
+    .getElementById("activate-persona-profile-button")
+    .addEventListener("click", activatePersonaProfile);
   document
     .getElementById("load-identity-candidates")
     .addEventListener("click", loadIdentityCandidates);
@@ -920,11 +1594,13 @@ async function init() {
   if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
   await bridge.ready();
   bindEvents();
+  setPersonaWorkflowMode(personaWorkflowMode);
   await Promise.all([
     loadServiceStatus(),
     loadOperatorSettings(),
     loadPlatformSettings(),
     loadPersonaSettings(),
+    loadPersonaProfiles(),
     loadQuestIdentitySettings()
   ]);
   window.setInterval(() => loadServiceStatus({ silent: true }), 10000);

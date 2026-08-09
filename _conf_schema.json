@@ -191,6 +191,19 @@
     "hint": "仅在 manual_override 时生效；不会替代身份授权或 relationship_person_id。",
     "default": ""
   },
+  "persona_converter_provider_id": {
+    "description": "临专用人格转换模型 Provider ID",
+    "type": "string",
+    "_special": "select_provider",
+    "hint": "只用于把 AstrBot 人格转换成面对面具身人格；不会替换普通对话模型。建议在临的服务控制台中选择。",
+    "default": ""
+  },
+  "active_quest_persona_id": {
+    "description": "当前启用的临专用人格 ID",
+    "type": "string",
+    "hint": "由临的服务控制台保存和校验。留空时实时继承 AstrBot 人格；不要手工填写文件名或路径。",
+    "default": ""
+  },
   "enable_astrbot_stt": {
     "description": "启用 AstrBot 默认 STT Provider",
     "type": "bool",

@@ -26,6 +26,7 @@ from ..core.pairing import (
     PairingStatusRequest,
 )
 from ..core.operator_settings import OperatorSettingsError
+from ..core.persona_service import QuestPersonaServiceError
 from ..core.service_control import BridgeServiceControlError
 
 
@@ -97,6 +98,59 @@ class CharacterPersonaSettingsRequest(BaseModel):
     character_user_relationship: str = Field(default="", max_length=256)
 
 
+class PersonaConverterSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    persona_converter_provider_id: str = Field(min_length=1, max_length=256)
+
+
+class PersonaConvertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_type: str = Field(pattern=r"^(?:astrbot|manual)$")
+    source_persona_id: str = Field(default="", max_length=255)
+    source_prompt: str = Field(default="", max_length=24_000)
+    display_name: str = Field(default="", max_length=80)
+    admin_requirements: str = Field(default="", max_length=2_000)
+
+
+class PersonaConversionReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    preserved: list[str] = Field(default_factory=list, max_length=32)
+    adapted: list[str] = Field(default_factory=list, max_length=32)
+    removed: list[str] = Field(default_factory=list, max_length=32)
+    unresolved_questions: list[str] = Field(default_factory=list, max_length=32)
+
+
+class PersonaProfileSaveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    profile_id: str = Field(default="", pattern=r"^(?:|qp_[0-9a-f]{32})$")
+    draft_token: str = Field(default="", max_length=128)
+    display_name: str = Field(min_length=1, max_length=80)
+    aliases: list[str] = Field(default_factory=list, max_length=20)
+    source_type: str = Field(pattern=r"^(?:astrbot|manual)$")
+    source_persona_id: str = Field(default="", max_length=255)
+    source_prompt: str = Field(default="", max_length=24_000)
+    quest_persona_prompt: str = Field(min_length=1, max_length=12_000)
+    conversion_report: PersonaConversionReportRequest = Field(
+        default_factory=PersonaConversionReportRequest
+    )
+
+
+class PersonaProfileIdRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    profile_id: str = Field(pattern=r"^qp_[0-9a-f]{32}$")
+
+
+class PersonaProfileActivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    profile_id: str = Field(default="", pattern=r"^(?:|qp_[0-9a-f]{32})$")
+
+
 class PairingHttpApi:
     def __init__(
         self,
@@ -113,6 +167,7 @@ class PairingHttpApi:
         relationship_candidates: Any,
         relationship_event_identity: Any,
         api_principal_verifier: Any,
+        persona_service: Any | None = None,
         diagnostic_log: Any | None = None,
         pairing_defaults: dict[str, Any] | None = None,
         trusted_proxy_ip: str = "",
@@ -131,10 +186,13 @@ class PairingHttpApi:
         self.relationship_candidates = relationship_candidates
         self.relationship_event_identity = relationship_event_identity
         self.api_principal_verifier = api_principal_verifier
+        self.persona_service = persona_service
         self.diagnostic_log = diagnostic_log
         self.pairing_defaults = dict(pairing_defaults or {})
         self.relationship_refresh_ready = not bool(
-            str(self.operator_settings.config.get("relationship_person_id", "") or "").strip()
+            str(
+                self.operator_settings.config.get("relationship_person_id", "") or ""
+            ).strip()
         )
         self.max_json_body_bytes = max(4096, min(65_536, max_json_body_bytes))
 
@@ -193,6 +251,48 @@ class PairingHttpApi:
                 self.save_persona_settings,
                 ["POST"],
                 "Save Quest character persona settings",
+            ),
+            (
+                "pairing/persona-library",
+                self.persona_library,
+                ["GET"],
+                "Read safe Quest persona profile summaries",
+            ),
+            (
+                "pairing/persona-converter-settings",
+                self.save_persona_converter_settings,
+                ["POST"],
+                "Save the dedicated Quest persona conversion Provider",
+            ),
+            (
+                "pairing/persona-convert",
+                self.convert_persona,
+                ["POST"],
+                "Convert an AstrBot or manual persona into a preview draft",
+            ),
+            (
+                "pairing/persona-profile-open",
+                self.open_persona_profile,
+                ["POST"],
+                "Explicitly open one saved Quest persona profile",
+            ),
+            (
+                "pairing/persona-profile-save",
+                self.save_persona_profile,
+                ["POST"],
+                "Save a reviewed Quest persona profile",
+            ),
+            (
+                "pairing/persona-profile-activate",
+                self.activate_persona_profile,
+                ["POST"],
+                "Activate or disable a saved Quest persona profile",
+            ),
+            (
+                "pairing/persona-profile-delete",
+                self.delete_persona_profile,
+                ["POST"],
+                "Delete an inactive Quest persona profile",
             ),
             (
                 "pairing/quest-identity-settings",
@@ -385,10 +485,103 @@ class PairingHttpApi:
                 character_self_reference=payload.character_self_reference,
                 character_self_description=payload.character_self_description,
                 character_user_relationship=payload.character_user_relationship,
+                deactivate_quest_persona=True,
             )
+            if self.persona_service is not None:
+                await self.persona_service.initialize()
             return _json_no_store({"success": True, "persona": persona})
         except Exception as exc:
             return self._error(exc, "save_persona_settings")
+
+    async def persona_library(self) -> Any:
+        try:
+            self._dashboard_owner()
+            service = self._persona_service()
+            return _json_no_store(
+                {"success": True, "library": await service.library_snapshot()}
+            )
+        except Exception as exc:
+            return self._error(exc, "persona_library")
+
+    async def save_persona_converter_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaConverterSettingsRequest)
+            library = await self._persona_service().save_converter_provider(
+                payload.persona_converter_provider_id
+            )
+            return _json_no_store({"success": True, "library": library})
+        except Exception as exc:
+            return self._error(exc, "save_persona_converter_settings")
+
+    async def convert_persona(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaConvertRequest)
+            result = await self._persona_service().convert(
+                source_kind=payload.source_type,
+                source_persona_id=payload.source_persona_id,
+                source_prompt=payload.source_prompt,
+                display_name=payload.display_name,
+                admin_requirements=payload.admin_requirements,
+            )
+            return _json_no_store({"success": True, **result})
+        except Exception as exc:
+            return self._error(exc, "convert_persona")
+
+    async def open_persona_profile(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaProfileIdRequest)
+            profile = await self._persona_service().open_profile(payload.profile_id)
+            return _json_no_store({"success": True, "profile": profile})
+        except Exception as exc:
+            return self._error(exc, "open_persona_profile")
+
+    async def save_persona_profile(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaProfileSaveRequest)
+            profile = await self._persona_service().save_profile(
+                profile_id=payload.profile_id,
+                draft_token=payload.draft_token,
+                display_name=payload.display_name,
+                aliases=payload.aliases,
+                source_kind=payload.source_type,
+                source_persona_id=payload.source_persona_id,
+                source_prompt=payload.source_prompt,
+                quest_persona_prompt=payload.quest_persona_prompt,
+                conversion_report=payload.conversion_report.model_dump(),
+            )
+            return _json_no_store({"success": True, "profile": profile.to_dict()})
+        except Exception as exc:
+            return self._error(exc, "save_persona_profile")
+
+    async def activate_persona_profile(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaProfileActivationRequest)
+            library = await self._persona_service().activate(payload.profile_id)
+            return _json_no_store({"success": True, "library": library})
+        except Exception as exc:
+            return self._error(exc, "activate_persona_profile")
+
+    async def delete_persona_profile(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PersonaProfileIdRequest)
+            deleted = await self._persona_service().delete(payload.profile_id)
+            return _json_no_store(
+                {
+                    "success": True,
+                    "deleted": {
+                        "profile_id": deleted.profile_id,
+                        "display_name": deleted.display_name,
+                    },
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "delete_persona_profile")
 
     async def quest_identity_settings_overview(self) -> Any:
         try:
@@ -406,13 +599,14 @@ class PairingHttpApi:
         try:
             self._dashboard_owner()
             payload = await self._read_model(QuestIdentitySettingsRequest)
-            api_key = payload.api_key.get_secret_value().strip() or str(
-                self.operator_settings.config.get("pairing_astrbot_api_key", "")
-                or ""
-            ).strip()
-            principal_digest = await self.api_principal_verifier.resolve_digest(
-                api_key
+            api_key = (
+                payload.api_key.get_secret_value().strip()
+                or str(
+                    self.operator_settings.config.get("pairing_astrbot_api_key", "")
+                    or ""
+                ).strip()
             )
+            principal_digest = await self.api_principal_verifier.resolve_digest(api_key)
             identity_source = str(
                 self.operator_settings.config.get("pairing_identity_source", "manual")
                 or "manual"
@@ -424,17 +618,9 @@ class PairingHttpApi:
                 client_id=payload.client_id,
                 platform_id=payload.platform_id,
                 bot_id=payload.bot_id
-                or (
-                    stored_bot_id
-                    if identity_source == "manual"
-                    else ""
-                ),
+                or (stored_bot_id if identity_source == "manual" else ""),
                 user_id=payload.user_id
-                or (
-                    stored_user_id
-                    if identity_source == "manual"
-                    else ""
-                ),
+                or (stored_user_id if identity_source == "manual" else ""),
                 api_principal_digest=principal_digest,
                 astrbot_api_key=api_key,
             )
@@ -462,9 +648,7 @@ class PairingHttpApi:
             return _json_no_store(
                 {
                     "success": True,
-                    "api_principal_digest": authenticated_principal_digest(
-                        principal
-                    ),
+                    "api_principal_digest": authenticated_principal_digest(principal),
                 }
             )
         except Exception as exc:
@@ -621,9 +805,7 @@ class PairingHttpApi:
                         422,
                         "所选自然人不存在或已经不可用",
                     )
-                platforms = (
-                    self.operator_settings.quest_identity_platform_candidates()
-                )
+                platforms = self.operator_settings.quest_identity_platform_candidates()
                 resolution = await self.relationship_event_identity.resolve(
                     person_id=payload.person_id,
                     platform_candidates=platforms,
@@ -637,12 +819,16 @@ class PairingHttpApi:
                         status_code = 409
                     elif resolution.status == "invalid_response":
                         status_code = 502
-                    elif resolution.status in {
-                        "provider_unavailable",
-                        "contract_unavailable",
-                        "timeout",
-                        "error",
-                    } or code == "active_platform_api_unavailable":
+                    elif (
+                        resolution.status
+                        in {
+                            "provider_unavailable",
+                            "contract_unavailable",
+                            "timeout",
+                            "error",
+                        }
+                        or code == "active_platform_api_unavailable"
+                    ):
                         status_code = 503
                     else:
                         status_code = 422
@@ -662,8 +848,7 @@ class PairingHttpApi:
                 self.trusted_platform_id = identity.platform_id
                 self.pairing_defaults.update(
                     client_id=str(
-                        self.operator_settings.config.get("trusted_client_id", "")
-                        or ""
+                        self.operator_settings.config.get("trusted_client_id", "") or ""
                     ).strip(),
                     user_id="server-managed-user",
                     bot_id="server-managed-bot",
@@ -1005,6 +1190,15 @@ class PairingHttpApi:
                 "Request schema validation failed: " + ", ".join(fields),
             ) from exc
 
+    def _persona_service(self) -> Any:
+        if self.persona_service is None:
+            raise QuestPersonaServiceError(
+                "persona_service_unavailable",
+                503,
+                "临人格服务当前不可用",
+            )
+        return self.persona_service
+
     def _error(self, exc: Exception, operation: str) -> Any:
         self._diagnostic(
             "pairing.error",
@@ -1019,6 +1213,7 @@ class PairingHttpApi:
             (
                 PairingError,
                 OperatorSettingsError,
+                QuestPersonaServiceError,
                 BridgeServiceControlError,
                 ApiPrincipalVerificationError,
             ),

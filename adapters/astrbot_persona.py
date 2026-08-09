@@ -16,6 +16,7 @@ PersonaSource = Literal[
 _VALID_MODES = frozenset({"astrbot", "manual_override"})
 _MAX_PERSONA_ID_CHARS = 255
 _MAX_PROMPT_CHARS = 16_000
+ASTRBOT_DEFAULT_PERSONA_SOURCE_ID = "@astrbot-default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,37 @@ class AstrBotPersonaAdapter:
         if actual_id != normalized:
             raise PersonaSelectionError("persona_not_available")
         return normalized
+
+    async def read_source_prompt(self, persona_id: str) -> tuple[str, str]:
+        """Read one administrator-selected source without exposing other personas."""
+        normalized = normalize_persona_id(persona_id)
+        try:
+            manager = self.context.persona_manager
+            if normalized == ASTRBOT_DEFAULT_PERSONA_SOURCE_ID:
+                personality = await asyncio.wait_for(
+                    manager.get_default_persona_v3(None),
+                    timeout=self.timeout_seconds,
+                )
+                if not isinstance(personality, dict):
+                    raise TypeError("default persona response is not an object")
+                return normalized, _validated_prompt(personality["prompt"])
+            if not normalized:
+                raise ValueError("persona id is empty")
+            persona = await asyncio.wait_for(
+                manager.get_persona(normalized),
+                timeout=self.timeout_seconds,
+            )
+            actual_id = normalize_persona_id(persona.persona_id)
+            prompt = _validated_prompt(persona.system_prompt)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError as exc:
+            raise PersonaSelectionError("persona_lookup_timeout") from exc
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+            raise PersonaSelectionError("persona_not_available") from exc
+        if actual_id != normalized:
+            raise PersonaSelectionError("persona_not_available")
+        return actual_id, prompt
 
     def _initial_snapshot(self) -> PersonaSnapshot:
         if self.source_mode == "manual_override":

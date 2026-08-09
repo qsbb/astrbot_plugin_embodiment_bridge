@@ -363,6 +363,9 @@ def build_plugin(
     api = types.ModuleType("astrbot.api")
     api.AstrBotConfig = dict
     api.logger = LoggerStub()
+    api.filter = types.SimpleNamespace(
+        on_llm_request=lambda **_kwargs: lambda handler: handler
+    )
 
     star = types.ModuleType("astrbot.api.star")
 

@@ -19,13 +19,13 @@ diagnostic_log_backup_count=3
 
 ## Bridge 自有诊断接口
 
-从 `0.4.5` 起，Bridge 不再声明或实现 `series.diagnostics@1.0` 提供方，不会被“核”的 series diagnostics 自动发现或聚合。诊断仍由插件自己的 JSONL、内存环形快照和 Dashboard 管理 Page 提供：
+Bridge 声明 `series.diagnostics@1.0` 提供方，可被“核”的 series diagnostics 自动发现和聚合。提供方复用插件自己的有界内存环形快照；JSONL 文件、Dashboard 管理 Page 和日志归属仍由 Bridge 独立管理：
 
 ```text
 GET /api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/diagnostics
 ```
 
-该路由受 AstrBot Dashboard/plugin-scope 认证保护，返回的事件只含阶段、组件、错误类型、错误 code、状态和耗时等固定脱敏字段。接口标识为 `quest_avatar_bridge.diagnostics@1.0`，与 series diagnostics 命名空间无关。
+该路由受 AstrBot Dashboard/plugin-scope 认证保护，返回的事件只含阶段、组件、错误类型、错误 code、状态和耗时等固定脱敏字段。该 Bridge 管理接口仍使用 `quest_avatar_bridge.diagnostics@1.0` 标识；系列提供方读取同一内存快照时投影为 `series.diagnostics@1.0`，不会把文件日志交给其他插件，也不会改变存储策略。
 
 Operator Page 的“Bridge 脱敏诊断”区域调用该接口并展示固定字段，不展示正文、身份或凭据。
 

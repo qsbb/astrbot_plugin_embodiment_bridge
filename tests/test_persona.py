@@ -99,6 +99,38 @@ def test_generic_fallback_does_not_invent_name_or_use_manual_compat_fields() -> 
     assert "relationship_person_id 只是服务端关系快照选择器" in prompt
 
 
+def test_active_quest_persona_overrides_astrbot_identity_for_direct_decisions() -> None:
+    adapter = build_adapter(character_name="manual-name")
+    adapter.configure_quest_persona("你是心夏，说话自然，正在和用户面对面相处。")
+    inherited = PersonaSnapshot(
+        source="astrbot_selected",
+        status="ready",
+        prompt="你正在 QQ 上聊天。",
+        selected=True,
+    )
+
+    prompt = adapter._system_prompt(inherited)
+
+    assert adapter.quest_persona_configured is True
+    assert "你是心夏" in prompt
+    assert "正在 QQ 上聊天" not in prompt
+    assert "作为角色本人" in prompt
+    assert "当前与用户同处一个现实空间" in prompt
+    assert "技术实现不属于角色认知" in prompt
+    assert "不得以 AI、机器人、程序、投影、虚拟角色" in prompt
+    assert prompt.rindex("只输出一个 JSON 对象") > prompt.index("你是心夏")
+
+
+def test_quest_persona_prompt_is_bounded_and_can_be_cleared() -> None:
+    adapter = build_adapter()
+
+    adapter.configure_quest_persona("x" * 13_000)
+    assert len(adapter.quest_persona_prompt) == 12_000
+
+    adapter.configure_quest_persona("")
+    assert adapter.quest_persona_configured is False
+
+
 def test_each_turn_uses_one_stable_async_persona_snapshot() -> None:
     class PersonaManager:
         def __init__(self) -> None:
