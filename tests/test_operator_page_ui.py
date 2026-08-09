@@ -33,6 +33,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
     css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
 
+    assert "function initializeBridgeAndData()" in js
+    assert "function showStartupError(error)" in js
+    assert "retry-startup-button" in js
+    assert "eventsBound" in js
+
     for element_id in (
         "service-status-badge",
         "refresh-service-button",
@@ -136,6 +141,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert ".status-badge.running" in css
     assert "@media (max-width: 820px)" in css
     assert "prefers-reduced-motion" in css
+    assert "页面 Bridge 请求超时" in js
 
 
 def test_operator_page_does_not_expose_secrets_or_private_relationship_storage() -> (

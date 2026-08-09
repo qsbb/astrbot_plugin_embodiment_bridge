@@ -398,7 +398,8 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   background: #151f20;
 }
 .boundary-note strong { color: #eef5f2; }
-.startup-error { margin-top: 18px; border: 1px solid #7d3e3b; border-radius: 6px; padding: 14px; color: #ffd7d3; background: #291716; }
+.startup-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; border: 1px solid #7d3e3b; border-radius: 6px; padding: 14px; color: #ffd7d3; background: #291716; }
+.startup-retry { min-height: 34px; padding: 6px 12px; }
 #toast {
   position: fixed;
   right: 24px;

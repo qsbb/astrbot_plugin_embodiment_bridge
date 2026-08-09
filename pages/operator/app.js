@@ -11,8 +11,11 @@ let personaConversionReport = null;
 let personaConversionDraftToken = "";
 let personaDraftRequiresConversion = false;
 let personaOpenedConverterPromptVersion = "";
+let bridgeReady = false;
+let eventsBound = false;
+let serviceRefreshTimer = null;
 
-async function resolveBridge(timeout = 3000) {
+async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
   if (typeof window.waitForAstrBotBridge === "function") {
     return window.waitForAstrBotBridge(timeout);
@@ -35,16 +38,6 @@ function parseResponse(value) {
   return data;
 }
 
-async function apiGet(name) {
-  if (!bridge) throw new Error("页面 Bridge 尚未初始化");
-  return parseResponse(await bridge.apiGet(name));
-}
-
-async function apiPost(name, payload) {
-  if (!bridge) throw new Error("页面 Bridge 尚未初始化");
-  return parseResponse(await bridge.apiPost(name, payload));
-}
-
 function setRuntimeState(kind, label) {
   const node = document.querySelector(".runtime-state");
   node.classList.toggle("ready", kind === "ready");
@@ -59,14 +52,6 @@ function toast(message, error = false) {
   node.classList.add("visible");
   window.clearTimeout(toast.timer);
   toast.timer = window.setTimeout(() => node.classList.remove("visible"), 2800);
-}
-
-function showStartupError(error) {
-  const message = "页面启动失败：" + (error?.message || error);
-  const node = document.getElementById("startup-error");
-  node.textContent = message;
-  node.hidden = false;
-  setRuntimeState("error", "角色设置不可用");
 }
 
 function setButtonBusy(button, busy, busyText) {
@@ -1589,21 +1574,105 @@ function bindEvents() {
     .addEventListener("click", loadDiagnostics);
 }
 
-async function init() {
-  bridge = await resolveBridge();
-  if (typeof bridge.ready !== "function") throw new Error("Bridge ready() 不可用");
-  await bridge.ready();
-  bindEvents();
-  setPersonaWorkflowMode(personaWorkflowMode);
-  await Promise.all([
-    loadServiceStatus(),
-    loadOperatorSettings(),
-    loadPlatformSettings(),
-    loadPersonaSettings(),
-    loadPersonaProfiles(),
-    loadQuestIdentitySettings()
-  ]);
-  window.setInterval(() => loadServiceStatus({ silent: true }), 10000);
+// Keep the page interactive while the parent Dashboard context is still loading.
+// AstrBot's bridge.ready() intentionally waits for that context and can otherwise
+// leave every handler unbound when the page is opened directly or restored from cache.
+function withBridgeTimeout(promise, timeout, message) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(message)), timeout);
+  });
+  return Promise.race([Promise.resolve(promise), timeoutPromise]).finally(() => {
+    if (timer !== null) window.clearTimeout(timer);
+  });
 }
 
-init().catch(showStartupError);
+async function apiGet(name) {
+  if (!bridge || !bridgeReady) throw new Error("页面 Bridge 尚未连接");
+  return parseResponse(
+    await withBridgeTimeout(bridge.apiGet(name), 10000, "页面 Bridge 请求超时")
+  );
+}
+
+async function apiPost(name, payload) {
+  if (!bridge || !bridgeReady) throw new Error("页面 Bridge 尚未连接");
+  return parseResponse(
+    await withBridgeTimeout(bridge.apiPost(name, payload), 10000, "页面 Bridge 请求超时")
+  );
+}
+
+function clearStartupError() {
+  const node = document.getElementById("startup-error");
+  node.hidden = true;
+  node.replaceChildren();
+}
+
+function showStartupError(error) {
+  const node = document.getElementById("startup-error");
+  node.replaceChildren();
+  const message = document.createElement("span");
+  message.textContent = "页面连接失败：" + (error?.message || error);
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.id = "retry-startup-button";
+  retry.className = "primary startup-retry";
+  retry.textContent = "重试连接";
+  retry.addEventListener("click", initializeBridgeAndData);
+  node.append(message, retry);
+  node.hidden = false;
+  setRuntimeState("error", "页面 Bridge 不可用");
+}
+
+let bridgeInitPromise = null;
+
+async function initializeBridgeAndData() {
+  if (bridgeInitPromise) return bridgeInitPromise;
+  bridgeInitPromise = (async () => {
+    bridgeReady = false;
+    setRuntimeState("warning", "正在连接页面 Bridge…");
+    bridge = await resolveBridge(8000);
+    if (typeof bridge.ready !== "function") {
+      throw new Error("页面 Bridge ready() 不可用");
+    }
+    await withBridgeTimeout(
+      bridge.ready(),
+      8000,
+      "等待 AstrBot 页面上下文超时，请从插件管理页面重新打开"
+    );
+    bridgeReady = true;
+    clearStartupError();
+    setPersonaWorkflowMode(personaWorkflowMode);
+    await Promise.all([
+      loadServiceStatus(),
+      loadOperatorSettings(),
+      loadPlatformSettings(),
+      loadPersonaSettings(),
+      loadPersonaProfiles(),
+      loadQuestIdentitySettings()
+    ]);
+    if (serviceRefreshTimer === null) {
+      serviceRefreshTimer = window.setInterval(
+        () => loadServiceStatus({ silent: true }),
+        10000
+      );
+    }
+  })();
+  try {
+    await bridgeInitPromise;
+  } catch (error) {
+    bridgeReady = false;
+    showStartupError(error);
+  } finally {
+    bridgeInitPromise = null;
+  }
+}
+
+async function init() {
+  if (!eventsBound) {
+    bindEvents();
+    eventsBound = true;
+  }
+  await initializeBridgeAndData();
+}
+
+init();
