@@ -67,6 +67,8 @@ pairing_user_id=<固定用户 ID>
 pairing_bot_id=<固定机器人 ID>
 ```
 
+Quest 客户端使用 AstrBot 4.27 的官方 `Authorization: ApiKey <key>` 认证方案。请在“Quest 角色设置”页面填写专用 Key 并点击“保存并验证身份”；后端会通过严格 loopback HTTP 调用只读证明端点，让 AstrBot 先解析出 `api_key:<key_id>`，随后只把不可逆摘要写入身份白名单。升级自 0.4.10 或更早版本后必须重新保存一次身份，旧的错误摘要不会被自动猜测迁移。
+
 Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初始化成功且配置合法时才会真正绑定。旧 `pairing_exchange_proxy_url` 与 [Nginx 示例](docs/nginx_8520_pairing.example.conf) 继续作为可选兼容方案，优先级低于已就绪且 public URL 合法的内置 listener。详见 [首次配对审计](docs/PAIRING_BOOTSTRAP_AUDIT_CN.md)。
 
 复制短码或撤销配对期间，对应按钮会暂时禁用并显示“正在处理”，成功或失败后都会恢复，避免连续点击产生重复请求。如果服务端返回了当前页面尚不认识的配对状态，页面会显示中文提示并停止复制、撤销和轮询，避免把未知状态误当成仍可使用。
@@ -81,7 +83,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - “聊天模型”只枚举 AstrBot 当前已实例化的 Chat Completion Provider，显示 id 和 model，保存时只提交 Provider ID；不会读取 Provider API Key、Base URL、请求头或原始配置。
 - “正式消息链路”从 AstrBot 已加载平台目录选择 `trusted_platform_id`。目录仅投影实例 ID、适配器类型和显示名，保存时再通过公开 `Context.get_platform_inst()` 验证该实例当前存在；成功后立即同步身份授权和 EventBus 适配器。页面会显示 `ready`、未配置、平台不可用或 AstrBot API 不可用等脱敏状态。
 - “自我身份”默认继承 AstrBot 正式人格：管理员可选择一个服务端人格 ID，留空则调用 AstrBot 明确默认人格。Page 只返回人格 ID、来源、状态和布尔标签，不返回 system prompt、预设对话、工具、技能或错误模板。
-- “Quest 身份”一次保存 client/platform/bot/user 和专用 API Key；Bridge Key 缺失时由服务端生成。检测到“序”时通过 `identity.control_plane@1.0` 原子同步主人和摘要白名单，未安装时使用“临”本地精确绑定；已安装但拒绝时绝不合并本地配置放行。
+- “Quest 身份”一次保存 client/platform/bot/user 和专用 API Key；Bridge Key 缺失时由服务端生成。后端先通过 AstrBot 官方认证层的 loopback 证明取得 principal 摘要，再在检测到“序”时通过 `identity.control_plane@1.0` 原子同步主人和摘要白名单；未安装时使用“临”本地精确绑定，已安装但拒绝时绝不合并本地配置放行。
 - 只有统一或本地身份授权成功且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
@@ -91,7 +93,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - “临”独立日志与设备端使用同一诊断结构：当前根因、链路、输入、耗时和阶段时间线（最新在下）；不渲染原始 JSON、正文、密钥或身份值。
 - EventBus 模式由 AstrBot 正式会话与插件钩子负责人格、历史、工具和时间/环境上下文；回退模式每个 turn 异步取得一次人格稳定快照。两条路径都不能覆盖 Protocol 1.0、认证授权和动作白名单。
 
-模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点；专用 API Key 只允许密码框写入、成功后立即清空，后端永不回显，页面不使用本地存储。
+模型也可以在插件配置页通过 chat_provider_id 的 Provider 下拉框设置；自然人候选的点击读取入口只在「Quest 角色设置」Page 中提供。两个 Page 都通过 AstrBot Page Bridge 和 Dashboard 身份调用本插件受保护端点；管理端点拒绝 API Key principal。专用 API Key 只允许密码框写入、提交后立即清空，后端永不回显，页面不使用本地存储。
 ## 生产 STT/TTS 配置
 
 语音能力默认关闭。先在 AstrBot 的 Provider 设置中启用 STT/TTS，并分别选定默认 Provider，再在本插件配置中启用：

@@ -9,6 +9,7 @@ import pytest
 from astrbot_plugin_quest_avatar_bridge.adapters.identity_control_plane import (
     IdentityControlPlaneAdapter,
     IdentityControlPlaneError,
+    authenticated_principal_digest,
 )
 
 
@@ -109,7 +110,9 @@ def test_upsert_hashes_principal_and_returns_only_redacted_counts() -> None:
         assert snapshot["owner_count"] == 1
 
         result = await adapter.upsert_quest_owner_binding(
-            api_key="secret-plugin-key",
+            api_principal_digest=authenticated_principal_digest(
+                "api_key:11111111-2222-3333-4444-555555555555"
+            ),
             client_id="quest-room",
             platform_id="platform-test",
             bot_id="bot-test",
@@ -125,10 +128,34 @@ def test_upsert_hashes_principal_and_returns_only_redacted_counts() -> None:
             "user_id",
         }
         assert provider.requests[0]["api_principal_digest"].startswith("sha256:")
-        assert "secret-plugin-key" not in repr(provider.requests)
-        assert "secret-plugin-key" not in repr(result)
+        assert provider.requests[0]["api_principal_digest"] == (
+            authenticated_principal_digest(
+                "api_key:11111111-2222-3333-4444-555555555555"
+            )
+        )
+        assert "11111111-2222-3333-4444-555555555555" not in repr(
+            provider.requests
+        )
+        assert "11111111-2222-3333-4444-555555555555" not in repr(result)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "principal",
+    (
+        "",
+        "dashboard-admin",
+        "api_key:",
+        "api_key:contains space",
+        "api_key:contains|separator",
+        "api_key:" + "x" * 129,
+    ),
+)
+def test_only_authenticated_api_key_principals_can_be_hashed(principal: str) -> None:
+    with pytest.raises(IdentityControlPlaneError) as error:
+        authenticated_principal_digest(principal)
+    assert error.value.code == "invalid_authenticated_api_principal"
 
 
 def test_present_incompatible_provider_fails_closed() -> None:

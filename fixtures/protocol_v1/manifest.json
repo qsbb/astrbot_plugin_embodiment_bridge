@@ -41,6 +41,7 @@
     {"method": "GET", "path": "/pairing/diagnostics", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/identity-candidates", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/identity-selection", "success_status": 200, "authentication": "astrbot_dashboard"},
+    {"method": "GET", "path": "/pairing/api-principal-proof", "success_status": 200, "authentication": "astrbot_api_key_plugin_scope"},
     {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/status", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/revoke", "success_status": 200, "authentication": "astrbot_dashboard"},

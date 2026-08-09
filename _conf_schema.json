@@ -76,6 +76,12 @@
     "obvious_hint": true,
     "default": ""
   },
+  "pairing_api_principal_digest": {
+    "description": "Quest API Key 已认证身份摘要",
+    "type": "string",
+    "hint": "由“Quest 角色设置”页面通过 AstrBot 官方 API Key 认证自动写入；只保存不可逆 SHA-256 摘要，请勿手动填写。",
+    "default": ""
+  },
   "pairing_user_id": {
     "description": "Quest 会话用户 ID",
     "type": "string",

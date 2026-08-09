@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from typing import Any
 
@@ -304,6 +305,24 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert identity["control_plane"]["authoritative"] is False
                 assert "quick-pair-plugin-scope-key" not in repr(identity)
 
+                dashboard_proof = await client.get(
+                    server.url("/pairing/api-principal-proof"),
+                    headers=PAGE_AUTH,
+                )
+                assert dashboard_proof.status == 401
+                api_key_proof = await client.get(
+                    server.url("/pairing/api-principal-proof"),
+                    headers=AUTH_HEADERS,
+                )
+                assert api_key_proof.status == 200
+                assert await api_key_proof.json() == {
+                    "success": True,
+                    "api_principal_digest": "sha256:"
+                    + hashlib.sha256(
+                        b"api_key:11111111-2222-3333-4444-555555555555"
+                    ).hexdigest(),
+                }
+
                 saved_identity = await client.post(
                     server.url("/pairing/quest-identity-settings"),
                     headers=PAGE_AUTH,
@@ -312,7 +331,7 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                         "platform_id": "contract-platform",
                         "bot_id": "bot-test",
                         "user_id": "user-test",
-                        "api_key": "contract-plugin-token",
+                        "api_key": ASTRBOT_API_TOKEN,
                     },
                 )
                 assert saved_identity.status == 200
@@ -329,6 +348,21 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert bundle.plugin.pairing_api.pairing_defaults["bot_id"] == (
                     "bot-test"
                 )
+                assert bundle.plugin.config["pairing_api_principal_digest"].startswith(
+                    "sha256:"
+                )
+                assert "contract-plugin-token" not in bundle.plugin.config[
+                    "pairing_api_principal_digest"
+                ]
+
+                api_key_cannot_call_management = await client.get(
+                    server.url("/pairing/operator-settings"),
+                    headers=AUTH_HEADERS,
+                )
+                assert api_key_cannot_call_management.status == 401
+                assert (await api_key_cannot_call_management.json())[
+                    "data"
+                ]["code"] == "astrbot_dashboard_auth_required"
 
                 local_session = await client.post(
                     server.url("/session/start"),

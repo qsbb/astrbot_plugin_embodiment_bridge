@@ -420,7 +420,7 @@ function renderQuestIdentitySettings(identity) {
   document.getElementById("quest-api-key").value = "";
   document.getElementById("quest-api-key").placeholder =
     questIdentitySettings.astrbot_auth_configured
-      ? "已配置，留空保持不变"
+      ? "已配置；再次保存时仍需填写以重新验证"
       : "请填写 Quest 专用 API Key";
   ["quest-client-id", "quest-bot-id", "quest-user-id", "quest-api-key"]
     .forEach((id) => { document.getElementById(id).disabled = !writable; });
@@ -464,13 +464,15 @@ async function loadQuestIdentitySettings() {
 async function saveQuestIdentitySettings() {
   const button = document.getElementById("save-quest-identity-button");
   if (!setButtonBusy(button, true, "正在保存并验证…")) return;
+  const apiKeyInput = document.getElementById("quest-api-key");
+  const apiKey = apiKeyInput.value;
   try {
     const response = await apiPost("pairing/quest-identity-settings", {
       client_id: document.getElementById("quest-client-id").value,
       platform_id: document.getElementById("trusted-platform-id").value,
       bot_id: document.getElementById("quest-bot-id").value,
       user_id: document.getElementById("quest-user-id").value,
-      api_key: document.getElementById("quest-api-key").value
+      api_key: apiKey
     });
     renderQuestIdentitySettings(response.identity);
     await loadPlatformSettings();
@@ -478,9 +480,9 @@ async function saveQuestIdentitySettings() {
       ? "Quest 身份已保存到“序”并验证"
       : "Quest 身份已保存到“临”的本地精确绑定");
   } catch (error) {
-    document.getElementById("quest-api-key").value = "";
     toast("Quest 身份保存失败：" + error.message, true);
   } finally {
+    apiKeyInput.value = "";
     setButtonBusy(button, false);
     button.disabled = questIdentitySettings?.config_writable !== true;
   }

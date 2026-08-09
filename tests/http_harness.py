@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import importlib
 import json
 import sys
@@ -25,9 +26,10 @@ from astrbot_plugin_quest_avatar_bridge.core.models import (
 
 API_MOUNT = "/api/v1/plugins/extensions"
 ASTRBOT_API_TOKEN = "contract-plugin-token"
+ASTRBOT_API_KEY_ID = "11111111-2222-3333-4444-555555555555"
 BRIDGE_API_KEY = "contract-bridge-key-0000000000000000"
 AUTH_HEADERS = {
-    "Authorization": f"Bearer {ASTRBOT_API_TOKEN}",
+    "Authorization": f"ApiKey {ASTRBOT_API_TOKEN}",
     "X-Quest-Avatar-Key": BRIDGE_API_KEY,
 }
 
@@ -41,6 +43,14 @@ class LoggerStub:
 
     def error(self, *args: Any, **kwargs: Any) -> None:
         pass
+
+
+class ApiPrincipalVerifierStub:
+    async def resolve_digest(self, api_key: object) -> str:
+        if str(api_key or "") != ASTRBOT_API_TOKEN:
+            raise ValueError("unexpected test API key")
+        principal = f"api_key:{ASTRBOT_API_KEY_ID}"
+        return "sha256:" + hashlib.sha256(principal.encode("utf-8")).hexdigest()
 
 
 class ResponseStub:
@@ -79,11 +89,12 @@ class BoundRequest:
     def __init__(self, value: web.Request) -> None:
         self.value = value
         authorization = value.headers.get("Authorization", "")
-        self.username = (
-            f"api_key:{ASTRBOT_API_TOKEN}"
-            if authorization == f"Bearer {ASTRBOT_API_TOKEN}"
-            else ""
-        )
+        if authorization == f"ApiKey {ASTRBOT_API_TOKEN}":
+            self.username = f"api_key:{ASTRBOT_API_KEY_ID}"
+        elif authorization == f"Bearer {ASTRBOT_API_TOKEN}":
+            self.username = "dashboard-admin"
+        else:
+            self.username = ""
 
     @property
     def content_type(self) -> str:
@@ -412,6 +423,7 @@ def build_plugin(
     )
     config.update(config_overrides or {})
     plugin = main_module.QuestAvatarBridgePlugin(context, config)
+    plugin.pairing_api.api_principal_verifier = ApiPrincipalVerifierStub()
     llm = FakeLLMAdapter()
     stt = FakeSTTAdapter()
     tts = FakeTTSAdapter()

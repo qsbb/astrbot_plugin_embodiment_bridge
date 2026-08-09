@@ -150,7 +150,7 @@
       <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">
         <span class="section-label">身份与绑定</span>
         <h2 id="quest-identity-title">Quest 身份</h2>
-        <p>一次填写 Quest 客户端、Bot、用户和专用 API Key。“序”已安装时由它统一保存主人和精确白名单；未安装时“临”使用同样严格的本地绑定。</p>
+        <p>一次填写 Quest 客户端、Bot、用户和专用 API Key。保存时后端通过本机回环调用 AstrBot 官方认证层验证 API Key，再由“序”统一保存主人和精确白名单；未安装“序”时“临”使用同样严格的本地绑定。</p>
         <label for="quest-client-id">Quest 客户端 ID</label>
         <input id="quest-client-id" type="text" maxlength="64" autocomplete="off" placeholder="quest-living-room" />
         <label for="quest-bot-id">Bot ID</label>
@@ -158,7 +158,7 @@
         <label for="quest-user-id">主人用户 ID</label>
         <input id="quest-user-id" type="text" maxlength="128" autocomplete="off" />
         <label for="quest-api-key">Quest 专用 AstrBot API Key</label>
-        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="已配置时可留空" />
+        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="每次保存均需填写，仅用于即时验证" />
         <p id="quest-identity-status" class="field-status" role="status">尚未读取</p>
         <button id="save-quest-identity-button" class="primary" type="button" aria-busy="false" disabled>保存并验证身份</button>
       </section>

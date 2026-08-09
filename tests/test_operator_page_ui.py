@@ -101,8 +101,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "personaSettings.personas" in js
     assert 'apiGet("pairing/quest-identity-settings")' in js
     assert 'apiPost("pairing/quest-identity-settings"' in js
+    assert "apiKeyPost" not in js
+    assert "fetch(" not in js
+    assert '"api_principal":' not in js
     assert 'id="quest-api-key" type="password"' in html
     assert 'autocomplete="new-password"' in html
+    assert "每次保存均需填写，仅用于即时验证" in html
     assert "由“序”统一管理" in js
     assert "本地精确绑定" in js
     assert 'apiGet("pairing/identity-candidates")' in js
@@ -118,7 +122,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "owner_not_configured" in js
     assert "当前根因" in js
     assert "renderDiagnosticEvents" in js
-    assert "JSON.stringify" not in js
+    assert "JSON.stringify(event)" not in js
+    assert "JSON.stringify(diagnostics)" not in js
     assert ".diagnostic-line.status-failed" in css
     assert "阶段时间线（最新在下）" in html
     assert 'button[aria-busy="true"]' in css

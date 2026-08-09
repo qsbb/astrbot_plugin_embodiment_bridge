@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .provider_utils import contract_matches, find_active_provider
+from .identity_control_plane import validate_principal_digest
 
 
 IDENTITY_PLUGIN_NAME = "astrbot_plugin_identity_guardian"
@@ -39,7 +40,7 @@ class QuestSessionAuthorizationAdapter:
         *,
         trusted_client_id: str,
         trusted_platform_id: str,
-        local_api_key: str = "",
+        local_api_principal_digest: str = "",
         local_bot_id: str = "",
         local_user_id: str = "",
         local_group_id: str = "",
@@ -48,11 +49,8 @@ class QuestSessionAuthorizationAdapter:
         self.logger = logger
         self.trusted_client_id = trusted_client_id.strip()
         self.trusted_platform_id = trusted_platform_id.strip()
-        principal = f"api_key:{str(local_api_key or '')}"
-        self._local_principal_fingerprint = (
-            hashlib.sha256(principal.encode("utf-8")).hexdigest()
-            if local_api_key
-            else ""
+        self._local_principal_fingerprint = _stored_principal_fingerprint(
+            local_api_principal_digest
         )
         self.local_bot_id = str(local_bot_id or "").strip()
         self.local_user_id = str(local_user_id or "").strip()
@@ -109,17 +107,16 @@ class QuestSessionAuthorizationAdapter:
     def configure_local_binding(
         self,
         *,
-        api_key: str,
+        api_principal_digest: str,
         client_id: str,
         platform_id: str,
         bot_id: str,
         user_id: str,
         group_id: str,
     ) -> None:
-        principal = f"api_key:{str(api_key or '')}"
-        self._local_principal_fingerprint = (
-            hashlib.sha256(principal.encode("utf-8")).hexdigest() if api_key else ""
-        )
+        self._local_principal_fingerprint = validate_principal_digest(
+            api_principal_digest
+        ).removeprefix("sha256:")
         self.trusted_client_id = str(client_id or "").strip()
         self.trusted_platform_id = str(platform_id or "").strip()
         self.local_bot_id = str(bot_id or "").strip()
@@ -301,3 +298,12 @@ class QuestSessionAuthorizationAdapter:
 
     async def close(self) -> None:
         return None
+
+
+def _stored_principal_fingerprint(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized.startswith("sha256:"):
+        normalized = normalized.removeprefix("sha256:")
+    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+        return ""
+    return normalized

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.4.11 - 2026-08-09
+
+### Changed
+
+- Quest 身份保存改为使用 AstrBot 官方 `ApiKey` 认证层证明调用方身份，只对认证后生成的 `api_key:<key_id>` principal 做 SHA-256 摘要；不再从原始 API Key 猜测 principal。
+- “Quest 角色设置”页面每次保存身份都通过 Page Bridge 提交；后端再从严格 loopback 地址调用只读 principal 证明端点。密钥不进入页面存储、证明响应或日志。
+- 管理端点现在明确拒绝 API Key principal，只接受 Dashboard 身份；只读 principal 证明端点则只接受具有 `plugin` scope 的 API Key，并且不经 8520 listener 暴露。
+
+### Fixed
+
+- 修复“序”中 Quest 白名单摘要与 AstrBot 运行时 principal 永远不一致、导致 `quest_identity_not_allowlisted` 的问题。
+- 修复未安装“序”时本地精确绑定在插件重载后仍按原始 API Key 构造错误 principal 的问题；现在持久化不可逆的已认证 principal 摘要。
+
 ## 0.4.10 - 2026-08-09
 
 ### Added

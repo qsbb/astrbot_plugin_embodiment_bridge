@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -223,7 +224,10 @@ def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
             LoggerStub(),
             trusted_client_id="quest-room",
             trusted_platform_id="platform-test",
-            local_api_key="plugin-scope-key",
+            local_api_principal_digest=(
+                "sha256:"
+                + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
+            ),
             local_bot_id="bot-test",
             local_user_id="user-test",
             local_group_id="",
@@ -266,7 +270,10 @@ def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
             LoggerStub(),
             trusted_client_id="quest-room",
             trusted_platform_id="platform-test",
-            local_api_key="plugin-scope-key",
+            local_api_principal_digest=(
+                "sha256:"
+                + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
+            ),
             local_bot_id="bot-test",
             local_user_id="user-test",
         )

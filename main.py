@@ -9,6 +9,7 @@ from astrbot.api.star import Context, Star, StarTools
 from .adapters.astrbot_llm import AstrBotLLMAdapter
 from .adapters.astrbot_persona import AstrBotPersonaAdapter
 from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
+from .adapters.api_principal import AstrBotApiPrincipalVerifier
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.identity import QuestSessionAuthorizationAdapter
 from .adapters.identity_control_plane import IdentityControlPlaneAdapter
@@ -41,7 +42,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.10"
+__version__ = "0.4.11"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -163,7 +164,9 @@ class QuestAvatarBridgePlugin(Star):
             self._component_logger,
             trusted_client_id=trusted_client_id,
             trusted_platform_id=trusted_platform_id,
-            local_api_key=str(config.get("pairing_astrbot_api_key", "") or ""),
+            local_api_principal_digest=str(
+                config.get("pairing_api_principal_digest", "") or ""
+            ),
             local_bot_id=str(config.get("pairing_bot_id", "") or ""),
             local_user_id=str(config.get("pairing_user_id", "") or ""),
             local_group_id=str(config.get("pairing_group_id", "") or ""),
@@ -245,6 +248,9 @@ class QuestAvatarBridgePlugin(Star):
             max_json_body_bytes=max_json_body_bytes,
             max_audio_request_bytes=max_audio_request_bytes,
         )
+        self.api_principal_verifier = AstrBotApiPrincipalVerifier(
+            listener_config.upstream_base_url
+        )
         pairing_public_url = str(config.get("pairing_public_url", "") or "").strip()
         if not pairing_public_url and listener_config.public_exchange_url.endswith(
             "/pairing/exchange"
@@ -314,6 +320,7 @@ class QuestAvatarBridgePlugin(Star):
             trusted_proxy_ip=pairing_trusted_proxy_ip,
             operator_settings=self.operator_settings,
             relationship_candidates=self.relationship_candidates,
+            api_principal_verifier=self.api_principal_verifier,
             diagnostic_log=self.diagnostic_log,
             pairing_defaults={
                 "public_url": pairing_public_url,

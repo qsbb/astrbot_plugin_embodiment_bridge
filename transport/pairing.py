@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 from qrcode.constants import ERROR_CORRECT_M
 from qrcode.image.svg import SvgPathImage
 
+from ..adapters.api_principal import ApiPrincipalVerificationError
+from ..adapters.identity_control_plane import authenticated_principal_digest
 from ..core.pairing import (
     PAIRING_PROTOCOL_VERSION,
     PUBLIC_API_PATH,
@@ -109,6 +111,7 @@ class PairingHttpApi:
         trusted_platform_id: str,
         operator_settings: Any,
         relationship_candidates: Any,
+        api_principal_verifier: Any,
         diagnostic_log: Any | None = None,
         pairing_defaults: dict[str, Any] | None = None,
         trusted_proxy_ip: str = "",
@@ -125,6 +128,7 @@ class PairingHttpApi:
         self.trusted_proxy_ip = _canonical_ip(trusted_proxy_ip)
         self.operator_settings = operator_settings
         self.relationship_candidates = relationship_candidates
+        self.api_principal_verifier = api_principal_verifier
         self.diagnostic_log = diagnostic_log
         self.pairing_defaults = dict(pairing_defaults or {})
         self.max_json_body_bytes = max(4096, min(65_536, max_json_body_bytes))
@@ -195,7 +199,7 @@ class PairingHttpApi:
                 "pairing/quest-identity-settings",
                 self.save_quest_identity_settings,
                 ["POST"],
-                "Save Quest identity through the optional identity control plane",
+                "Verify an AstrBot API-key principal and save Quest identity",
             ),
             (
                 "pairing/diagnostics",
@@ -214,6 +218,12 @@ class PairingHttpApi:
                 self.save_identity_selection,
                 ["POST"],
                 "Save Quest relationship natural-person selection",
+            ),
+            (
+                "pairing/api-principal-proof",
+                self.api_principal_proof,
+                ["GET"],
+                "Read the authenticated AstrBot API-key principal digest",
             ),
             (
                 "pairing/overview",
@@ -391,12 +401,17 @@ class PairingHttpApi:
         try:
             self._dashboard_owner()
             payload = await self._read_model(QuestIdentitySettingsRequest)
+            api_key = payload.api_key.get_secret_value()
+            principal_digest = await self.api_principal_verifier.resolve_digest(
+                api_key
+            )
             identity = await self.operator_settings.save_quest_identity(
                 client_id=payload.client_id,
                 platform_id=payload.platform_id,
                 bot_id=payload.bot_id,
                 user_id=payload.user_id,
-                astrbot_api_key=payload.api_key.get_secret_value(),
+                api_principal_digest=principal_digest,
+                astrbot_api_key=api_key,
             )
             self.trusted_client_id = identity["client_id"]
             self.trusted_platform_id = identity["platform_id"]
@@ -413,6 +428,20 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "identity": identity})
         except Exception as exc:
             return self._error(exc, "save_quest_identity_settings")
+
+    async def api_principal_proof(self) -> Any:
+        try:
+            principal = self._api_key_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "api_principal_digest": authenticated_principal_digest(
+                        principal
+                    ),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "api_principal_proof")
 
     async def diagnostics_overview(self) -> Any:
         try:
@@ -722,12 +751,33 @@ class PairingHttpApi:
             return self._error(exc, "exchange")
 
     def _dashboard_owner(self) -> str:
+        owner = self._authenticated_owner()
+        if owner.startswith("api_key:"):
+            raise PairingError(
+                "astrbot_dashboard_auth_required",
+                401,
+                "AstrBot Dashboard authentication is required",
+            )
+        return owner
+
+    def _api_key_owner(self) -> str:
+        owner = self._authenticated_owner()
+        if not owner.startswith("api_key:"):
+            raise PairingError(
+                "api_key_auth_required",
+                401,
+                "AstrBot API Key authentication is required",
+            )
+        return owner
+
+    @staticmethod
+    def _authenticated_owner() -> str:
         owner = str(request.username or "").strip()
         if not owner:
             raise PairingError(
                 "astrbot_auth_required",
                 401,
-                "AstrBot Dashboard authentication is required",
+                "AstrBot authentication is required",
             )
         return owner
 
@@ -803,7 +853,12 @@ class PairingHttpApi:
         headers = dict(NO_STORE_HEADERS)
         if isinstance(
             exc,
-            (PairingError, OperatorSettingsError, BridgeServiceControlError),
+            (
+                PairingError,
+                OperatorSettingsError,
+                BridgeServiceControlError,
+                ApiPrincipalVerificationError,
+            ),
         ):
             data: dict[str, object] = {"code": exc.code}
             retry_after = getattr(exc, "retry_after", None)

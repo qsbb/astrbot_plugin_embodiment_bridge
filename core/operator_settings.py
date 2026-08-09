@@ -13,6 +13,7 @@ from ..adapters.astrbot_persona import (
 from ..adapters.identity_control_plane import (
     IdentityControlPlaneAdapter,
     IdentityControlPlaneError,
+    validate_principal_digest,
 )
 
 
@@ -244,6 +245,7 @@ class OperatorSettings:
         platform_id: str,
         bot_id: str,
         user_id: str,
+        api_principal_digest: str,
         astrbot_api_key: str,
     ) -> dict[str, Any]:
         client = str(client_id or "").strip()
@@ -266,6 +268,14 @@ class OperatorSettings:
                 422,
                 "请填写可访问“临”的 AstrBot API Key",
             )
+        try:
+            principal_digest = validate_principal_digest(api_principal_digest)
+        except ValueError as exc:
+            raise OperatorSettingsError(
+                "invalid_authenticated_api_principal",
+                401,
+                "AstrBot 未提供有效的 API Key 身份凭据",
+            ) from exc
         bridge_key = str(self.config.get("bridge_api_key", "") or "")
         if len(bridge_key) < 32:
             bridge_key = secrets.token_urlsafe(32)
@@ -279,7 +289,7 @@ class OperatorSettings:
             try:
                 control_result = await (
                     self.identity_control_plane.upsert_quest_owner_binding(
-                        api_key=api_key,
+                        api_principal_digest=principal_digest,
                         client_id=client,
                         platform_id=platform,
                         bot_id=bot,
@@ -296,12 +306,13 @@ class OperatorSettings:
             "pairing_user_id": user,
             "pairing_group_id": "",
             "pairing_astrbot_api_key": api_key,
+            "pairing_api_principal_digest": principal_digest,
             "bridge_api_key": bridge_key,
         }
         await self._persist_many(changes)
         if self.identity is not None:
             self.identity.configure_local_binding(
-                api_key=api_key,
+                api_principal_digest=principal_digest,
                 client_id=client,
                 platform_id=platform,
                 bot_id=bot,
@@ -603,6 +614,7 @@ class OperatorSettings:
                 "pairing_user_id",
                 "pairing_group_id",
                 "pairing_astrbot_api_key",
+                "pairing_api_principal_digest",
                 "bridge_api_key",
             }
             for key in changes

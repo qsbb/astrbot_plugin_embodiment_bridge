@@ -11,6 +11,7 @@ import pytest
 
 from .http_harness import (
     AUTH_HEADERS,
+    ASTRBOT_API_KEY_ID,
     ASTRBOT_API_TOKEN,
     BRIDGE_API_KEY,
     LiveHttpServer,
@@ -653,7 +654,7 @@ def test_sse_reconnect_and_late_old_turn_do_not_leak(
                 first.close()
 
                 session = await bundle.plugin.sessions.get_owned(
-                    "reconnect-session", f"api_key:{ASTRBOT_API_TOKEN}"
+                    "reconnect-session", f"api_key:{ASTRBOT_API_KEY_ID}"
                 )
                 for _ in range(100):
                     if not session.stream_attached:

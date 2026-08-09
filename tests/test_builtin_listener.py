@@ -495,6 +495,7 @@ def test_exchange_request_validation_and_path_fail_closed() -> None:
                 f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
                 f"{PUBLIC_API_PATH}/pairing/identity-selection",
+                f"{PUBLIC_API_PATH}/pairing/api-principal-proof",
             )
             for path in upstream_forbidden:
                 assert (await client.get(base + path)).status == 404
@@ -622,6 +623,7 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
                 f"{PUBLIC_API_PATH}/pairing/operator-settings",
                 f"{PUBLIC_API_PATH}/pairing/platform-settings",
                 f"{PUBLIC_API_PATH}/pairing/identity-candidates",
+                f"{PUBLIC_API_PATH}/pairing/api-principal-proof",
             ):
                 assert (await client.get(base + path)).status == 404
         assert len(received) == before

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import re
 from typing import Any
 
 from .provider_utils import find_active_provider
@@ -12,6 +13,10 @@ IDENTITY_PLUGIN_NAME = "astrbot_plugin_identity_guardian"
 CONTROL_PLANE_NAME = "identity.control_plane"
 CONTROL_PLANE_VERSION = "1.0"
 CONTROL_PLANE_TIMEOUT_SECONDS = 2.0
+_AUTHENTICATED_API_PRINCIPAL_RE = re.compile(
+    r"^api_key:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+)
+_PRINCIPAL_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RESPONSE_KEYS = {
     "contract_version",
     "status",
@@ -29,6 +34,25 @@ class IdentityControlPlaneError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def authenticated_principal_digest(api_principal: object) -> str:
+    """Hash an AstrBot-authenticated API-key principal, never a raw API key."""
+
+    principal = str(api_principal or "").strip()
+    if not _AUTHENTICATED_API_PRINCIPAL_RE.fullmatch(principal):
+        raise IdentityControlPlaneError(
+            "invalid_authenticated_api_principal",
+            "AstrBot 未提供有效的 API Key 身份凭据",
+        )
+    return "sha256:" + hashlib.sha256(principal.encode("utf-8")).hexdigest()
+
+
+def validate_principal_digest(value: object) -> str:
+    digest = str(value or "").strip().lower()
+    if not _PRINCIPAL_DIGEST_RE.fullmatch(digest):
+        raise ValueError("invalid API principal digest")
+    return digest
 
 
 class IdentityControlPlaneAdapter:
@@ -78,7 +102,7 @@ class IdentityControlPlaneAdapter:
     async def upsert_quest_owner_binding(
         self,
         *,
-        api_key: str,
+        api_principal_digest: str,
         client_id: str,
         platform_id: str,
         bot_id: str,
@@ -99,10 +123,10 @@ class IdentityControlPlaneAdapter:
                 "grants_platform_action": False,
             }
         self._require_contract(provider)
-        principal = f"api_key:{str(api_key or '')}"
         request = {
-            "api_principal_digest": "sha256:"
-            + hashlib.sha256(principal.encode("utf-8")).hexdigest(),
+            "api_principal_digest": validate_principal_digest(
+                api_principal_digest
+            ),
             "client_id": client_id,
             "platform_id": platform_id,
             "bot_id": bot_id,
