@@ -15,6 +15,9 @@ from typing import Any
 
 from aiohttp import web
 
+from astrbot_plugin_quest_avatar_bridge.adapters.api_principal import (
+    ApiPrincipalVerificationError,
+)
 from astrbot_plugin_quest_avatar_bridge.core.models import (
     Emotion,
     Gesture,
@@ -46,8 +49,19 @@ class LoggerStub:
 
 
 class ApiPrincipalVerifierStub:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
     async def resolve_digest(self, api_key: object) -> str:
-        if str(api_key or "") != ASTRBOT_API_TOKEN:
+        credential = str(api_key or "")
+        self.calls.append(credential)
+        if not credential:
+            raise ApiPrincipalVerificationError(
+                "pairing_astrbot_api_key_missing",
+                422,
+                "A valid Quest AstrBot API Key is required",
+            )
+        if credential != ASTRBOT_API_TOKEN:
             raise ValueError("unexpected test API key")
         principal = f"api_key:{ASTRBOT_API_KEY_ID}"
         return "sha256:" + hashlib.sha256(principal.encode("utf-8")).hexdigest()

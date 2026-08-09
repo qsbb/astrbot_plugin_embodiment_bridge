@@ -401,7 +401,10 @@ class PairingHttpApi:
         try:
             self._dashboard_owner()
             payload = await self._read_model(QuestIdentitySettingsRequest)
-            api_key = payload.api_key.get_secret_value()
+            api_key = payload.api_key.get_secret_value().strip() or str(
+                self.operator_settings.config.get("pairing_astrbot_api_key", "")
+                or ""
+            ).strip()
             principal_digest = await self.api_principal_verifier.resolve_digest(
                 api_key
             )

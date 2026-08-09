@@ -420,7 +420,7 @@ function renderQuestIdentitySettings(identity) {
   document.getElementById("quest-api-key").value = "";
   document.getElementById("quest-api-key").placeholder =
     questIdentitySettings.astrbot_auth_configured
-      ? "已配置；再次保存时仍需填写以重新验证"
+      ? "已配置，可留空并重新验证"
       : "请填写 Quest 专用 API Key";
   ["quest-client-id", "quest-bot-id", "quest-user-id", "quest-api-key"]
     .forEach((id) => { document.getElementById(id).disabled = !writable; });

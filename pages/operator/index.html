@@ -158,7 +158,8 @@
         <label for="quest-user-id">主人用户 ID</label>
         <input id="quest-user-id" type="text" maxlength="128" autocomplete="off" />
         <label for="quest-api-key">Quest 专用 AstrBot API Key</label>
-        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="每次保存均需填写，仅用于即时验证" />
+        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" aria-describedby="quest-api-key-help" placeholder="已配置时可留空" />
+        <p id="quest-api-key-help" class="field-help">获取途径：AstrBot 管理后台 → 设置 → API Key 管理 → 创建 API Key。至少勾选 <code>plugin</code> 权限；密钥明文只显示一次。若上方显示“已配置”，这里可以留空。</p>
         <p id="quest-identity-status" class="field-status" role="status">尚未读取</p>
         <button id="save-quest-identity-button" class="primary" type="button" aria-busy="false" disabled>保存并验证身份</button>
       </section>

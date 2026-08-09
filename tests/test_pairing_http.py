@@ -431,6 +431,67 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
     asyncio.run(scenario())
 
 
+def test_quest_identity_save_reuses_configured_api_key_and_fails_when_missing(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        configured = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={"pairing_astrbot_api_key": ASTRBOT_API_TOKEN},
+        )
+        async with LiveHttpServer(configured) as server:
+            async with ClientSession() as client:
+                platform = await client.post(
+                    server.url("/pairing/platform-settings"),
+                    headers=PAGE_AUTH,
+                    json={"trusted_platform_id": "contract-platform"},
+                )
+                assert platform.status == 200
+                saved = await client.post(
+                    server.url("/pairing/quest-identity-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "client_id": "quest-room",
+                        "platform_id": "contract-platform",
+                        "bot_id": "bot-test",
+                        "user_id": "user-test",
+                        "api_key": "",
+                    },
+                )
+                assert saved.status == 200
+                assert configured.plugin.pairing_api.api_principal_verifier.calls == [
+                    ASTRBOT_API_TOKEN
+                ]
+                assert ASTRBOT_API_TOKEN not in repr(await saved.json())
+
+        missing = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={"pairing_astrbot_api_key": ""},
+        )
+        async with LiveHttpServer(missing) as server:
+            async with ClientSession() as client:
+                response = await client.post(
+                    server.url("/pairing/quest-identity-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "client_id": "quest-room",
+                        "platform_id": "contract-platform",
+                        "bot_id": "bot-test",
+                        "user_id": "user-test",
+                        "api_key": "",
+                    },
+                )
+                assert response.status == 422
+                assert (await response.json())["data"]["code"] == (
+                    "pairing_astrbot_api_key_missing"
+                )
+
+    asyncio.run(scenario())
+
+
 def test_persona_settings_are_dashboard_protected_and_prompt_redacted(
     monkeypatch: Any,
     tmp_path: Any,
