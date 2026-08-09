@@ -120,10 +120,45 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 }
 
 .diagnostics-events {
-  max-height: 16rem;
+  display: grid;
+  gap: 8px;
+  max-height: 24rem;
   overflow: auto;
-  white-space: pre-wrap;
-  font: 0.75rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding-right: 4px;
+}
+.diagnostics-root-cause {
+  margin: 0;
+  border-left: 3px solid #df6d69;
+  padding: 11px 13px;
+  color: #ffd7d3;
+  background: #291716;
+}
+.diagnostic-event {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #2c3d3b;
+  border-left: 3px solid #60736d;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #111a1b;
+}
+.diagnostic-event-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.diagnostic-event-heading strong { font-size: 13px; color: #eef5f2; }
+.diagnostic-event-heading span { flex: 0 0 auto; color: #9fb0ab; font-size: 11px; font-weight: 800; }
+.diagnostic-event p { margin: 0; color: #bdcbc7; font-size: 12px; }
+.diagnostic-event small { color: #71837d; font-size: 11px; }
+.diagnostic-event.status-ok,
+.diagnostic-event.status-ready,
+.diagnostic-event.status-authorized,
+.diagnostic-event.status-completed,
+.diagnostic-event.status-connected { border-left-color: #55d7aa; }
+.diagnostic-event.status-limited,
+.diagnostic-event.status-fallback,
+.diagnostic-event.status-unavailable { border-left-color: #d3a84a; }
+.diagnostic-event.status-blocked,
+.diagnostic-event.status-error,
+.diagnostic-event.status-failed { border-left-color: #df6d69; }
+.diagnostics-empty { margin: 0; color: #84958f; font-size: 13px; }
 }
 .setting-panel h2 { margin: 0; font-size: 22px; letter-spacing: 0; }
 .section-label { color: #55d7aa; font-size: 12px; font-weight: 800; }

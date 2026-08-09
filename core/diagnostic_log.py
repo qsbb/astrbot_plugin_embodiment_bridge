@@ -21,8 +21,10 @@ _SAFE_FIELD_NAMES = frozenset(
         "status",
         "code",
         "reason",
+        "reason_code",
         "error_type",
         "state",
+        "phase",
         "method",
         "route",
         "event_type",
@@ -31,6 +33,12 @@ _SAFE_FIELD_NAMES = frozenset(
         "ready",
         "degraded",
         "duration_ms",
+        "http_status",
+        "attempt",
+        "queue_depth",
+        "active_sessions",
+        "attached_streams",
+        "event_count",
         "bytes",
         "chunks",
         "sequence",
@@ -41,6 +49,9 @@ _SAFE_FIELD_NAMES = frozenset(
         "name_configured",
         "persona_source",
         "persona_status",
+        "authorized",
+        "text_sent",
+        "audio_sent",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
@@ -49,8 +60,16 @@ _SENSITIVE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
-    {"persona_configured", "character_name_configured", "name_configured"}
+    {
+        "persona_configured",
+        "character_name_configured",
+        "name_configured",
+        "authorized",
+        "text_sent",
+        "audio_sent",
+    }
 )
+_SAFE_AGGREGATE_FIELDS = frozenset({"active_sessions", "attached_streams"})
 _SAFE_PERSONA_ENUM_FIELDS = frozenset({"persona_source", "persona_status"})
 _SAFE_PERSONA_ENUM_VALUES = frozenset(
     {
@@ -134,7 +153,7 @@ class DiagnosticLog:
             }
 
     def record(self, event: str, **fields: Any) -> None:
-        if not self.enabled or self._disabled_due_error or self._closing:
+        if self._closing:
             return
         payload: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
@@ -145,6 +164,7 @@ class DiagnosticLog:
                 _SENSITIVE_NAME_RE.search(name)
                 and name not in _SAFE_BOOLEAN_STATUS_FIELDS
                 and name not in _SAFE_PERSONA_ENUM_FIELDS
+                and name not in _SAFE_AGGREGATE_FIELDS
             ):
                 continue
             safe = self._safe_value(name, value)
@@ -154,10 +174,16 @@ class DiagnosticLog:
             line = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
             with self._lock:
                 self._append_event_unlocked(payload)
-                self._pending.append(line)
+                if self.enabled and not self._disabled_due_error:
+                    self._pending.append(line)
                 loop = self._loop
                 wake = self._wake
-            if loop is not None and wake is not None:
+            if (
+                self.enabled
+                and not self._disabled_due_error
+                and loop is not None
+                and wake is not None
+            ):
                 loop.call_soon_threadsafe(wake.set)
         except Exception:
             # Diagnostics must never change plugin or request behavior.
@@ -359,13 +385,12 @@ class DiagnosticLog:
                 "dropped_before": max(0, first - 1),
             }
             if not self.enabled:
-                base.update(status="disabled", reason="DIAGNOSTIC_DISABLED")
-                return base
-            if self._disabled_due_error:
-                base.update(status="unavailable", reason="DIAGNOSTIC_UNAVAILABLE")
-                return base
-            base["status"] = "ready"
-            base["reason"] = "READY"
+                base.update(status="memory_only", reason="FILE_LOG_DISABLED")
+            elif self._disabled_due_error:
+                base.update(status="memory_only", reason="FILE_LOG_UNAVAILABLE")
+            else:
+                base["status"] = "ready"
+                base["reason"] = "READY"
             base["events"] = [
                 dict(event) for event in self._events if event["seq"] > after
             ][-size:]

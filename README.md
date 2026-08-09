@@ -348,6 +348,6 @@ python -m compileall .
 
 ## Series plugin integrations
 
-“临”保留插件自有 JSONL、内存快照和 Dashboard 脱敏诊断接口，但从 0.4.5 起不再声明 `series.diagnostics@1.0` 提供方，因此不会被“核”自动聚合。可选配置 `diagnostic_platform_log_enabled=true` 后，固定脱敏摘要会写入 `astrbot.plugin.astrbot_plugin_quest_avatar_bridge` 专属 logger；默认关闭，不挂接 root handler。诊断不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会阻塞其他请求。
+“临”保留插件自有 JSONL、有界内存时间线和 Dashboard 脱敏诊断接口，但不声明 `series.diagnostics@1.0` 提供方，因此不会被“核”自动聚合。内存时间线始终记录会话授权、音频接收、STT、AstrBot EventBus、LLM、TTS 与回复交付的稳定状态；JSONL 落盘仍由 `diagnostic_log_enabled` 控制。可选配置 `diagnostic_platform_log_enabled=true` 后，固定脱敏摘要会写入 `astrbot.plugin.astrbot_plugin_quest_avatar_bridge` 专属 logger；默认关闭，不挂接 root handler。诊断只包含原因码、HTTP 状态、耗时和汇总计数，不暴露密钥、认证头、会话身份、原始音频或回复正文，也不会阻塞其他请求。
 
 Quest calls only this Bridge. Backend reuse of knowledge, identity authorization, relationship snapshots, cached environment facts, Voice Hub PCM output, and runtime diagnostics is documented in [docs/SERIES_INTEGRATIONS_CN.md](docs/SERIES_INTEGRATIONS_CN.md). Conversation proactive delivery and orchestration-hub resolution are intentionally not consumed in normal Quest turns.

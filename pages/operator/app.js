@@ -527,6 +527,150 @@ async function saveIdentitySelection() {
   }
 }
 
+function diagnosticReasonLabel(code) {
+  const labels = {
+    owner_not_configured: "“序”尚未为这组 Quest 原始身份配置主人",
+    quest_identity_not_allowlisted: "Quest 原始身份不在“序”的允许列表",
+    invalid_user_id: "Quest 用户 ID 无效或仍是占位值",
+    missing_user_id: "Quest 用户 ID 缺失",
+    invalid_bot_id: "Quest Bot ID 无效",
+    missing_bot_id: "Quest Bot ID 缺失",
+    client_id_mismatch: "Quest 客户端 ID 与服务端配置不一致",
+    trusted_platform_not_configured: "尚未配置可进入 EventBus 的 AstrBot 平台",
+    trusted_platform_unavailable: "已配置的 AstrBot 平台当前不可用",
+    astrbot_event_api_unavailable: "当前 AstrBot 不提供消息事件接口",
+    astrbot_message_pipeline_unavailable: "AstrBot 消息链路不可用",
+    astrbot_pipeline_timeout: "AstrBot 消息链处理超时",
+    astrbot_pipeline_empty_reply: "AstrBot 消息链没有返回可用内容",
+    stt_empty: "没有识别到有效语音",
+    stt_unavailable: "语音识别服务未配置",
+    stt_failed: "语音识别失败",
+    llm_failed: "模型生成失败",
+    tts_failed: "语音合成失败，文字回复仍可能可用",
+    audio_upload_backpressure: "音频上传速度跟不上录音",
+    audio_http_request_failed: "音频上传请求失败",
+    turn_failed: "对话生成失败",
+    interaction_failed: "触碰交互决策失败",
+    response_first_event_timeout: "后端接收后没有返回首个事件",
+    response_event_stall_timeout: "后端事件流在回复结束前停滞",
+    ready: "链路就绪"
+  };
+  return labels[String(code || "")] || String(code || "未发现明确错误码");
+}
+
+function diagnosticStageLabel(value) {
+  const labels = {
+    identity: "身份授权",
+    session: "会话",
+    health: "健康检查",
+    sse: "实时事件",
+    transport: "HTTP 传输",
+    audio_input: "音频上传",
+    stt: "语音识别",
+    message_pipeline: "AstrBot/EventBus",
+    llm: "模型生成",
+    tts: "语音合成",
+    reply: "回复交付",
+    turn: "对话轮次"
+  };
+  return labels[String(value || "")] || String(value || "运行链路");
+}
+
+function diagnosticEventLabel(value) {
+  const labels = {
+    "session.authorization": "完成身份授权检查",
+    "session.authorization_error": "身份授权检查异常",
+    "session.started": "会话已建立",
+    "sse.connected": "SSE 已连接",
+    "sse.disconnected": "SSE 已断开",
+    "turn.accepted": "后端已接收轮次",
+    "audio.received": "音频上传完成",
+    "stt.started": "开始语音识别",
+    "stt.completed": "语音识别完成",
+    "stt.error": "语音识别失败",
+    "message_pipeline.selected": "选择回复链路",
+    "message_pipeline.started": "进入 AstrBot EventBus",
+    "message_pipeline.completed": "AstrBot EventBus 返回",
+    "message_pipeline.blocked": "AstrBot EventBus 被阻止",
+    "message_pipeline.fallback": "消息链路发生降级",
+    "llm.completed": "模型生成完成",
+    "llm.error": "模型生成失败",
+    "tts.completed": "语音合成完成",
+    "tts.error": "语音合成失败",
+    "reply.completed": "回复交付完成",
+    "reply.failed": "回复交付失败",
+    "http.health": "健康检查完成",
+    "http.error": "HTTP 请求失败"
+  };
+  return labels[String(value || "")] || String(value || "诊断事件");
+}
+
+function diagnosticStatusLabel(value) {
+  const labels = {
+    ok: "正常",
+    ready: "就绪",
+    authorized: "已授权",
+    connected: "已连接",
+    completed: "完成",
+    processing: "处理中",
+    awaiting_audio: "等待音频",
+    limited: "受限",
+    unavailable: "不可用",
+    fallback: "已降级",
+    blocked: "已阻止",
+    error: "错误",
+    failed: "失败",
+    closed: "已关闭"
+  };
+  return labels[String(value || "")] || String(value || "状态未知");
+}
+
+function diagnosticMeta(event) {
+  const parts = [];
+  if (Number.isFinite(event.http_status)) parts.push(`HTTP ${event.http_status}`);
+  if (Number.isFinite(event.duration_ms)) parts.push(`${Math.round(event.duration_ms)} ms`);
+  if (Number.isFinite(event.chunks)) parts.push(`${event.chunks} 块`);
+  if (Number.isFinite(event.bytes)) parts.push(`${event.bytes} 字节`);
+  if (Number.isFinite(event.event_count)) parts.push(`${event.event_count} 个事件`);
+  if (event.authorized === true) parts.push("身份已授权");
+  if (event.authorized === false) parts.push("身份未授权");
+  return parts.join(" · ");
+}
+
+function renderDiagnosticEvents(events) {
+  const container = document.getElementById("diagnostics-events");
+  container.replaceChildren();
+  if (!events.length) {
+    const empty = document.createElement("p");
+    empty.className = "diagnostics-empty";
+    empty.textContent = "尚无诊断事件。发起一次 Quest 连接或对话后再刷新。";
+    container.append(empty);
+    return;
+  }
+  events.slice().reverse().forEach((event) => {
+    const item = document.createElement("article");
+    const status = String(event.status || "");
+    item.className = `diagnostic-event status-${status || "unknown"}`;
+    const heading = document.createElement("div");
+    heading.className = "diagnostic-event-heading";
+    const title = document.createElement("strong");
+    title.textContent = `${diagnosticStageLabel(event.component)} · ${diagnosticEventLabel(event.event)}`;
+    const badge = document.createElement("span");
+    badge.textContent = diagnosticStatusLabel(status);
+    heading.append(title, badge);
+    const detail = document.createElement("p");
+    const reason = event.reason_code || event.code;
+    detail.textContent = reason
+      ? diagnosticReasonLabel(reason)
+      : diagnosticMeta(event) || "没有附加错误信息";
+    const footer = document.createElement("small");
+    const timestamp = event.timestamp ? new Date(event.timestamp).toLocaleString("zh-CN") : "时间未知";
+    footer.textContent = [timestamp, diagnosticMeta(event)].filter(Boolean).join(" · ");
+    item.append(heading, detail, footer);
+    container.append(item);
+  });
+}
+
 async function loadDiagnostics() {
   const button = document.getElementById("load-diagnostics");
   if (!setButtonBusy(button, true, "读取中……")) return;
@@ -536,21 +680,24 @@ async function loadDiagnostics() {
     const events = Array.isArray(diagnostics.events) ? diagnostics.events : [];
     const statusLabels = {
       ready: "可用",
+      memory_only: "内存诊断可用（文件日志未启用）",
       disabled: "未启用",
       unavailable: "暂不可用"
     };
     const status = String(diagnostics.status || "unavailable");
     document.getElementById("diagnostics-status").textContent =
       `状态：${statusLabels[status] || status} · 事件：${events.length} 条`;
-    document.getElementById("diagnostics-events").textContent = JSON.stringify(
-      events,
-      null,
-      2
-    );
+    const rootCause = diagnostics.root_cause || {};
+    document.getElementById("diagnostics-root-cause").textContent = rootCause.code
+      ? `当前根因：${diagnosticStageLabel(rootCause.stage)} · ${diagnosticReasonLabel(rootCause.code)}`
+      : "当前根因：未发现明确的失败事件";
+    renderDiagnosticEvents(events);
   } catch (error) {
     document.getElementById("diagnostics-status").textContent =
       "诊断日志暂不可用";
-    document.getElementById("diagnostics-events").textContent = "[]";
+    document.getElementById("diagnostics-root-cause").textContent =
+      "当前根因：诊断接口读取失败";
+    renderDiagnosticEvents([]);
     toast("读取诊断日志失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);

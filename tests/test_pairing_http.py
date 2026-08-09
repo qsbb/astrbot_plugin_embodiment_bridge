@@ -443,13 +443,31 @@ def test_diagnostics_projection_is_dashboard_protected_and_redacted(
                     for event in body["diagnostics"]["events"]
                     if event["event"] == "llm.error"
                 )
-                assert llm_error == {
-                    "event": "llm.error",
-                    "component": "llm",
+                assert llm_error["event"] == "llm.error"
+                assert llm_error["component"] == "llm"
+                assert llm_error["code"] == "llm_failed"
+                assert llm_error["error_type"] == "ProviderNotFoundError"
+                assert llm_error["duration_ms"] == 12.5
+                assert llm_error["status"] == "failed"
+                assert llm_error["timestamp"]
+                assert body["diagnostics"]["root_cause"] == {
+                    "stage": "llm",
                     "code": "llm_failed",
-                    "error_type": "ProviderNotFoundError",
-                    "duration_ms": 12.5,
-                    "status": "failed",
+                }
+                bundle.plugin.diagnostic_log.record(
+                    "llm.completed",
+                    component="llm",
+                    status="ok",
+                    duration_ms=8.0,
+                )
+                recovered = await client.get(
+                    server.url("/pairing/diagnostics"), headers=PAGE_AUTH
+                )
+                assert recovered.status == 200
+                recovered_body = await recovered.json()
+                assert recovered_body["diagnostics"]["root_cause"] == {
+                    "stage": "",
+                    "code": "",
                 }
                 serialized = json.dumps(body, ensure_ascii=False)
                 assert "identity-secret" not in serialized

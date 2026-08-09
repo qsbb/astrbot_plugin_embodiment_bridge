@@ -54,6 +54,10 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "load-identity-candidates",
         "relationship-person-select",
         "save-identity-button",
+        "load-diagnostics",
+        "diagnostics-status",
+        "diagnostics-root-cause",
+        "diagnostics-events",
     ):
         assert f'id="{element_id}"' in html
 
@@ -92,6 +96,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "candidate.account_count" in js
     assert "不包含平台 UID、Bot ID 或 UMO" in html
     assert "自然人绑定不会授予权限" in html
+    assert 'apiGet("pairing/diagnostics")' in js
+    assert "owner_not_configured" in js
+    assert "当前根因" in js
+    assert "renderDiagnosticEvents" in js
+    assert "JSON.stringify" not in js
+    assert ".diagnostic-event.status-failed" in css
     assert 'button[aria-busy="true"]' in css
     assert ".capability-strip" in css
     assert ".status-badge.running" in css

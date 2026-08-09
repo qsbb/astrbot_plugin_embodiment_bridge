@@ -121,6 +121,14 @@ class HttpSseTransport:
                 protected_context_authorized=authorization.authorized,
                 context_authorization_reason=authorization.reason,
             )
+            self._diagnostic(
+                "session.started",
+                component="session",
+                phase="session_start",
+                status="ready" if authorization.authorized else "limited",
+                authorized=authorization.authorized,
+                reason_code=authorization.reason,
+            )
             return json_response(
                 {
                     "status": "ok",
@@ -147,7 +155,13 @@ class HttpSseTransport:
             session = await self.sessions.get_owned(validated_session_id, owner)
             if not await self.sessions.attach_stream(session):
                 raise SessionConflict("an SSE stream is already attached")
-            self._diagnostic("sse.connected", component="sse", status="connected")
+            self._diagnostic(
+                "sse.connected",
+                component="sse",
+                phase="stream",
+                status="connected",
+                attached_streams=1,
+            )
 
             async def event_stream():
                 try:
@@ -175,7 +189,11 @@ class HttpSseTransport:
                 finally:
                     await self.sessions.detach_stream(session)
                     self._diagnostic(
-                        "sse.disconnected", component="sse", status="closed"
+                        "sse.disconnected",
+                        component="sse",
+                        phase="stream",
+                        status="closed",
+                        attached_streams=0,
                     )
 
             return stream_response(
@@ -351,9 +369,12 @@ class HttpSseTransport:
                 "http.health",
                 component="health",
                 status=getattr(response, "status_code", 200),
+                http_status=getattr(response, "status_code", 200),
                 duration_ms=(time.perf_counter() - started) * 1000,
                 available=self.orchestrator.stt.available,
                 ready=self.listener.status_snapshot().get("ready", False),
+                active_sessions=stats.get("active_sessions", 0),
+                attached_streams=stats.get("attached_streams", 0),
             )
             return response
         except Exception as exc:
@@ -361,6 +382,7 @@ class HttpSseTransport:
                 "http.error",
                 component="health",
                 code=getattr(exc, "code", "health_failed"),
+                http_status=getattr(exc, "status_code", 500),
                 error_type=type(exc).__name__,
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
@@ -388,6 +410,7 @@ class HttpSseTransport:
                 component="transport",
                 operation=operation,
                 status=getattr(response, "status_code", 200),
+                http_status=getattr(response, "status_code", 200),
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return response
@@ -397,6 +420,7 @@ class HttpSseTransport:
                 component="transport",
                 operation=operation,
                 code=getattr(exc, "code", "request_failed"),
+                http_status=getattr(exc, "status_code", 500),
                 error_type=type(exc).__name__,
                 duration_ms=(time.perf_counter() - started) * 1000,
             )

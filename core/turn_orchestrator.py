@@ -121,15 +121,43 @@ class TurnOrchestrator:
         owner: str,
         request: SessionStartRequest,
     ) -> ProtectedContextDecision:
-        if self.identity is None:
-            return ProtectedContextDecision(False, "identity_adapter_unavailable")
-        return await self.identity.authorize(
-            api_principal=owner,
-            declared_client_id=request.client_id,
-            bot_id=request.bot_id,
-            user_id=request.user_id,
-            group_id=request.group_id,
-        )
+        started = time.perf_counter()
+        try:
+            if self.identity is None:
+                decision = ProtectedContextDecision(
+                    False, "identity_adapter_unavailable"
+                )
+            else:
+                decision = await self.identity.authorize(
+                    api_principal=owner,
+                    declared_client_id=request.client_id,
+                    bot_id=request.bot_id,
+                    user_id=request.user_id,
+                    group_id=request.group_id,
+                )
+            self._diagnostic(
+                "session.authorization",
+                component="identity",
+                phase="session_start",
+                status="authorized" if decision.authorized else "blocked",
+                authorized=decision.authorized,
+                reason_code=decision.reason,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            return decision
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._diagnostic(
+                "session.authorization_error",
+                component="identity",
+                phase="session_start",
+                status="error",
+                reason_code="authorization_error",
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            raise
 
     async def start_turn(
         self,
@@ -141,6 +169,12 @@ class TurnOrchestrator:
             request.turn_id,
             cancel_previous=request.cancel_previous,
         )
+        self._diagnostic(
+            "turn.accepted",
+            component="turn",
+            phase="text" if request.text else "audio",
+            status="processing" if request.text else "awaiting_audio",
+        )
         if request.text:
             await self._launch(
                 session,
@@ -151,6 +185,13 @@ class TurnOrchestrator:
 
     async def finish_audio(self, session: SessionState, turn_id: str) -> TurnState:
         turn, pcm16 = await self.sessions.end_audio(session, turn_id)
+        self._diagnostic(
+            "audio.received",
+            component="audio_input",
+            phase="upload_complete",
+            status="ok",
+            bytes=len(pcm16),
+        )
         await self._launch(
             session,
             turn,
@@ -207,6 +248,13 @@ class TurnOrchestrator:
     ) -> None:
         started = time.perf_counter()
         try:
+            self._diagnostic(
+                "stt.started",
+                component="stt",
+                phase="transcribe",
+                status="processing",
+                bytes=len(pcm16),
+            )
             text = await self.stt.transcribe(pcm16, sample_rate=16_000)
             self._diagnostic(
                 "stt.completed",
@@ -289,6 +337,13 @@ class TurnOrchestrator:
             raise
         except MessagePipelineUnavailable as exc:
             reason = self._public_pipeline_reason(session, exc)
+            self._diagnostic(
+                "message_pipeline.blocked",
+                component="message_pipeline",
+                phase="eventbus",
+                status="blocked",
+                reason_code=reason,
+            )
             self.logger.warning(
                 "[quest-avatar] AstrBot message pipeline unavailable: reason=%s",
                 reason,
@@ -300,6 +355,14 @@ class TurnOrchestrator:
                 self._pipeline_error_message(reason),
             )
         except Exception as exc:
+            self._diagnostic(
+                "turn.error",
+                component="turn",
+                phase="text",
+                status="error",
+                code="turn_failed",
+                error_type=type(exc).__name__,
+            )
             self.logger.warning(
                 "[quest-avatar] text turn failed: error_type=%s", type(exc).__name__
             )
@@ -356,6 +419,35 @@ class TurnOrchestrator:
             and self.message_pipeline is not None
             and self.message_pipeline.available
         )
+        if use_message_pipeline:
+            selected_phase = "eventbus"
+            selected_status = "ready"
+            selected_reason = "ready"
+        elif interaction is not None:
+            selected_phase = "direct_provider"
+            selected_status = "fallback"
+            selected_reason = "interaction_policy"
+        else:
+            selected_phase = "direct_provider"
+            selected_status = "unavailable"
+            selected_reason = self._public_pipeline_reason(
+                session,
+                MessagePipelineUnavailable("protected_context_not_authorized")
+                if not session.protected_context_authorized
+                else MessagePipelineUnavailable(
+                    self.message_pipeline.availability_reason
+                    if self.message_pipeline is not None
+                    else "astrbot_event_api_unavailable"
+                ),
+            )
+        self._diagnostic(
+            "message_pipeline.selected",
+            component="message_pipeline",
+            phase=selected_phase,
+            status=selected_status,
+            authorized=session.protected_context_authorized,
+            reason_code=selected_reason,
+        )
         pipeline_required = interaction is None and not self.allow_direct_provider_fallback
         if pipeline_required and not use_message_pipeline:
             reason = (
@@ -383,11 +475,24 @@ class TurnOrchestrator:
             operation = "direct_provider"
             if use_message_pipeline and self.message_pipeline is not None:
                 try:
+                    self._diagnostic(
+                        "message_pipeline.started",
+                        component="message_pipeline",
+                        phase="eventbus",
+                        status="processing",
+                    )
                     decision = await self.message_pipeline.generate(
                         session=session,
                         user_text=user_text,
                     )
                     operation = "astrbot_event_bus"
+                    self._diagnostic(
+                        "message_pipeline.completed",
+                        component="message_pipeline",
+                        phase="eventbus",
+                        status="ok",
+                        duration_ms=(time.perf_counter() - llm_started) * 1000,
+                    )
                 except MessagePipelineUnavailable as exc:
                     self._diagnostic(
                         "message_pipeline.fallback",
@@ -490,6 +595,8 @@ class TurnOrchestrator:
             await self.sessions.append_history(session, "assistant", text)
 
         audio_sent = False
+        audio_bytes = 0
+        audio_chunks = 0
         if text and self.tts.available:
             tts_started = time.perf_counter()
             try:
@@ -513,6 +620,9 @@ class TurnOrchestrator:
                     ):
                         return
                     audio_sent = audio_sent or accepted
+                    if accepted:
+                        audio_bytes += len(pcm_chunk)
+                        audio_chunks += 1
                 self._diagnostic(
                     "tts.completed",
                     component="tts",
@@ -550,6 +660,16 @@ class TurnOrchestrator:
                 "text_sent": bool(text),
                 "audio_sent": audio_sent,
             },
+        )
+        self._diagnostic(
+            "reply.completed",
+            component="reply",
+            phase="delivery",
+            status="completed",
+            text_sent=bool(text),
+            audio_sent=audio_sent,
+            bytes=audio_bytes,
+            chunks=audio_chunks,
         )
 
     @staticmethod
@@ -713,6 +833,16 @@ class TurnOrchestrator:
         code: str,
         message: str,
     ) -> bool:
+        self._diagnostic(
+            "reply.failed",
+            component="reply",
+            phase="terminal",
+            status="failed",
+            code=code,
+            reason_code=code,
+            text_sent=False,
+            audio_sent=False,
+        )
         if not await self._emit_error(session, turn, code, message):
             return False
         return await self._emit(

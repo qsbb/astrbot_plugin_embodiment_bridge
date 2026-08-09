@@ -21,19 +21,32 @@ def test_disabled_logger_does_not_create_file(tmp_path: Path) -> None:
     assert not diagnostic.path.exists()
 
 
-def test_diagnostics_snapshot_reports_private_contract_when_disabled(
+def test_diagnostics_snapshot_keeps_memory_events_when_file_log_disabled(
     tmp_path: Path,
 ) -> None:
     diagnostic = DiagnosticLog(tmp_path)
+    diagnostic.record(
+        "session.authorization",
+        component="identity",
+        status="blocked",
+        reason_code="owner_not_configured",
+        authorized=False,
+    )
 
     payload = diagnostic.diagnostic_events()
 
     assert payload["contract"] == "quest_avatar_bridge.diagnostics@1.0"
     assert payload["plugin_id"] == "astrbot_plugin_quest_avatar_bridge"
     assert payload["plugin_name"] == "临"
-    assert payload["status"] == "disabled"
-    assert payload["reason"] == "DIAGNOSTIC_DISABLED"
-    assert payload["events"] == []
+    assert payload["status"] == "memory_only"
+    assert payload["reason"] == "FILE_LOG_DISABLED"
+    assert payload["events"][0]["details"] == {
+        "component": "identity",
+        "status": "blocked",
+        "reason_code": "owner_not_configured",
+        "authorized": False,
+    }
+    assert not diagnostic.path.exists()
 
 
 def test_diagnostics_provider_exposes_bounded_safe_events_and_clear_cursor(
@@ -88,9 +101,9 @@ def test_diagnostics_provider_reports_unavailable_after_write_failure(
         assert await diagnostic.flush() is False
 
         payload = diagnostic.diagnostic_events()
-        assert payload["status"] == "unavailable"
-        assert payload["reason"] == "DIAGNOSTIC_UNAVAILABLE"
-        assert payload["events"] == []
+        assert payload["status"] == "memory_only"
+        assert payload["reason"] == "FILE_LOG_UNAVAILABLE"
+        assert payload["events"][0]["details"]["code"] == "bind_failed"
         await diagnostic.close()
 
     asyncio.run(scenario())
@@ -199,6 +212,50 @@ def test_sensitive_fields_are_omitted_and_values_are_bounded(tmp_path: Path) -> 
         await diagnostic.close()
 
     asyncio.run(scenario())
+
+
+def test_stage_fields_and_aggregate_counters_survive_redaction(tmp_path: Path) -> None:
+    diagnostic = DiagnosticLog(tmp_path)
+
+    diagnostic.record(
+        "reply.completed",
+        component="pipeline",
+        phase="eventbus",
+        status="completed",
+        reason_code="owner_not_configured",
+        http_status=202,
+        attempt=2,
+        queue_depth=3,
+        active_sessions=4,
+        attached_streams=1,
+        event_count=8,
+        bytes=32000,
+        chunks=7,
+        authorized=False,
+        text_sent=True,
+        audio_sent=False,
+        session_id="hidden-session",
+        reply_text="hidden-reply",
+    )
+
+    details = diagnostic.diagnostic_events()["events"][0]["details"]
+    assert details == {
+        "component": "pipeline",
+        "phase": "eventbus",
+        "status": "completed",
+        "reason_code": "owner_not_configured",
+        "http_status": 202,
+        "attempt": 2,
+        "queue_depth": 3,
+        "active_sessions": 4,
+        "attached_streams": 1,
+        "event_count": 8,
+        "bytes": 32000,
+        "chunks": 7,
+        "authorized": False,
+        "text_sent": True,
+        "audio_sent": False,
+    }
 
 
 def test_rotation_and_concurrent_writes_keep_valid_jsonl(tmp_path: Path) -> None:

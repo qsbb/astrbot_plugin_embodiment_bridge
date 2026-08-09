@@ -332,19 +332,53 @@ class PairingHttpApi:
                 details = details if isinstance(details, dict) else {}
                 projected.append(
                     {
+                        "timestamp": str(event.get("timestamp") or "")[:40],
                         "event": str(event.get("code") or "")[:80],
                         "component": str(details.get("component") or "")[:64],
                         "code": str(details.get("code") or "")[:80],
+                        "reason_code": str(details.get("reason_code") or "")[:80],
                         "error_type": str(details.get("error_type") or "")[:80],
+                        "phase": str(details.get("phase") or "")[:48],
+                        "operation": str(details.get("operation") or "")[:48],
                         "duration_ms": details.get("duration_ms"),
+                        "http_status": details.get("http_status"),
                         "status": str(details.get("status") or "")[:32],
+                        "bytes": details.get("bytes"),
+                        "chunks": details.get("chunks"),
+                        "event_count": details.get("event_count"),
+                        "queue_depth": details.get("queue_depth"),
+                        "authorized": details.get("authorized"),
+                        "text_sent": details.get("text_sent"),
+                        "audio_sent": details.get("audio_sent"),
                     }
                 )
+            root_cause = {"stage": "", "code": ""}
+            failure_statuses = {
+                "blocked",
+                "error",
+                "failed",
+                "limited",
+                "unavailable",
+            }
+            success_statuses = {"ok", "ready", "authorized", "completed", "connected"}
+            for item in projected:
+                status = str(item.get("status") or "")
+                code = str(item.get("reason_code") or item.get("code") or "")
+                stage = str(item.get("component") or item.get("phase") or "")[:64]
+                if code and status in failure_statuses:
+                    root_cause = {
+                        "stage": stage,
+                        "code": code[:80],
+                    }
+                elif status in success_statuses and stage == root_cause["stage"]:
+                    root_cause = {"stage": "", "code": ""}
             return _json_no_store(
                 {
                     "success": True,
                     "diagnostics": {
                         "status": str(snapshot.get("status") or "unavailable")[:32],
+                        "reason": str(snapshot.get("reason") or "")[:48],
+                        "root_cause": root_cause,
                         "events": projected,
                     },
                 }
