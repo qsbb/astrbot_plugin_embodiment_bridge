@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from types import SimpleNamespace
 from typing import Any
 
 from aiohttp import ClientSession
@@ -99,6 +100,10 @@ def test_real_http_pairing_create_exchange_status_and_replay(
                     "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge"
                 )
                 assert configuration["allow_insecure_http"] is False
+                assert configuration["user_id"] == "server-managed-user"
+                assert configuration["bot_id"] == "server-managed-bot"
+                assert "user-test" not in repr(configuration)
+                assert "bot-test" not in repr(configuration)
 
                 replay = await client.post(
                     server.url("/pairing/exchange"),
@@ -174,8 +179,8 @@ def test_quick_pairing_page_request_uses_server_only_defaults(
                     "quick-pair-plugin-scope-key"
                 )
                 assert configuration["client_id"] == "quest-living-room"
-                assert configuration["user_id"] == "user-test"
-                assert configuration["bot_id"] == "bot-test"
+                assert configuration["user_id"] == "server-managed-user"
+                assert configuration["bot_id"] == "server-managed-bot"
 
     asyncio.run(scenario())
 
@@ -339,14 +344,21 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert saved_identity_body["status"] == "ready"
                 assert saved_identity_body["local_fallback_configured"] is True
                 assert "contract-plugin-token" not in repr(saved_identity_body)
+                assert saved_identity_body["bot_id"] == ""
+                assert saved_identity_body["user_id"] == ""
+                assert saved_identity_body["bot_id_configured"] is True
+                assert saved_identity_body["user_id_configured"] is True
+                assert "bot-test" not in repr(saved_identity_body)
+                assert "user-test" not in repr(saved_identity_body)
                 assert bundle.plugin.pairing_api.pairing_defaults["client_id"] == (
                     "quest-room"
                 )
                 assert bundle.plugin.pairing_api.pairing_defaults["user_id"] == (
-                    "user-test"
+                    "server-managed-user"
                 )
+
                 assert bundle.plugin.pairing_api.pairing_defaults["bot_id"] == (
-                    "bot-test"
+                    "server-managed-bot"
                 )
                 assert bundle.plugin.config["pairing_api_principal_digest"].startswith(
                     "sha256:"
@@ -431,6 +443,141 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
     asyncio.run(scenario())
 
 
+def test_session_start_uses_server_canonical_identity_not_device_claims(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        principal = "api_key:11111111-2222-3333-4444-555555555555"
+        bundle = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={
+                "trusted_client_id": "quest-room",
+                "trusted_platform_id": "contract-platform",
+                "pairing_bot_id": "server-real-bot",
+                "pairing_user_id": "server-real-user",
+                "pairing_api_principal_digest": "sha256:"
+                + hashlib.sha256(principal.encode("utf-8")).hexdigest(),
+            },
+        )
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                response = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "session.start",
+                        "protocol_version": "1.0",
+                        "session_id": "canonical-session",
+                        "client_id": "quest-room",
+                        "user_id": "device-placeholder-user",
+                        "bot_id": "device-placeholder-bot",
+                        "group_id": "",
+                    },
+                )
+
+                assert response.status == 201
+                body = await response.json()
+                assert body["data"]["protected_context"]["authorized"] is True
+                session = await bundle.plugin.sessions.get_owned(
+                    "canonical-session", principal
+                )
+                assert session.user_id == "server-real-user"
+                assert session.bot_id == "server-real-bot"
+
+    asyncio.run(scenario())
+
+
+def test_first_session_retries_relationship_refresh_after_provider_load(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    class RelationshipProvider:
+        def quest_event_identity_contract(self) -> dict[str, Any]:
+            return {
+                "name": "relationship.quest_event_identity",
+                "version": "1.0",
+                "plugin": "astrbot_plugin_relationship",
+                "capabilities": ("resolve_private_event_identity",),
+                "method": "resolve_quest_event_identity",
+                "privacy": "server_only_raw_account",
+                "browser_exposed": False,
+                "exposes_raw_account_ids": True,
+                "grants_permission": False,
+                "active_platform_match_required": True,
+                "private_session_required": True,
+            }
+
+        async def resolve_quest_event_identity(self, **request: Any) -> dict[str, Any]:
+            assert request["person_id"] == "person-a"
+            return {
+                "contract_version": "1.0",
+                "status": "ok",
+                "reason": "resolved_unique_active_private_account",
+                "identity": {
+                    "platform_id": "contract-platform",
+                    "bot_id": "provider-bot",
+                    "user_id": "provider-user",
+                    "session_id": "contract-platform:FriendMessage:provider-user",
+                },
+            }
+
+    async def scenario() -> None:
+        principal = "api_key:11111111-2222-3333-4444-555555555555"
+        bundle = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={
+                "trusted_client_id": "quest-room",
+                "trusted_platform_id": "contract-platform",
+                "relationship_person_id": "person-a",
+                "pairing_identity_source": "relationship",
+                "pairing_api_principal_digest": "sha256:"
+                + hashlib.sha256(principal.encode("utf-8")).hexdigest(),
+                "pairing_bot_id": "old-placeholder-bot",
+                "pairing_user_id": "old-placeholder-user",
+            },
+        )
+        assert bundle.plugin.pairing_api.relationship_refresh_ready is False
+        bundle.context.stars = [
+            SimpleNamespace(
+                name="astrbot_plugin_relationship",
+                activated=True,
+                star_cls=RelationshipProvider(),
+            )
+        ]
+
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                response = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "session.start",
+                        "protocol_version": "1.0",
+                        "session_id": "late-provider-session",
+                        "client_id": "quest-room",
+                        "user_id": "server-managed-user",
+                        "bot_id": "server-managed-bot",
+                        "group_id": "",
+                    },
+                )
+
+                assert response.status == 201
+                protected = (await response.json())["data"]["protected_context"]
+                assert protected["authorized"] is True
+                assert bundle.plugin.server_identity_store.identity.user_id == (
+                    "provider-user"
+                )
+                assert bundle.plugin.server_identity_store.identity.bot_id == (
+                    "provider-bot"
+                )
+                assert bundle.plugin.pairing_api.relationship_refresh_ready is True
+
+    asyncio.run(scenario())
+
+
 def test_quest_identity_save_reuses_configured_api_key_and_fails_when_missing(
     monkeypatch: Any,
     tmp_path: Any,
@@ -488,6 +635,158 @@ def test_quest_identity_save_reuses_configured_api_key_and_fails_when_missing(
                 assert (await response.json())["data"]["code"] == (
                     "pairing_astrbot_api_key_missing"
                 )
+
+    asyncio.run(scenario())
+
+
+def test_natural_person_selection_resolves_real_event_identity_without_exposing_it(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    class RelationshipProvider:
+        def identity_candidates_contract(self) -> dict[str, Any]:
+            return {
+                "name": "relationship.identity_candidates",
+                "version": "1.0",
+                "capabilities": ("list_candidates",),
+                "method": "list_identity_candidates",
+                "privacy": "admin_labels_only",
+                "exposes_raw_account_ids": False,
+                "grants_permission": False,
+            }
+
+        async def list_identity_candidates(self) -> dict[str, Any]:
+            return {
+                "contract_version": "1.0",
+                "status": "ok",
+                "candidates": [
+                    {
+                        "person_id": "person-a",
+                        "display_name": "已绑定用户",
+                        "account_count": 1,
+                    }
+                ],
+            }
+
+        def quest_event_identity_contract(self) -> dict[str, Any]:
+            return {
+                "name": "relationship.quest_event_identity",
+                "version": "1.0",
+                "plugin": "astrbot_plugin_relationship",
+                "capabilities": ("resolve_private_event_identity",),
+                "method": "resolve_quest_event_identity",
+                "privacy": "server_only_raw_account",
+                "browser_exposed": False,
+                "exposes_raw_account_ids": True,
+                "grants_permission": False,
+                "active_platform_match_required": True,
+                "private_session_required": True,
+            }
+
+        async def resolve_quest_event_identity(
+            self, **request: Any
+        ) -> dict[str, Any]:
+            assert request == {
+                "person_id": "person-a",
+                "platform_candidates": ["contract-platform"],
+            }
+            return {
+                "contract_version": "1.0",
+                "status": "ok",
+                "reason": "resolved_unique_active_private_account",
+                "identity": {
+                    "platform_id": "contract-platform",
+                    "bot_id": "real-private-bot",
+                    "user_id": "real-private-user",
+                    "session_id": (
+                        "contract-platform:FriendMessage:real-private-user"
+                    ),
+                },
+            }
+
+    async def scenario() -> None:
+        digest = "sha256:" + "a" * 64
+        bundle = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={
+                "trusted_client_id": "quest-room",
+                "trusted_platform_id": "contract-platform",
+                "pairing_api_principal_digest": digest,
+            },
+        )
+        bundle.context.stars = [
+            SimpleNamespace(
+                name="astrbot_plugin_relationship",
+                activated=True,
+                star_cls=RelationshipProvider(),
+            )
+        ]
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                response = await client.post(
+                    server.url("/pairing/identity-selection"),
+                    headers=PAGE_AUTH,
+                    json={"person_id": "person-a"},
+                )
+
+                assert response.status == 200
+                body = await response.json()
+                assert body["event_identity"] == {
+                    "status": "resolved",
+                    "source": "relationship.quest_event_identity@1.0",
+                }
+                serialized = json.dumps(body, ensure_ascii=False)
+                assert "real-private-bot" not in serialized
+                assert "real-private-user" not in serialized
+                assert bundle.plugin.config["pairing_bot_id"] == ""
+                assert bundle.plugin.config["pairing_user_id"] == ""
+                assert bundle.plugin.server_identity_store.identity.bot_id == (
+                    "real-private-bot"
+                )
+                assert bundle.plugin.server_identity_store.identity.user_id == (
+                    "real-private-user"
+                )
+                assert bundle.plugin.config["relationship_person_id"] == "person-a"
+                assert bundle.plugin.message_pipeline.platform_id == (
+                    "contract-platform"
+                )
+                assert bundle.plugin.pairing_api.pairing_defaults["bot_id"] == (
+                    "server-managed-bot"
+                )
+                assert bundle.plugin.pairing_api.pairing_defaults["user_id"] == (
+                    "server-managed-user"
+                )
+
+                owner_escalation = await client.post(
+                    server.url("/pairing/quest-identity-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "client_id": "quest-room",
+                        "platform_id": "contract-platform",
+                        "bot_id": "",
+                        "user_id": "",
+                        "api_key": ASTRBOT_API_TOKEN,
+                    },
+                )
+                assert owner_escalation.status == 422
+                assert (await owner_escalation.json())["data"]["code"] == (
+                    "invalid_bot_id"
+                )
+
+                cleared = await client.post(
+                    server.url("/pairing/identity-selection"),
+                    headers=PAGE_AUTH,
+                    json={"person_id": ""},
+                )
+                assert cleared.status == 200
+                assert (await cleared.json())["event_identity"]["status"] == (
+                    "revoked"
+                )
+                assert bundle.plugin.server_identity_store.identity is None
+                assert bundle.plugin.pairing_api.pairing_defaults[
+                    "server_identity_ready"
+                ] is False
 
     asyncio.run(scenario())
 

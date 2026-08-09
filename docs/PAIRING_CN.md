@@ -5,7 +5,7 @@
 ## 后端准备
 
 1. 在 `astrbot_plugin_quest_avatar_bridge` 插件配置中设置至少 32 字符的随机 `bridge_api_key`。
-2. 在本插件配置中设置 `pairing_public_url`、具有 `plugin` scope 的 Quest 专用 `pairing_astrbot_api_key`、`pairing_user_id` 和 `pairing_bot_id`。可选会话字段使用 `pairing_group_id`、`pairing_relationship_profile_id`；客户端 ID 使用服务端 `trusted_client_id`，空值时快速绑定采用 `quest-living-room`。
+2. 在本插件配置中设置 `pairing_public_url` 和具有 `plugin` scope 的 Quest 专用 `pairing_astrbot_api_key`。Bot/User 在「Quest 角色设置」页明确填写，或通过“情”的自然人绑定解析；它们只保存在插件数据目录，不进入 AstrBot 配置 Page。客户端 ID 使用服务端 `trusted_client_id`，空值时快速绑定采用 `quest-living-room`。
 3. 选择聊天模型 Provider；如需受保护的关系上下文，由 AstrBot 管理员在服务端同时设置固定的 `trusted_client_id` 和真实原始 `trusted_platform_id`。配对页和 Unity 都不能替代这项可信配置。
 4. 私网优先启用内置 listener：配置 `pairing_listener_enabled`、监听 IP/端口、固定 loopback 上游和 `pairing_listener_public_url`。它直接复用同一个配对状态机，不要求新 Quest 预先持有 AstrBot API Key。
 5. 旧 `pairing_exchange_proxy_url` 仍可作为外部 Nginx 兼容 fallback；它不再是私网唯一入口。AstrBot 的 `register_web_api` 本身仍不支持匿名例外，详情见 [PAIRING_BOOTSTRAP_AUDIT_CN.md](PAIRING_BOOTSTRAP_AUDIT_CN.md)。
@@ -14,7 +14,7 @@
 
 快速绑定 Page 不再承担角色或连接设置。它不会读取、显示或让操作者填写 Quest IP、AstrBot API Key、平台身份、客户端 ID、用户/机器人/群组 ID、关系档案 ID或有效期。
 
-关系自然人仍由插件专属 `relationship_person_id` 配置管理，只限定已授权关系快照的对象，不能代替“序”对原始平台身份的授权。
+关系自然人由“临”的角色设置页管理。服务端会通过“情”解析唯一活跃私聊账号，再通过“序”的 Quest 只读绑定契约授权；该过程不新增主人，也不把真实 Bot/User/UMO 返回 Page 或 Quest。
 
 ## Page 操作
 
@@ -34,6 +34,8 @@ Bridge 就绪后，Page 只显示「生成绑定二维码」。点击后显示�
 5. 点击 `CONNECT`。Quest 成功兑换后会原子写入 `quest_avatar_bridge.json`，并立即重载配置、建立 AstrBot 会话，不需要重启应用。
 
 配对服务器地址会保存在 Quest `PlayerPrefs` 中，下一次只需输入新的 6 位短码。
+
+兑换配置中的 Bot/User 是固定的 `server-managed-*` 占位值。Quest 可以继续保存并回传这些值，服务端会在每次 `session/start` 使用已经验证并复核的规范身份覆盖；设备端无法选择或推断真实平台账号。
 
 ## 二维码扫描现状
 

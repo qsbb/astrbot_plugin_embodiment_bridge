@@ -121,7 +121,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "candidate.display_name" in js
     assert "candidate.person_id" in js
     assert "candidate.account_count" in js
-    assert "不包含平台 UID、Bot ID 或 UMO" in html
+    assert "原始账号不会返回页面" in html
     assert "自然人绑定不会授予权限" in html
     assert 'apiGet("pairing/diagnostics")' in js
     assert "owner_not_configured" in js

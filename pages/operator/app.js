@@ -417,6 +417,10 @@ function renderQuestIdentitySettings(identity) {
     String(questIdentitySettings.bot_id || "");
   document.getElementById("quest-user-id").value =
     String(questIdentitySettings.user_id || "");
+  document.getElementById("quest-bot-id").placeholder =
+    questIdentitySettings.bot_id_configured ? "已配置，可留空保持" : "请输入 Bot ID";
+  document.getElementById("quest-user-id").placeholder =
+    questIdentitySettings.user_id_configured ? "已配置，可留空保持" : "请输入用户 ID";
   document.getElementById("quest-api-key").value = "";
   document.getElementById("quest-api-key").placeholder =
     questIdentitySettings.astrbot_auth_configured
@@ -446,8 +450,11 @@ function renderQuestIdentitySettings(identity) {
   if (!questIdentitySettings.bridge_auth_configured) missing.push("Bridge Key 将在保存时自动生成");
   if (!questIdentitySettings.client_id) missing.push("客户端 ID");
   if (!questIdentitySettings.platform_id) missing.push("平台实例");
-  if (!questIdentitySettings.bot_id) missing.push("Bot ID");
-  if (!questIdentitySettings.user_id) missing.push("主人用户 ID");
+  if (!questIdentitySettings.bot_id_configured) missing.push("Bot ID");
+  if (!questIdentitySettings.user_id_configured) missing.push("主人用户 ID");
+  if (questIdentitySettings.identity_source === "relationship") {
+    source += "；当前 Bot/User 由自然人映射管理，改为主人身份时需明确填写两项";
+  }
   const validation = questIdentitySettings.binding_validation;
   const validationText = validation?.authorized === true ? "；保存后授权校验通过" : "";
   document.getElementById("quest-identity-status").textContent = writable
@@ -631,7 +638,9 @@ async function saveIdentitySelection() {
       person_id: personId
     });
     renderOperatorSettings(response.settings);
-    toast(personId ? "关系自然人已保存" : "已清除关系自然人绑定");
+    toast(personId
+      ? "自然人与正式消息身份已同步"
+      : "已清除关系绑定；Quest 服务端身份保持不变");
   } catch (error) {
     toast("自然人保存失败：" + error.message, true);
   } finally {

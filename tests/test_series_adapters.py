@@ -18,6 +18,10 @@ from astrbot_plugin_quest_avatar_bridge.adapters.identity import (
     ProtectedContextDecision,
     QuestSessionAuthorizationAdapter,
 )
+from astrbot_plugin_quest_avatar_bridge.adapters.relationship_event_identity import (
+    QuestEventIdentity,
+    QuestEventIdentityResolution,
+)
 from astrbot_plugin_quest_avatar_bridge.adapters.knowledge import (
     GlobalKnowledgeAdapter,
 )
@@ -166,6 +170,89 @@ def test_identity_authorization_uses_server_config_and_fails_closed() -> None:
     asyncio.run(scenario())
 
 
+def test_relationship_identity_is_rechecked_for_every_session_authorization() -> None:
+    class Resolver:
+        def __init__(self) -> None:
+            self.resolution = QuestEventIdentityResolution(
+                "ok",
+                "resolved_unique_active_private_account",
+                QuestEventIdentity(
+                    platform_id="aiocqhttp",
+                    bot_id="bot",
+                    user_id="user",
+                    session_id="aiocqhttp:FriendMessage:user",
+                ),
+            )
+
+        async def resolve(self, **request: Any) -> QuestEventIdentityResolution:
+            assert request == {
+                "person_id": "person-a",
+                "platform_candidates": ("aiocqhttp",),
+            }
+            return self.resolution
+
+    class ReadOnlyIdentityProvider(IdentityProvider):
+        def authorize_quest_session(self, request: dict[str, Any]) -> dict[str, Any]:
+            self.requests.append(request)
+            return {
+                "contract_version": "1.0",
+                "status": "authorized",
+                "authorized": True,
+                "reason": "authorized_private_quest_identity",
+                "access": "read_only_context",
+                "owner_confirmed": False,
+                "grants_platform_action": False,
+            }
+
+    async def scenario() -> None:
+        provider = ReadOnlyIdentityProvider()
+        resolver = Resolver()
+        adapter = QuestSessionAuthorizationAdapter(
+            ContextStub("astrbot_plugin_identity_guardian", provider),
+            LoggerStub(),
+            trusted_client_id="quest-room",
+            trusted_platform_id="aiocqhttp",
+            relationship_identity_resolver=resolver,
+            relationship_person_id="person-a",
+        )
+
+        authorized = await adapter.authorize(
+            api_principal="api",
+            declared_client_id="quest-room",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert authorized == ProtectedContextDecision(
+            True, "authorized_private_quest_identity"
+        )
+
+        mismatch = await adapter.authorize(
+            api_principal="api",
+            declared_client_id="quest-room",
+            bot_id="old-bot",
+            user_id="user",
+            group_id="",
+        )
+        assert mismatch.reason == "relationship_event_identity_mismatch"
+        assert len(provider.requests) == 1
+
+        resolver.resolution = QuestEventIdentityResolution(
+            "unavailable", "person_not_found"
+        )
+        removed = await adapter.authorize(
+            api_principal="api",
+            declared_client_id="quest-room",
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+        )
+        assert removed.reason == "relationship_event_identity_person_not_found"
+        assert len(provider.requests) == 1
+
+    asyncio.run(scenario())
+
+
 def test_missing_series_providers_degrade_without_enabling_private_context() -> None:
     async def scenario() -> None:
         logger = LoggerStub()
@@ -280,6 +367,34 @@ def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
         denied = await incompatible.authorize(**baseline)
         assert denied.authorized is False
         assert denied.reason == "contract_incompatible"
+
+    asyncio.run(scenario())
+
+
+def test_pending_identity_sync_denies_new_session_with_previous_runtime_tuple() -> None:
+    async def scenario() -> None:
+        adapter = QuestSessionAuthorizationAdapter(
+            EmptyContextStub(),
+            LoggerStub(),
+            trusted_client_id="quest-room",
+            trusted_platform_id="platform-test",
+            local_api_principal_digest=(
+                "sha256:" + hashlib.sha256(b"api_key:old-key").hexdigest()
+            ),
+            local_bot_id="old-bot",
+            local_user_id="old-user",
+        )
+        adapter.configure_sync_ready(False)
+
+        denied = await adapter.authorize(
+            api_principal="api_key:old-key",
+            declared_client_id="quest-room",
+            bot_id="old-bot",
+            user_id="old-user",
+            group_id="",
+        )
+
+        assert denied == ProtectedContextDecision(False, "identity_sync_pending")
 
     asyncio.run(scenario())
 

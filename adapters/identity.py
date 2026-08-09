@@ -44,6 +44,9 @@ class QuestSessionAuthorizationAdapter:
         local_bot_id: str = "",
         local_user_id: str = "",
         local_group_id: str = "",
+        relationship_identity_resolver: Any | None = None,
+        relationship_person_id: str = "",
+        identity_sync_ready: bool = True,
     ) -> None:
         self.context = context
         self.logger = logger
@@ -55,6 +58,9 @@ class QuestSessionAuthorizationAdapter:
         self.local_bot_id = str(local_bot_id or "").strip()
         self.local_user_id = str(local_user_id or "").strip()
         self.local_group_id = str(local_group_id or "").strip()
+        self.relationship_identity_resolver = relationship_identity_resolver
+        self.relationship_person_id = str(relationship_person_id or "").strip()
+        self.identity_sync_ready = bool(identity_sync_ready)
         self.status = (
             "ready_for_authorization" if self.configured else self.configuration_reason
         )
@@ -132,6 +138,36 @@ class QuestSessionAuthorizationAdapter:
             "ready_for_authorization" if self.configured else self.configuration_reason
         )
 
+    def configure_relationship_person_id(self, person_id: str) -> None:
+        self.relationship_person_id = str(person_id or "").strip()
+
+    def configure_sync_ready(self, ready: bool) -> None:
+        self.identity_sync_ready = bool(ready)
+
+    def clear_local_binding(self) -> None:
+        self._local_principal_fingerprint = ""
+        self.local_bot_id = ""
+        self.local_user_id = ""
+        self.local_group_id = ""
+        self.relationship_person_id = ""
+        self.identity_sync_ready = True
+        self.status = "local_identity_not_configured"
+
+    def canonicalize_session_request(self, value: Any) -> Any:
+        """Replace client identity claims with the configured server tuple."""
+        if not self.local_bot_id or not self.local_user_id:
+            return value
+        copier = getattr(value, "model_copy", None)
+        if not callable(copier):
+            return value
+        return copier(
+            update={
+                "bot_id": self.local_bot_id,
+                "user_id": self.local_user_id,
+                "group_id": self.local_group_id,
+            }
+        )
+
     async def authorize(
         self,
         *,
@@ -142,6 +178,9 @@ class QuestSessionAuthorizationAdapter:
         group_id: str,
     ) -> ProtectedContextDecision:
         principal = str(api_principal or "").strip()
+        if not self.identity_sync_ready:
+            self.status = "identity_sync_pending"
+            return ProtectedContextDecision(False, self.status)
         if not self.configured:
             self.status = self.configuration_reason
             return ProtectedContextDecision(False, self.status)
@@ -151,6 +190,13 @@ class QuestSessionAuthorizationAdapter:
         if str(declared_client_id or "").strip() != self.trusted_client_id:
             self.status = "client_id_mismatch"
             return ProtectedContextDecision(False, self.status)
+        relationship_decision = await self._verify_relationship_identity(
+            bot_id=bot_id,
+            user_id=user_id,
+        )
+        if relationship_decision is not None:
+            self.status = relationship_decision.reason
+            return relationship_decision
 
         provider = find_active_provider(self.context, IDENTITY_PLUGIN_NAME)
         if provider is None:
@@ -212,6 +258,14 @@ class QuestSessionAuthorizationAdapter:
             "owner_confirmed",
             "grants_platform_action",
         }
+        owner_authorized = bool(
+            response.get("reason") == "authorized_private_owner_identity"
+            and response.get("owner_confirmed") is True
+        ) if isinstance(response, dict) else False
+        quest_authorized = bool(
+            response.get("reason") == "authorized_private_quest_identity"
+            and response.get("owner_confirmed") is False
+        ) if isinstance(response, dict) else False
         valid = (
             isinstance(response, dict)
             and set(response) == expected_fields
@@ -219,9 +273,8 @@ class QuestSessionAuthorizationAdapter:
             == IDENTITY_CONTRACT_MAJOR
             and response.get("status") == "authorized"
             and response.get("authorized") is True
-            and response.get("reason") == "authorized_private_owner_identity"
             and response.get("access") == "read_only_context"
-            and response.get("owner_confirmed") is True
+            and (owner_authorized or quest_authorized)
             and response.get("grants_platform_action") is False
         )
         if not valid:
@@ -234,7 +287,47 @@ class QuestSessionAuthorizationAdapter:
             return ProtectedContextDecision(False, reason)
 
         self.status = "authorized"
-        return ProtectedContextDecision(True, "authorized_private_owner_identity")
+        return ProtectedContextDecision(True, str(response["reason"]))
+
+    async def _verify_relationship_identity(
+        self,
+        *,
+        bot_id: str,
+        user_id: str,
+    ) -> ProtectedContextDecision | None:
+        if not self.relationship_person_id:
+            return None
+        resolver = self.relationship_identity_resolver
+        if resolver is None:
+            return ProtectedContextDecision(
+                False, "relationship_event_identity_resolver_unavailable"
+            )
+        resolution = await resolver.resolve(
+            person_id=self.relationship_person_id,
+            platform_candidates=(self.trusted_platform_id,),
+        )
+        identity = resolution.identity
+        if identity is None:
+            reason = str(resolution.reason or "unavailable")
+            return ProtectedContextDecision(
+                False,
+                f"relationship_event_identity_{reason}"[:128],
+            )
+        expected = "\x1f".join(
+            (identity.platform_id, identity.bot_id, identity.user_id)
+        )
+        actual = "\x1f".join(
+            (
+                self.trusted_platform_id,
+                str(bot_id or "").strip(),
+                str(user_id or "").strip(),
+            )
+        )
+        if not hmac.compare_digest(expected, actual):
+            return ProtectedContextDecision(
+                False, "relationship_event_identity_mismatch"
+            )
+        return None
 
     def _authorize_local(
         self,

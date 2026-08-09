@@ -16,6 +16,9 @@ from .adapters.identity_control_plane import IdentityControlPlaneAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
 from .adapters.relationship import RelationshipSnapshotAdapter
 from .adapters.relationship_candidates import RelationshipIdentityCandidatesAdapter
+from .adapters.relationship_event_identity import (
+    RelationshipQuestEventIdentityAdapter,
+)
 from .adapters.runtime import SeriesRuntimeAdapter
 from .adapters.stt import (
     AstrBotSTTAdapter,
@@ -33,6 +36,7 @@ from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
 from .core.session_manager import SessionManager
 from .core.service_control import BridgeServiceControl
+from .core.server_identity import ServerIdentityStore
 from .core.turn_orchestrator import TurnOrchestrator
 from .transport.builtin_listener import (
     BuiltinListenerConfig,
@@ -42,7 +46,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.13"
+__version__ = "0.4.14"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -58,6 +62,20 @@ class QuestAvatarBridgePlugin(Star):
 
         self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.server_identity_store = ServerIdentityStore(
+            self.data_dir / "server_identity.json"
+        )
+        legacy_bot_id = str(config.get("pairing_bot_id", "") or "")
+        legacy_user_id = str(config.get("pairing_user_id", "") or "")
+        self.server_identity_store.import_legacy(
+            bot_id=legacy_bot_id,
+            user_id=legacy_user_id,
+        )
+        self._legacy_identity_migrated = bool(legacy_bot_id or legacy_user_id)
+        if legacy_bot_id or legacy_user_id:
+            config["pairing_bot_id"] = ""
+            config["pairing_user_id"] = ""
+        server_identity = self.server_identity_store.identity
         self.diagnostic_log = DiagnosticLog(
             self.data_dir,
             enabled=self._bool_config("diagnostic_log_enabled", False),
@@ -76,6 +94,9 @@ class QuestAvatarBridgePlugin(Star):
         trusted_client_id = str(config.get("trusted_client_id", "") or "")
         trusted_platform_id = str(config.get("trusted_platform_id", "") or "")
         relationship_person_id = str(config.get("relationship_person_id", "") or "")
+        identity_sync_ready = str(
+            config.get("pairing_identity_sync_state", "ready") or "ready"
+        ) == "ready"
         pairing_exchange_proxy_url = str(
             config.get("pairing_exchange_proxy_url", "") or ""
         )
@@ -159,6 +180,10 @@ class QuestAvatarBridgePlugin(Star):
             self.astrbot_tts,
             self._component_logger,
         )
+        self.relationship_event_identity = RelationshipQuestEventIdentityAdapter(
+            context,
+            self._component_logger,
+        )
         self.identity = QuestSessionAuthorizationAdapter(
             context,
             self._component_logger,
@@ -167,9 +192,20 @@ class QuestAvatarBridgePlugin(Star):
             local_api_principal_digest=str(
                 config.get("pairing_api_principal_digest", "") or ""
             ),
-            local_bot_id=str(config.get("pairing_bot_id", "") or ""),
-            local_user_id=str(config.get("pairing_user_id", "") or ""),
+            local_bot_id=(
+                server_identity.bot_id
+                if identity_sync_ready and server_identity is not None
+                else ""
+            ),
+            local_user_id=(
+                server_identity.user_id
+                if identity_sync_ready and server_identity is not None
+                else ""
+            ),
             local_group_id=str(config.get("pairing_group_id", "") or ""),
+            relationship_identity_resolver=self.relationship_event_identity,
+            relationship_person_id=relationship_person_id,
+            identity_sync_ready=identity_sync_ready,
         )
         self.message_pipeline = AstrBotMessagePipelineAdapter(
             context,
@@ -307,6 +343,7 @@ class QuestAvatarBridgePlugin(Star):
             identity_control_plane=self.identity_control_plane,
             pairing_manager=self.pairing,
             transport=self.transport,
+            identity_store=self.server_identity_store,
         )
         self.pairing_api = PairingHttpApi(
             context=context,
@@ -320,14 +357,19 @@ class QuestAvatarBridgePlugin(Star):
             trusted_proxy_ip=pairing_trusted_proxy_ip,
             operator_settings=self.operator_settings,
             relationship_candidates=self.relationship_candidates,
+            relationship_event_identity=self.relationship_event_identity,
             api_principal_verifier=self.api_principal_verifier,
             diagnostic_log=self.diagnostic_log,
             pairing_defaults={
                 "public_url": pairing_public_url,
                 "astrbot_api_key": str(config.get("pairing_astrbot_api_key", "") or ""),
                 "client_id": trusted_client_id or "quest-living-room",
-                "user_id": str(config.get("pairing_user_id", "") or ""),
-                "bot_id": str(config.get("pairing_bot_id", "") or ""),
+                "user_id": "server-managed-user",
+                "bot_id": "server-managed-bot",
+                "server_identity_ready": bool(
+                    identity_sync_ready
+                    and server_identity is not None
+                ),
                 "group_id": str(config.get("pairing_group_id", "") or ""),
                 "relationship_profile_id": str(
                     config.get("pairing_relationship_profile_id", "") or ""
@@ -336,6 +378,9 @@ class QuestAvatarBridgePlugin(Star):
                 "ttl_seconds": self._int_config("pairing_ttl_seconds", 120, 60, 300),
             },
             max_json_body_bytes=min(max_json_body_bytes, 65_536),
+        )
+        self.transport.configure_identity_refresh(
+            self.pairing_api.ensure_selected_relationship_identity
         )
 
         # AstrBot 4.26.8 does not expose a Web API unregister operation. Keep
@@ -348,6 +393,19 @@ class QuestAvatarBridgePlugin(Star):
 
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
+        await self.server_identity_store.flush()
+        if self._legacy_identity_migrated:
+            save = getattr(self.config, "save_config_async", None)
+            if callable(save):
+                await save({"pairing_bot_id": "", "pairing_user_id": ""})
+        identity_refresh = await self.pairing_api.refresh_selected_relationship_identity()
+        self.diagnostic_log.record(
+            "identity.relationship_refresh",
+            component="identity",
+            status=identity_refresh["status"],
+            reason_code=identity_refresh["reason"],
+            ready=identity_refresh["status"] in {"not_configured", "resolved"},
+        )
         await self.service.initialize()
         listener_status = self.pairing_listener.status_snapshot()
         if self.pairing_listener.ready and self.pairing_listener.public_exchange_url:
@@ -476,6 +534,7 @@ class QuestAvatarBridgePlugin(Star):
             self.pairing.close()
             await self.orchestrator.close()
             await self.relationship_candidates.close()
+            await self.relationship_event_identity.close()
             self._component_logger.info("[quest-avatar] bridge terminated")
             terminated_ok = True
         except Exception as exc:

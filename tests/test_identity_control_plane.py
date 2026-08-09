@@ -68,6 +68,72 @@ class ProviderStub:
         self.requests.append(dict(request))
         return self._result(status="saved", reason="saved", updated=True)
 
+    def quest_binding_control_contract(self) -> dict[str, Any]:
+        return {
+            "name": "identity.quest_binding_control",
+            "version": "1.0",
+            "plugin": "astrbot_plugin_identity_guardian",
+            "capabilities": (
+                "upsert_read_only_quest_binding",
+                "revoke_read_only_quest_binding",
+            ),
+            "methods": ("upsert_quest_binding", "revoke_quest_binding"),
+            "privacy": "counts_only",
+            "principal_storage": "sha256_digest_only",
+            "owner_users_mutated": False,
+            "natural_person_grants_permission": False,
+            "grants_owner": False,
+            "grants_platform_action": False,
+            "provider_present_fallback": "deny_without_local_merge",
+            "request_fields": (
+                "api_principal_digest",
+                "client_id",
+                "platform_id",
+                "bot_id",
+                "user_id",
+            ),
+            "revoke_request_fields": ("api_principal_digest", "client_id"),
+            "response_fields": (
+                "contract_version",
+                "status",
+                "reason",
+                "updated",
+                "authorized",
+                "config_writable",
+                "read_only_binding_count",
+                "grants_owner",
+                "grants_platform_action",
+            ),
+        }
+
+    async def upsert_quest_binding(self, request: dict[str, str]) -> dict[str, Any]:
+        self.requests.append(dict(request))
+        return {
+            "contract_version": "1.0",
+            "status": "saved",
+            "reason": "quest_read_only_binding_saved",
+            "updated": True,
+            "authorized": True,
+            "config_writable": True,
+            "read_only_binding_count": 1,
+            "grants_owner": False,
+            "grants_platform_action": False,
+        }
+
+    async def revoke_quest_binding(self, request: dict[str, str]) -> dict[str, Any]:
+        self.requests.append(dict(request))
+        return {
+            "contract_version": "1.0",
+            "status": "revoked",
+            "reason": "quest_read_only_binding_revoked",
+            "updated": True,
+            "authorized": False,
+            "config_writable": True,
+            "read_only_binding_count": 0,
+            "grants_owner": False,
+            "grants_platform_action": False,
+        }
+
     @staticmethod
     def _result(*, status: str, reason: str, updated: bool) -> dict[str, Any]:
         return {
@@ -137,6 +203,48 @@ def test_upsert_hashes_principal_and_returns_only_redacted_counts() -> None:
             provider.requests
         )
         assert "11111111-2222-3333-4444-555555555555" not in repr(result)
+
+    asyncio.run(scenario())
+
+
+def test_read_only_upsert_uses_separate_contract_and_never_grants_owner() -> None:
+    async def scenario() -> None:
+        provider = ProviderStub()
+        adapter = IdentityControlPlaneAdapter(ContextStub(provider), LoggerStub())
+
+        result = await adapter.upsert_quest_read_only_binding(
+            api_principal_digest="sha256:" + "a" * 64,
+            client_id="quest-room",
+            platform_id="platform-test",
+            bot_id="bot-test",
+            user_id="ordinary-user",
+        )
+
+        assert result["status"] == "saved"
+        assert result["grants_owner"] is False
+        assert result["grants_platform_action"] is False
+        assert "owner_count" not in result
+        assert provider.requests[-1]["user_id"] == "ordinary-user"
+
+    asyncio.run(scenario())
+
+
+def test_read_only_revoke_uses_only_principal_digest_and_client() -> None:
+    async def scenario() -> None:
+        provider = ProviderStub()
+        adapter = IdentityControlPlaneAdapter(ContextStub(provider), LoggerStub())
+
+        result = await adapter.revoke_quest_read_only_binding(
+            api_principal_digest="sha256:" + "a" * 64,
+            client_id="quest-room",
+        )
+
+        assert result["status"] == "revoked"
+        assert result["authorized"] is False
+        assert provider.requests[-1] == {
+            "api_principal_digest": "sha256:" + "a" * 64,
+            "client_id": "quest-room",
+        }
 
     asyncio.run(scenario())
 

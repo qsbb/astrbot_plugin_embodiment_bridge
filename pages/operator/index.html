@@ -167,7 +167,7 @@
       <section class="setting-panel" aria-labelledby="identity-title">
         <span class="section-label">关系</span>
         <h2 id="identity-title">自然人绑定</h2>
-        <p>候选来自“情”的正式只读契约，只包含管理员标签，不包含平台 UID、Bot ID 或 UMO。</p>
+        <p>候选列表只显示管理员标签。保存时后端会通过“情”的服务端契约解析唯一私聊账号，并同步正式消息链身份；原始账号不会返回页面。</p>
         <div class="inline-actions">
           <button id="load-identity-candidates" type="button" aria-busy="false">从“情”读取</button>
         </div>
@@ -200,7 +200,7 @@
 
     <section class="boundary-note" aria-label="权限边界">
       <strong>自然人绑定不会授予权限</strong>
-      <span>Quest 会话仍按服务端固定身份授权；relationship_person_id 只读取关系快照，绝不会决定角色人格。</span>
+      <span>自然人只提供已验证账号映射；Quest 会话仍须通过 principal 与服务端白名单授权，且不会决定角色人格。</span>
     </section>
 
     <div id="startup-error" class="startup-error" role="alert" hidden></div>

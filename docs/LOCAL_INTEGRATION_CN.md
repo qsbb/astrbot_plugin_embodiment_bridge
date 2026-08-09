@@ -53,12 +53,12 @@ $bridgeBytes = New-Object byte[] 32
 | `pairing_trusted_proxy_ip` | 仅供旧外部代理路径；内置 listener 始终使用直接 peer IP，不信任转发来源头 |
 | `allow_private_http_pairing` | 只在受控私网启用；由服务端固定，快速绑定页不显示，公网继续强制 HTTPS |
 | `pairing_public_url` / `pairing_astrbot_api_key` | 服务端快速绑定使用的 Quest 地址与专用 plugin-scope Key；不进入 Page、二维码或日志 |
-| `pairing_user_id` / `pairing_bot_id` | 服务端固定的 Quest 会话身份；群组和关系档案字段可按需配置 |
+| Bot/User 规范身份 | 在「Quest 角色设置」页明确填写或从“情”解析；只存插件数据目录的 `server_identity.json`，AstrBot 配置 Page 不回显；配对交换只下发占位值 |
 | `pairing_ttl_seconds` | 服务端固定的一次性凭证 TTL，默认 120 秒；Page 只显示剩余时间 |
 | `chat_provider_id` | 明确选择聊天模型 Provider |
 | `persona_source_mode` | 默认 `astrbot`，继承 AstrBot 正式人格；仅兼容旧手动设定时选 `manual_override` |
 | `astrbot_persona_id` | 可选的服务端 Quest 人格；留空继承 AstrBot 明确默认人格，不允许 Unity 提交 |
-| `relationship_person_id` | 可选；由管理员在插件专属配置中管理，不改变平台授权 |
+| `relationship_person_id` | 可选；由管理员在角色设置页选择，后端解析唯一活跃私聊账号并同步 Quest 只读绑定，不新增 owner |
 | `persona_prompt` / 四个 `character_*` 字段 | 仅 `manual_override` 兼容模式生效；未知经历必须明确不知道，且不由 `relationship_person_id` 推断 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |

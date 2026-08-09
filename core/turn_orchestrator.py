@@ -1029,3 +1029,6 @@ class TurnOrchestrator:
             self.diagnostic_log.record(event, **fields)
         except Exception:
             return
+    def canonicalize_session_request(self, value: Any) -> Any:
+        canonicalize = getattr(self.identity, "canonicalize_session_request", None)
+        return canonicalize(value) if callable(canonicalize) else value

@@ -82,16 +82,32 @@
     "hint": "由“Quest 角色设置”页面通过 AstrBot 官方 API Key 认证自动写入；只保存不可逆 SHA-256 摘要，请勿手动填写。",
     "default": ""
   },
-  "pairing_user_id": {
-    "description": "Quest 会话用户 ID",
+  "pairing_identity_sync_state": {
+    "description": "Quest 服务端身份同步状态（内部）",
     "type": "string",
-    "hint": "由服务端固定并在快速绑定时注入；可在「Quest 角色设置」统一填写，不在扫码页显示。",
+    "default": "ready",
+    "options": ["ready", "pending"],
+    "hint": "由临自动维护。pending 时拒绝新 Quest 会话，避免身份控制面与本地事件身份不一致。"
+  },
+  "pairing_identity_source": {
+    "description": "Quest 服务端身份来源（内部）",
+    "type": "string",
+    "default": "manual",
+    "options": ["none", "manual", "relationship"],
+    "hint": "由临自动维护；原始 Bot/User 只在临的专属管理页写入且不回显。"
+  },
+  "pairing_user_id": {
+    "description": "Quest 用户 ID 旧配置迁移槽（内部）",
+    "type": "string",
+    "secret": true,
+    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在 Quest 角色设置页管理。",
     "default": ""
   },
   "pairing_bot_id": {
-    "description": "Quest 会话机器人 ID",
+    "description": "Quest Bot ID 旧配置迁移槽（内部）",
     "type": "string",
-    "hint": "由服务端固定并在快速绑定时注入；可在「Quest 角色设置」统一填写，不在扫码页显示。",
+    "secret": true,
+    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在 Quest 角色设置页管理。",
     "default": ""
   },
   "pairing_group_id": {

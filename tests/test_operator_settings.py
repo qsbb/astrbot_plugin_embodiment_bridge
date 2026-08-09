@@ -13,6 +13,9 @@ from astrbot_plugin_quest_avatar_bridge.core.operator_settings import (
     OperatorSettings,
     OperatorSettingsError,
 )
+from astrbot_plugin_quest_avatar_bridge.adapters.identity_control_plane import (
+    IdentityControlPlaneError,
+)
 
 
 class LoggerStub:
@@ -131,6 +134,21 @@ class IdentityStub:
     def configure_trusted_platform(self, platform_id: str) -> None:
         self.trusted_platform_id = platform_id
 
+    def configure_local_binding(self, **values: str) -> None:
+        self.trusted_platform_id = values["platform_id"]
+        self.local_binding = dict(values)
+
+    def configure_relationship_person_id(self, person_id: str) -> None:
+        self.relationship_person_id = person_id
+
+    def configure_sync_ready(self, ready: bool) -> None:
+        self.sync_ready = ready
+
+    def clear_local_binding(self) -> None:
+        self.local_binding = None
+        self.relationship_person_id = ""
+        self.sync_ready = True
+
 
 class MessagePipelineStub:
     def __init__(self, context: ContextStub, platform_id: str = "") -> None:
@@ -147,6 +165,21 @@ class MessagePipelineStub:
 
     def configure_platform(self, platform_id: str) -> None:
         self.platform_id = platform_id
+
+
+class IdentityStoreStub:
+    def __init__(self, bot_id: str = "", user_id: str = "") -> None:
+        self.identity = (
+            SimpleNamespace(bot_id=bot_id, user_id=user_id)
+            if bot_id and user_id
+            else None
+        )
+
+    async def save(self, *, bot_id: str, user_id: str) -> None:
+        self.identity = SimpleNamespace(bot_id=bot_id, user_id=user_id)
+
+    async def clear(self) -> None:
+        self.identity = None
 
 
 class PersonaManagerStub:
@@ -195,6 +228,10 @@ def build_settings(
         logger=LoggerStub(),
         identity=identity,
         message_pipeline=pipeline,
+        identity_store=IdentityStoreStub(
+            str(config.get("pairing_bot_id", "") or ""),
+            str(config.get("pairing_user_id", "") or ""),
+        ),
     )
 
 
@@ -300,6 +337,147 @@ def test_trusted_platform_persists_and_updates_runtime_immediately() -> None:
         assert cleared["availability_reason"] == "trusted_platform_not_configured"
         assert settings.identity.trusted_platform_id == ""
         assert settings.message_pipeline.platform_id == ""
+
+    asyncio.run(scenario())
+
+
+def test_resolved_relationship_identity_updates_event_identity_in_one_save() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "trusted_client_id": "quest-room",
+                "pairing_api_principal_digest": "sha256:" + "a" * 64,
+            }
+        )
+        settings = build_settings(config=config)
+
+        snapshot = await settings.save_resolved_relationship_identity(
+            person_id="person-a",
+            platform_id="platform-a",
+            bot_id="real-bot",
+            user_id="real-user",
+        )
+
+        assert snapshot["relationship_person_id"] == "person-a"
+        assert config.saves == [
+                {
+                    "relationship_person_id": "person-a",
+                    "trusted_platform_id": "platform-a",
+                    "pairing_bot_id": "",
+                    "pairing_user_id": "",
+                    "pairing_group_id": "",
+                    "pairing_identity_source": "relationship",
+                    "pairing_identity_sync_state": "pending",
+            },
+            {"pairing_identity_sync_state": "ready"},
+        ]
+        assert settings.relationship.person_id == "person-a"
+        assert settings.identity.trusted_platform_id == "platform-a"
+        assert settings.message_pipeline.platform_id == "platform-a"
+        assert settings.identity_store.identity.bot_id == "real-bot"
+        assert settings.identity_store.identity.user_id == "real-user"
+
+    asyncio.run(scenario())
+
+
+def test_resolved_relationship_identity_requires_existing_principal_proof() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({"trusted_client_id": "quest-room"})
+        settings = build_settings(config=config)
+
+        with pytest.raises(OperatorSettingsError) as missing:
+            await settings.save_resolved_relationship_identity(
+                person_id="person-a",
+                platform_id="platform-a",
+                bot_id="real-bot",
+                user_id="real-user",
+            )
+
+        assert missing.value.code == "pairing_api_principal_digest_missing"
+        assert config.saves == []
+
+    asyncio.run(scenario())
+
+
+def test_failed_authoritative_relationship_sync_stays_pending_and_does_not_switch_runtime() -> None:
+    class FailingControlPlane:
+        async def upsert_quest_read_only_binding(self, **values: str) -> dict[str, Any]:
+            del values
+            raise IdentityControlPlaneError("control_failed", "failed")
+
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "trusted_client_id": "quest-room",
+                "pairing_api_principal_digest": "sha256:" + "a" * 64,
+                "pairing_bot_id": "old-bot",
+                "pairing_user_id": "old-user",
+            }
+        )
+        settings = build_settings(config=config)
+        settings.identity_control_plane = FailingControlPlane()
+
+        with pytest.raises(OperatorSettingsError):
+            await settings.save_resolved_relationship_identity(
+                person_id="person-a",
+                platform_id="platform-a",
+                bot_id="real-bot",
+                user_id="real-user",
+            )
+
+        assert config["pairing_identity_sync_state"] == "pending"
+        assert settings.relationship.person_id == ""
+        assert settings.message_pipeline.platform_id == ""
+        assert settings.identity.sync_ready is False
+        assert settings.identity_store.identity.bot_id == "old-bot"
+        assert settings.identity_store.identity.user_id == "old-user"
+
+    asyncio.run(scenario())
+
+
+def test_clear_relationship_identity_revokes_and_removes_server_identity() -> None:
+    class ControlPlane:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, str]] = []
+
+        async def revoke_quest_read_only_binding(
+            self, **values: str
+        ) -> dict[str, Any]:
+            self.requests.append(dict(values))
+            return {"status": "revoked"}
+
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "trusted_client_id": "quest-room",
+                "relationship_person_id": "person-a",
+                "pairing_identity_source": "relationship",
+                "pairing_identity_sync_state": "ready",
+                "pairing_api_principal_digest": "sha256:" + "a" * 64,
+                "pairing_bot_id": "real-bot",
+                "pairing_user_id": "real-user",
+            }
+        )
+        settings = build_settings(config=config)
+        control = ControlPlane()
+        settings.identity_control_plane = control
+        settings.relationship.configure_person_id("person-a")
+
+        snapshot = await settings.clear_resolved_relationship_identity()
+
+        assert snapshot["relationship_person_id"] == ""
+        assert settings.identity_store.identity is None
+        assert settings.identity.sync_ready is True
+        assert settings.identity.relationship_person_id == ""
+        assert config["pairing_identity_source"] == "none"
+        assert config["pairing_bot_id"] == ""
+        assert config["pairing_user_id"] == ""
+        assert control.requests == [
+            {
+                "api_principal_digest": "sha256:" + "a" * 64,
+                "client_id": "quest-room",
+            }
+        ]
 
     asyncio.run(scenario())
 

@@ -56,8 +56,8 @@ class QuestIdentitySettingsRequest(BaseModel):
 
     client_id: str = Field(min_length=1, max_length=64)
     platform_id: str = Field(min_length=1, max_length=128)
-    bot_id: str = Field(min_length=1, max_length=128)
-    user_id: str = Field(min_length=1, max_length=128)
+    bot_id: str = Field(default="", max_length=128)
+    user_id: str = Field(default="", max_length=128)
     api_key: SecretStr = SecretStr("")
 
 
@@ -111,6 +111,7 @@ class PairingHttpApi:
         trusted_platform_id: str,
         operator_settings: Any,
         relationship_candidates: Any,
+        relationship_event_identity: Any,
         api_principal_verifier: Any,
         diagnostic_log: Any | None = None,
         pairing_defaults: dict[str, Any] | None = None,
@@ -128,9 +129,13 @@ class PairingHttpApi:
         self.trusted_proxy_ip = _canonical_ip(trusted_proxy_ip)
         self.operator_settings = operator_settings
         self.relationship_candidates = relationship_candidates
+        self.relationship_event_identity = relationship_event_identity
         self.api_principal_verifier = api_principal_verifier
         self.diagnostic_log = diagnostic_log
         self.pairing_defaults = dict(pairing_defaults or {})
+        self.relationship_refresh_ready = not bool(
+            str(self.operator_settings.config.get("relationship_person_id", "") or "").strip()
+        )
         self.max_json_body_bytes = max(4096, min(65_536, max_json_body_bytes))
 
     def register(self) -> None:
@@ -408,11 +413,28 @@ class PairingHttpApi:
             principal_digest = await self.api_principal_verifier.resolve_digest(
                 api_key
             )
+            identity_source = str(
+                self.operator_settings.config.get("pairing_identity_source", "manual")
+                or "manual"
+            ).strip()
+            stored_bot_id, stored_user_id = (
+                self.operator_settings.server_identity_values()
+            )
             identity = await self.operator_settings.save_quest_identity(
                 client_id=payload.client_id,
                 platform_id=payload.platform_id,
-                bot_id=payload.bot_id,
-                user_id=payload.user_id,
+                bot_id=payload.bot_id
+                or (
+                    stored_bot_id
+                    if identity_source == "manual"
+                    else ""
+                ),
+                user_id=payload.user_id
+                or (
+                    stored_user_id
+                    if identity_source == "manual"
+                    else ""
+                ),
                 api_principal_digest=principal_digest,
                 astrbot_api_key=api_key,
             )
@@ -420,14 +442,16 @@ class PairingHttpApi:
             self.trusted_platform_id = identity["platform_id"]
             self.pairing_defaults.update(
                 client_id=identity["client_id"],
-                user_id=identity["user_id"],
-                bot_id=identity["bot_id"],
+                user_id="server-managed-user",
+                bot_id="server-managed-bot",
+                server_identity_ready=True,
                 group_id="",
                 astrbot_api_key=str(
                     self.operator_settings.config.get("pairing_astrbot_api_key", "")
                     or ""
                 ),
             )
+            await self.service.sessions.close_all_sessions()
             return _json_no_store({"success": True, "identity": identity})
         except Exception as exc:
             return self._error(exc, "save_quest_identity_settings")
@@ -528,6 +552,52 @@ class PairingHttpApi:
         except Exception as exc:
             return self._error(exc, "identity_candidates")
 
+    async def refresh_selected_relationship_identity(self) -> dict[str, str]:
+        person_id = str(
+            self.operator_settings.config.get("relationship_person_id", "") or ""
+        ).strip()
+        if not person_id:
+            self.relationship_refresh_ready = True
+            return {"status": "not_configured", "reason": "not_configured"}
+        resolution = await self.relationship_event_identity.resolve(
+            person_id=person_id,
+            platform_candidates=(
+                self.operator_settings.quest_identity_platform_candidates()
+            ),
+        )
+        identity = resolution.identity
+        if identity is None:
+            await self.operator_settings.mark_relationship_identity_sync_pending()
+            self.relationship_refresh_ready = False
+            return {"status": resolution.status, "reason": resolution.reason}
+        try:
+            await self.operator_settings.save_resolved_relationship_identity(
+                person_id=person_id,
+                platform_id=identity.platform_id,
+                bot_id=identity.bot_id,
+                user_id=identity.user_id,
+            )
+        except OperatorSettingsError as exc:
+            self.relationship_refresh_ready = False
+            return {"status": "pending", "reason": exc.code}
+        self.trusted_platform_id = identity.platform_id
+        self.pairing_defaults.update(
+            client_id=str(
+                self.operator_settings.config.get("trusted_client_id", "") or ""
+            ).strip(),
+            user_id="server-managed-user",
+            bot_id="server-managed-bot",
+            group_id="",
+            server_identity_ready=True,
+        )
+        self.relationship_refresh_ready = True
+        return {"status": "resolved", "reason": "resolved"}
+
+    async def ensure_selected_relationship_identity(self) -> dict[str, str]:
+        if self.relationship_refresh_ready:
+            return {"status": "ready", "reason": "already_refreshed"}
+        return await self.refresh_selected_relationship_identity()
+
     async def save_identity_selection(self) -> Any:
         try:
             self._dashboard_owner()
@@ -551,10 +621,88 @@ class PairingHttpApi:
                         422,
                         "所选自然人不存在或已经不可用",
                     )
-            settings = await self.operator_settings.save_relationship_person_id(
-                payload.person_id
+                platforms = (
+                    self.operator_settings.quest_identity_platform_candidates()
+                )
+                resolution = await self.relationship_event_identity.resolve(
+                    person_id=payload.person_id,
+                    platform_candidates=platforms,
+                )
+                identity = resolution.identity
+                if identity is None:
+                    code = resolution.reason or (
+                        "relationship_quest_event_identity_unavailable"
+                    )
+                    if code == "identity_transaction_pending":
+                        status_code = 409
+                    elif resolution.status == "invalid_response":
+                        status_code = 502
+                    elif resolution.status in {
+                        "provider_unavailable",
+                        "contract_unavailable",
+                        "timeout",
+                        "error",
+                    } or code == "active_platform_api_unavailable":
+                        status_code = 503
+                    else:
+                        status_code = 422
+                    raise PairingError(
+                        code,
+                        status_code,
+                        "所选自然人没有可用于 Quest 对话的唯一活跃私聊账号",
+                    )
+                settings = await (
+                    self.operator_settings.save_resolved_relationship_identity(
+                        person_id=payload.person_id,
+                        platform_id=identity.platform_id,
+                        bot_id=identity.bot_id,
+                        user_id=identity.user_id,
+                    )
+                )
+                self.trusted_platform_id = identity.platform_id
+                self.pairing_defaults.update(
+                    client_id=str(
+                        self.operator_settings.config.get("trusted_client_id", "")
+                        or ""
+                    ).strip(),
+                    user_id="server-managed-user",
+                    bot_id="server-managed-bot",
+                    server_identity_ready=True,
+                    group_id="",
+                )
+                await self.service.sessions.close_all_sessions()
+                self.relationship_refresh_ready = True
+                return _json_no_store(
+                    {
+                        "success": True,
+                        "settings": settings,
+                        "event_identity": {
+                            "status": "resolved",
+                            "source": "relationship.quest_event_identity@1.0",
+                        },
+                    }
+                )
+            settings = await (
+                self.operator_settings.clear_resolved_relationship_identity()
             )
-            return _json_no_store({"success": True, "settings": settings})
+            self.pairing_defaults.update(
+                user_id="server-managed-user",
+                bot_id="server-managed-bot",
+                group_id="",
+                server_identity_ready=False,
+            )
+            await self.service.sessions.close_all_sessions()
+            self.relationship_refresh_ready = True
+            return _json_no_store(
+                {
+                    "success": True,
+                    "settings": settings,
+                    "event_identity": {
+                        "status": "revoked",
+                        "source": "relationship.quest_event_identity@1.0",
+                    },
+                }
+            )
         except Exception as exc:
             return self._error(exc, "save_identity_selection")
 
@@ -645,13 +793,13 @@ class PairingHttpApi:
             "public_url",
             "astrbot_api_key",
             "client_id",
-            "user_id",
-            "bot_id",
         )
         if any(
             not str(self.pairing_defaults.get(key) or "").strip() for key in required
         ):
             return False, "quick_pairing_defaults_missing"
+        if self.pairing_defaults.get("server_identity_ready") is not True:
+            return False, "quick_pairing_server_identity_missing"
         return True, "ready"
 
     def _complete_create_request(
@@ -659,7 +807,19 @@ class PairingHttpApi:
         payload: PairingCreateRequest,
     ) -> PairingCreateRequest:
         if payload.public_url:
-            return payload
+            if self.pairing_defaults.get("server_identity_ready") is not True:
+                raise PairingError(
+                    "quick_pairing_server_identity_missing",
+                    503,
+                    "Quest server identity is incomplete",
+                )
+            return payload.model_copy(
+                update={
+                    "user_id": "server-managed-user",
+                    "bot_id": "server-managed-bot",
+                    "group_id": "",
+                }
+            )
         ready, reason = self._quick_pairing_status()
         if not ready:
             raise PairingError(

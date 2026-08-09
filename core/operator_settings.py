@@ -55,6 +55,7 @@ class OperatorSettings:
         identity_control_plane: IdentityControlPlaneAdapter | None = None,
         pairing_manager: Any | None = None,
         transport: Any | None = None,
+        identity_store: Any | None = None,
     ) -> None:
         self.context = context
         self.config = config
@@ -68,7 +69,9 @@ class OperatorSettings:
         self.identity_control_plane = identity_control_plane
         self.pairing_manager = pairing_manager
         self.transport = transport
+        self.identity_store = identity_store
         self._save_lock = asyncio.Lock()
+        self._identity_sync_lock = asyncio.Lock()
 
     def snapshot(self) -> dict[str, Any]:
         providers = self._list_chat_providers()
@@ -210,8 +213,13 @@ class OperatorSettings:
         bridge_key = str(self.config.get("bridge_api_key", "") or "")
         client_id = str(self.config.get("trusted_client_id", "") or "").strip()
         platform = self.platform_snapshot()
-        bot_id = str(self.config.get("pairing_bot_id", "") or "").strip()
-        user_id = str(self.config.get("pairing_user_id", "") or "").strip()
+        server_identity = (
+            getattr(self.identity_store, "identity", None)
+            if self.identity_store is not None
+            else None
+        )
+        bot_id = str(getattr(server_identity, "bot_id", "") or "").strip()
+        user_id = str(getattr(server_identity, "user_id", "") or "").strip()
         ready = bool(
             len(api_key) >= 16
             and len(bridge_key) >= 32
@@ -220,13 +228,23 @@ class OperatorSettings:
             and bot_id
             and user_id
             and control_plane.get("status") == "ready"
+            and str(self.config.get("pairing_identity_sync_state", "ready"))
+            == "ready"
         )
         return {
             "status": "ready" if ready else "incomplete",
             "client_id": client_id,
             "platform_id": platform["trusted_platform_id"],
-            "bot_id": bot_id,
-            "user_id": user_id,
+            "bot_id": "",
+            "user_id": "",
+            "bot_id_configured": bool(bot_id),
+            "user_id_configured": bool(user_id),
+            "identity_source": str(
+                self.config.get("pairing_identity_source", "manual") or "manual"
+            )[:32],
+            "identity_sync_state": str(
+                self.config.get("pairing_identity_sync_state", "ready") or "ready"
+            )[:32],
             "astrbot_auth_configured": len(api_key) >= 16,
             "bridge_auth_configured": len(bridge_key) >= 32,
             "control_plane": control_plane,
@@ -239,6 +257,26 @@ class OperatorSettings:
         }
 
     async def save_quest_identity(
+        self,
+        *,
+        client_id: str,
+        platform_id: str,
+        bot_id: str,
+        user_id: str,
+        api_principal_digest: str,
+        astrbot_api_key: str,
+    ) -> dict[str, Any]:
+        async with self._identity_sync_lock:
+            return await self._save_quest_identity_unlocked(
+                client_id=client_id,
+                platform_id=platform_id,
+                bot_id=bot_id,
+                user_id=user_id,
+                api_principal_digest=api_principal_digest,
+                astrbot_api_key=astrbot_api_key,
+            )
+
+    async def _save_quest_identity_unlocked(
         self,
         *,
         client_id: str,
@@ -280,6 +318,23 @@ class OperatorSettings:
         if len(bridge_key) < 32:
             bridge_key = secrets.token_urlsafe(32)
 
+        changes = {
+            "trusted_client_id": client,
+            "trusted_platform_id": platform,
+            "pairing_bot_id": "",
+            "pairing_user_id": "",
+            "pairing_group_id": "",
+            "pairing_astrbot_api_key": api_key,
+            "pairing_api_principal_digest": principal_digest,
+            "bridge_api_key": bridge_key,
+            "relationship_person_id": "",
+            "pairing_identity_source": "manual",
+            "pairing_identity_sync_state": "pending",
+        }
+        await self._persist_many(changes)
+        if self.identity is not None:
+            self.identity.configure_sync_ready(False)
+
         control_result: dict[str, Any] = {
             "source": "bridge_local",
             "authorized": True,
@@ -299,17 +354,14 @@ class OperatorSettings:
             except IdentityControlPlaneError as exc:
                 raise OperatorSettingsError(exc.code, 503, str(exc)) from exc
 
-        changes = {
-            "trusted_client_id": client,
-            "trusted_platform_id": platform,
-            "pairing_bot_id": bot,
-            "pairing_user_id": user,
-            "pairing_group_id": "",
-            "pairing_astrbot_api_key": api_key,
-            "pairing_api_principal_digest": principal_digest,
-            "bridge_api_key": bridge_key,
-        }
-        await self._persist_many(changes)
+        if self.identity_store is None:
+            raise OperatorSettingsError(
+                "server_identity_store_unavailable",
+                503,
+                "服务端身份存储不可用",
+            )
+        await self.identity_store.save(bot_id=bot, user_id=user)
+        await self._persist("pairing_identity_sync_state", "ready")
         if self.identity is not None:
             self.identity.configure_local_binding(
                 api_principal_digest=principal_digest,
@@ -319,6 +371,9 @@ class OperatorSettings:
                 user_id=user,
                 group_id="",
             )
+            self.identity.configure_relationship_person_id("")
+            self.identity.configure_sync_ready(True)
+        self.relationship.configure_person_id("")
         if self.message_pipeline is not None:
             self.message_pipeline.configure_platform(platform)
         if self.pairing_manager is not None:
@@ -369,6 +424,197 @@ class OperatorSettings:
             )
         await self._persist("relationship_person_id", person_id)
         self.relationship.configure_person_id(person_id)
+        if self.identity is not None:
+            self.identity.configure_relationship_person_id(person_id)
+        return self.snapshot()
+
+    async def clear_resolved_relationship_identity(self) -> dict[str, Any]:
+        source = str(
+            self.config.get("pairing_identity_source", "manual") or "manual"
+        ).strip()
+        if source != "relationship":
+            return await self.save_relationship_person_id("")
+        client = str(self.config.get("trusted_client_id", "") or "").strip()
+        try:
+            principal_digest = validate_principal_digest(
+                self.config.get("pairing_api_principal_digest", "")
+            )
+        except ValueError as exc:
+            raise OperatorSettingsError(
+                "pairing_api_principal_digest_missing",
+                422,
+                "无法验证需要撤销的 Quest 身份摘要",
+            ) from exc
+
+        async with self._identity_sync_lock:
+            await self._persist("pairing_identity_sync_state", "pending")
+            if self.identity is not None:
+                self.identity.configure_sync_ready(False)
+            if self.identity_control_plane is not None:
+                try:
+                    await self.identity_control_plane.revoke_quest_read_only_binding(
+                        api_principal_digest=principal_digest,
+                        client_id=client,
+                    )
+                except IdentityControlPlaneError as exc:
+                    raise OperatorSettingsError(exc.code, 503, str(exc)) from exc
+            await self._persist_many(
+                {
+                    "relationship_person_id": "",
+                    "pairing_bot_id": "",
+                    "pairing_user_id": "",
+                    "pairing_group_id": "",
+                    "pairing_identity_source": "none",
+                    "pairing_identity_sync_state": "ready",
+                }
+            )
+            if self.identity_store is not None:
+                await self.identity_store.clear()
+            self.relationship.configure_person_id("")
+            if self.identity is not None:
+                self.identity.clear_local_binding()
+        return self.snapshot()
+
+    async def mark_relationship_identity_sync_pending(self) -> None:
+        if str(self.config.get("relationship_person_id", "") or "").strip() == "":
+            return
+        if str(self.config.get("pairing_identity_sync_state", "") or "") != "pending":
+            await self._persist("pairing_identity_sync_state", "pending")
+        if self.identity is not None:
+            self.identity.configure_sync_ready(False)
+
+    def active_platform_ids(self) -> tuple[str, ...]:
+        return tuple(item["id"] for item in self._list_platforms())
+
+    def quest_identity_platform_candidates(self) -> tuple[str, ...]:
+        active = self.active_platform_ids()
+        preferred = str(
+            getattr(self.message_pipeline, "platform_id", "")
+            or getattr(self.identity, "trusted_platform_id", "")
+            or self.config.get("trusted_platform_id", "")
+            or ""
+        ).strip()
+        if preferred in active:
+            return (preferred,)
+        return active
+
+    def server_identity_values(self) -> tuple[str, str]:
+        identity = (
+            getattr(self.identity_store, "identity", None)
+            if self.identity_store is not None
+            else None
+        )
+        return (
+            str(getattr(identity, "bot_id", "") or ""),
+            str(getattr(identity, "user_id", "") or ""),
+        )
+
+    async def save_resolved_relationship_identity(
+        self,
+        *,
+        person_id: str,
+        platform_id: str,
+        bot_id: str,
+        user_id: str,
+    ) -> dict[str, Any]:
+        person = str(person_id or "").strip()
+        if not _PERSON_ID_RE.fullmatch(person):
+            raise OperatorSettingsError(
+                "invalid_relationship_person_id",
+                422,
+                "自然人 ID 无效",
+            )
+        client = str(self.config.get("trusted_client_id", "") or "").strip()
+        if not _CLIENT_ID_RE.fullmatch(client):
+            raise OperatorSettingsError(
+                "trusted_client_id_missing",
+                422,
+                "请先配置 Quest 客户端 ID",
+            )
+        platform = str(platform_id or "").strip()
+        self._validate_platform_id(platform)
+        bot = _identity_value(bot_id, "bot_id")
+        user = _identity_value(user_id, "user_id")
+        try:
+            principal_digest = validate_principal_digest(
+                self.config.get("pairing_api_principal_digest", "")
+            )
+        except ValueError as exc:
+            raise OperatorSettingsError(
+                "pairing_api_principal_digest_missing",
+                422,
+                "请先在 Quest 身份设置中验证 AstrBot API Key",
+            ) from exc
+
+        async with self._identity_sync_lock:
+            await self._persist_many(
+                {
+                    "relationship_person_id": person,
+                    "trusted_platform_id": platform,
+                    "pairing_bot_id": "",
+                    "pairing_user_id": "",
+                    "pairing_group_id": "",
+                    "pairing_identity_source": "relationship",
+                    "pairing_identity_sync_state": "pending",
+                }
+            )
+            if self.identity is not None:
+                self.identity.configure_sync_ready(False)
+            control_result: dict[str, Any] = {
+                "source": "bridge_local",
+                "authorized": True,
+                "reason": "saved_to_bridge_local_fallback",
+            }
+            if self.identity_control_plane is not None:
+                try:
+                    control_result = await (
+                        self.identity_control_plane.upsert_quest_read_only_binding(
+                            api_principal_digest=principal_digest,
+                            client_id=client,
+                            platform_id=platform,
+                            bot_id=bot,
+                            user_id=user,
+                        )
+                    )
+                except IdentityControlPlaneError as exc:
+                    self._diagnostic(
+                        "identity.relationship_sync_pending",
+                        component="identity",
+                        status="pending",
+                        code=exc.code,
+                        configured=True,
+                        available=False,
+                    )
+                    raise OperatorSettingsError(exc.code, 503, str(exc)) from exc
+            if self.identity_store is None:
+                raise OperatorSettingsError(
+                    "server_identity_store_unavailable",
+                    503,
+                    "服务端身份存储不可用",
+                )
+            await self.identity_store.save(bot_id=bot, user_id=user)
+            await self._persist("pairing_identity_sync_state", "ready")
+        self.relationship.configure_person_id(person)
+        if self.identity is not None:
+            self.identity.configure_relationship_person_id(person)
+            self.identity.configure_local_binding(
+                api_principal_digest=principal_digest,
+                client_id=client,
+                platform_id=platform,
+                bot_id=bot,
+                user_id=user,
+                group_id="",
+            )
+            self.identity.configure_sync_ready(True)
+        if self.message_pipeline is not None:
+            self.message_pipeline.configure_platform(platform)
+        self._diagnostic(
+            "identity.relationship_resolved",
+            component="identity",
+            status="ready",
+            configured=True,
+            available=control_result.get("authorized") is True,
+        )
         return self.snapshot()
 
     async def save_trusted_platform_id(self, value: str) -> dict[str, Any]:
@@ -615,6 +861,8 @@ class OperatorSettings:
                 "pairing_group_id",
                 "pairing_astrbot_api_key",
                 "pairing_api_principal_digest",
+                "pairing_identity_source",
+                "pairing_identity_sync_state",
                 "bridge_api_key",
             }
             for key in changes

@@ -85,6 +85,9 @@ class HttpSseTransport:
             sse_heartbeat_seconds=self.config.sse_heartbeat_seconds,
         )
 
+    def configure_identity_refresh(self, callback: Any) -> None:
+        self._identity_refresh = callback
+
     def register(self) -> None:
         routes = (
             (
@@ -122,6 +125,10 @@ class HttpSseTransport:
 
     async def session_start(self) -> Any:
         async def action(owner: str, payload: SessionStartRequest) -> Any:
+            refresh = getattr(self, "_identity_refresh", None)
+            if callable(refresh):
+                await refresh()
+            payload = self.orchestrator.canonicalize_session_request(payload)
             authorization = await self.orchestrator.authorize_session(owner, payload)
             session = await self.sessions.start_session(
                 payload,

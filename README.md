@@ -63,17 +63,15 @@ pairing_listener_public_url=http://192.168.50.10:8520
 allow_private_http_pairing=true
 pairing_public_url=http://192.168.50.10:8520
 pairing_astrbot_api_key=<具有 plugin scope 的 Quest 专用 Key>
-pairing_user_id=<固定用户 ID>
-pairing_bot_id=<固定机器人 ID>
 ```
 
-Quest 客户端使用 AstrBot 4.27 的官方 `Authorization: ApiKey <key>` 认证方案。请在“Quest 角色设置”页面填写专用 Key 并点击“保存并验证身份”；后端会通过严格 loopback HTTP 调用只读证明端点，让 AstrBot 先解析出 `api_key:<key_id>`，随后只把不可逆摘要写入身份白名单。升级自 0.4.10 或更早版本后必须重新保存一次身份，旧的错误摘要不会被自动猜测迁移。
+Quest 客户端使用 AstrBot 4.27 的官方 `Authorization: ApiKey <key>` 认证方案。请在“Quest 角色设置”页面填写专用 Key 并点击“保存并验证身份”；后端会通过严格 loopback HTTP 调用只读证明端点，让 AstrBot 先解析出 `api_key:<key_id>`，随后只把不可逆摘要写入身份白名单。Bot/User 始终由服务端保存，快速绑定只向 Quest 下发固定占位值，`session/start` 再以服务端规范身份覆盖设备声明。
 
 Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初始化成功且配置合法时才会真正绑定。旧 `pairing_exchange_proxy_url` 与 [Nginx 示例](docs/nginx_8520_pairing.example.conf) 继续作为可选兼容方案，优先级低于已就绪且 public URL 合法的内置 listener。详见 [首次配对审计](docs/PAIRING_BOOTSTRAP_AUDIT_CN.md)。
 
 复制短码或撤销配对期间，对应按钮会暂时禁用并显示“正在处理”，成功或失败后都会恢复，避免连续点击产生重复请求。如果服务端返回了当前页面尚不认识的配对状态，页面会显示中文提示并停止复制、撤销和轮询，避免把未知状态误当成仍可使用。
 
-前置条件：已设置至少 32 字符的 `bridge_api_key`、Quest 专用 `pairing_astrbot_api_key`、`pairing_user_id`、`pairing_bot_id` 和 Quest 可达的 `pairing_public_url`，并已选择聊天模型 Provider。公网必须使用 Quest 信任的 HTTPS；受控私网可显式使用私网 IP 字面量 HTTP。详细步骤与 Quest 端操作见 [docs/PAIRING_CN.md](docs/PAIRING_CN.md)。
+前置条件：已设置至少 32 字符的 `bridge_api_key`、Quest 专用 `pairing_astrbot_api_key` 和 Quest 可达的 `pairing_public_url`，并已选择聊天模型 Provider；Bot/User 在「Quest 角色设置」页明确填写，或通过“情”的自然人绑定自动解析。原始 Bot/User 只写插件数据目录中的服务端身份文件，不进入 AstrBot 配置 Page。公网必须使用 Quest 信任的 HTTPS；受控私网可显式使用私网 IP 字面量 HTTP。详细步骤与 Quest 端操作见 [docs/PAIRING_CN.md](docs/PAIRING_CN.md)。
 
 ## 角色设置页
 
@@ -87,8 +85,9 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - 只有统一或本地身份授权成功且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
-- 保存自然人时后端会重新读取正式候选目录并校验。候选删除、契约缺失或超时时停止注入关系上下文，不自动换人。
-- 自然人选择只决定授权后的关系快照范围，不能替代原始 platform_id/bot_id/user_id，也不授予 owner、白名单或管理权限。
+- 保存自然人时后端会重新读取正式候选目录，并通过仅服务端可见的 `relationship.quest_event_identity@1.0` 解析该自然人在当前活跃 AstrBot 平台上的唯一完整私聊账号；随后复用已验证 principal，通过“序”的 `identity.quest_binding_control@1.0` 保存 Quest 只读精确绑定，未安装“序”时使用本地严格绑定。该操作不修改 owner_users。原始账号和 UMO 不进入 Page 响应、Quest 或日志。
+- `session/start` 始终用服务端规范身份覆盖设备的 Bot/User 占位声明，并在每个新会话重新向“情”复核；插件升级后也会自动修复已有自然人选择，无需把真实账号重新下发给设备。身份同步处于 pending 或复核不一致时，新会话失败关闭。
+- 自然人选择提供身份映射事实，但本身不授予 owner、白名单、管理或平台操作权限；契约缺失、平台不在线、群聊/账号不完整、多账号歧义或授权控制面拒绝时失败关闭，不自动换人，也不读取“情”的私有 registry 兜底。
 - `relationship_person_id` 绝不用于推断角色姓名、自称或身份；关系快照只影响语气、主动性和边界。
 - “临”独立日志与设备端使用同一诊断结构：当前根因、链路、输入、耗时和阶段时间线（最新在下）；不渲染原始 JSON、正文、密钥或身份值。
 - EventBus 模式由 AstrBot 正式会话与插件钩子负责人格、历史、工具和时间/环境上下文；回退模式每个 turn 异步取得一次人格稳定快照。两条路径都不能覆盖 Protocol 1.0、认证授权和动作白名单。
