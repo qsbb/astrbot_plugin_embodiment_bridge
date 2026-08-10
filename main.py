@@ -51,7 +51,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.19"
+__version__ = "0.4.20"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -611,6 +611,7 @@ class QuestAvatarBridgePlugin(Star):
         )
         terminated_ok = False
         try:
+            await self.persona_service.close()
             await self.service.close()
             self.pairing.close()
             await self.orchestrator.close()

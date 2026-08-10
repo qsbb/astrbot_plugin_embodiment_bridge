@@ -120,6 +120,12 @@ class PersonaConvertRequest(BaseModel):
     admin_requirements: str = Field(default="", max_length=2_000)
 
 
+class PersonaConversionJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    job_id: str = Field(pattern=r"^pcj_[0-9a-f]{48}$")
+
+
 class PersonaConversionReportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -287,6 +293,24 @@ class PairingHttpApi:
                 self.convert_persona,
                 ["POST"],
                 "Convert an AstrBot or manual persona into a preview draft",
+            ),
+            (
+                "pairing/persona-conversion-start",
+                self.start_persona_conversion,
+                ["POST"],
+                "Start a recoverable Quest persona conversion job",
+            ),
+            (
+                "pairing/persona-conversion-status",
+                self.persona_conversion_status,
+                ["POST"],
+                "Read a recoverable Quest persona conversion job",
+            ),
+            (
+                "pairing/persona-conversion-cancel",
+                self.cancel_persona_conversion,
+                ["POST"],
+                "Cancel a recoverable Quest persona conversion job",
             ),
             (
                 "pairing/persona-profile-open",
@@ -564,6 +588,49 @@ class PairingHttpApi:
             return _json_no_store({"success": True, **result})
         except Exception as exc:
             return self._error(exc, "convert_persona")
+
+    async def start_persona_conversion(self) -> Any:
+        try:
+            owner = self._dashboard_owner()
+            payload = await self._read_model(PersonaConvertRequest)
+            job = await self._persona_service().start_conversion(
+                owner=owner,
+                source_kind=payload.source_type,
+                source_persona_id=payload.source_persona_id,
+                source_prompt=payload.source_prompt,
+                display_name=payload.display_name,
+                admin_requirements=payload.admin_requirements,
+            )
+            return _json_no_store(
+                {"success": True, "job": job},
+                status_code=200 if job.get("reused") is True else 202,
+            )
+        except Exception as exc:
+            return self._error(exc, "start_persona_conversion")
+
+    async def persona_conversion_status(self) -> Any:
+        try:
+            owner = self._dashboard_owner()
+            payload = await self._read_model(PersonaConversionJobRequest)
+            job = await self._persona_service().conversion_status(
+                payload.job_id,
+                owner=owner,
+            )
+            return _json_no_store({"success": True, "job": job})
+        except Exception as exc:
+            return self._error(exc, "persona_conversion_status")
+
+    async def cancel_persona_conversion(self) -> Any:
+        try:
+            owner = self._dashboard_owner()
+            payload = await self._read_model(PersonaConversionJobRequest)
+            job = await self._persona_service().cancel_conversion(
+                payload.job_id,
+                owner=owner,
+            )
+            return _json_no_store({"success": True, "job": job})
+        except Exception as exc:
+            return self._error(exc, "cancel_persona_conversion")
 
     async def open_persona_profile(self) -> Any:
         try:

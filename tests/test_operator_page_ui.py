@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=0.4.19-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=0.4.19-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.19-1")
+    assert '<script type="module" src="./app.js?v=0.4.20-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=0.4.20-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.20-1")
     assert "凝心溯溪-临｜Quest 角色设置" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -245,6 +245,7 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
         "new-persona-profile-button",
         "persona-conversion-report",
         "persona-conversion-progress",
+        "cancel-persona-conversion-button",
         "persona-unresolved-warning",
         "convert-persona-button",
         "save-persona-profile-button",
@@ -254,7 +255,10 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
 
     assert 'apiGet("pairing/persona-library")' in js
     assert 'apiPost("pairing/persona-converter-settings"' in js
-    assert '"pairing/persona-convert"' in js
+    assert '"pairing/persona-conversion-start"' in js
+    assert '"pairing/persona-conversion-status"' in js
+    assert '"pairing/persona-conversion-cancel"' in js
+    assert '"pairing/persona-convert"' not in js
     assert 'apiPost("pairing/persona-profile-open"' in js
     assert 'apiPost("pairing/persona-profile-save"' in js
     assert 'apiPost("pairing/persona-profile-activate"' in js
@@ -275,9 +279,9 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
     assert "textContent" in js
     assert "人格已保存，但没有自动启用" in js
     assert "人格已保存，尚未启用" in js
-    assert "PERSONA_CONVERSION_TIMEOUT_MS = 135000" in js
-    assert "正在等待转换模型生成并校验结果" in js
-    assert "转换预览完成，用时" in js
+    assert "PERSONA_CONVERSION_POLL_MS = 1000" in js
+    assert "正在等待转换模型生成" in js
+    assert "转换预览完成，后台任务用时" in js
     assert "人格已保存，并已立即更新当前启用的人格" in js
     assert "后端封存" in html
     assert "原人格由后端读取并封存" in html
@@ -289,3 +293,36 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
     assert ".persona-prompt-columns" in css
     assert ".conversion-report-grid" in css
     assert ".persona-profile-row.active" in css
+    assert "window.sessionStorage" in js
+    assert "PERSONA_CONVERSION_JOB_STORAGE_KEY" in js
+    assert "restorePersonaConversionContext" in js
+    assert "restorePersonaConversionEditor" in js
+    assert "profile_id: document.getElementById" in js
+    assert "source_persona_id: personaWorkflowMode" in js
+    assert 'error.code === "conversion_job_not_found"' in js
+    assert "job?.error?.message" in js
+    assert "persona.convert.source.started" in js
+    assert "persona.convert.model.started" in js
+    assert "persona.convert.validation.started" in js
+    assert "persona.convert.draft.created" in js
+    assert "persona.convert.progress" in js
+    assert "personaConversionJobSnapshot" in js
+    assert "setPersonaConversionLocked(true)" in js
+    assert "data-conversion-was-disabled" in js
+    assert ".persona-panel.conversion-locked" in css
+    assert "隐藏推理内容" in html
+
+
+def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert "DIAGNOSTICS_REFRESH_MS = 1000" in js
+    assert "if (diagnosticsRefreshInFlight) return diagnosticsRefreshInFlight;" in js
+    assert "loadDiagnostics({ silent: true })" in js
+    assert 'document.addEventListener("visibilitychange"' in js
+    assert 'window.addEventListener("pagehide", clearPageTimers)' in js
+    assert 'window.addEventListener("pageshow", handlePageVisibilityChange)' in js
+    assert "if (document.hidden || !bridgeReady) return;" in js
+    assert "startServiceRefresh()" in js
+    assert "每秒自动刷新" in html

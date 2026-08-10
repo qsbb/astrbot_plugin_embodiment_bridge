@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import secrets
 import time
@@ -29,9 +30,12 @@ from .config_persistence import config_is_writable
 
 PersistSetting = Callable[[str, str], Awaitable[None]]
 ProviderCatalog = Callable[[], list[dict[str, str]]]
+ConversionProgress = Callable[[str], None]
 
 _DRAFT_TTL_SECONDS = 30 * 60
 _MAX_PENDING_DRAFTS = 32
+_CONVERSION_JOB_TTL_SECONDS = 30 * 60
+_MAX_CONVERSION_JOBS = 32
 
 
 class QuestPersonaServiceError(RuntimeError):
@@ -50,6 +54,25 @@ class _PendingConversion:
     source_snapshot: str
     conversion: PersonaConversion
     converter_provider_id: str
+
+
+@dataclass(slots=True)
+class _ConversionJob:
+    job_id: str
+    owner: str
+    request_fingerprint: str
+    converter_provider_id: str
+    source_kind: str
+    created_at: float
+    updated_at: float
+    status: str = "queued"
+    stage: str = "accepted"
+    started_at: float | None = None
+    finished_at: float | None = None
+    result: dict[str, Any] | None = None
+    error_code: str = ""
+    error_message: str = ""
+    task: asyncio.Task[None] | None = None
 
 
 class QuestPersonaService:
@@ -79,7 +102,11 @@ class QuestPersonaService:
         self.diagnostic_log = diagnostic_log
         self._drafts: dict[str, _PendingConversion] = {}
         self._draft_lock = asyncio.Lock()
+        self._conversion_jobs: dict[str, _ConversionJob] = {}
+        self._conversion_job_lock = asyncio.Lock()
+        self._active_conversion_tasks: set[asyncio.Task[Any]] = set()
         self._mutation_lock = asyncio.Lock()
+        self._closed = False
         self.active_status = "not_checked"
 
     async def initialize(self) -> None:
@@ -173,13 +200,63 @@ class QuestPersonaService:
         source_prompt: object,
         display_name: object,
         admin_requirements: object,
+        progress: ConversionProgress | None = None,
+        converter_provider_id: object | None = None,
+        conversion_job_id: object | None = None,
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise QuestPersonaServiceError(
+                "persona_service_closed", 503, "临人格服务正在关闭"
+            )
+        task = asyncio.current_task()
+        async with self._conversion_job_lock:
+            active_job = next(
+                (
+                    job
+                    for job in self._conversion_jobs.values()
+                    if job.status in {"queued", "running"}
+                    and job.job_id != str(conversion_job_id or "")
+                ),
+                None,
+            )
+            if active_job is not None:
+                raise QuestPersonaServiceError(
+                    "conversion_job_in_progress",
+                    409,
+                    "已有其他人格转换正在运行，请等待或取消后重试",
+                )
+            if task is not None:
+                self._active_conversion_tasks.add(task)
+        try:
+            return await self._convert_tracked(
+                source_kind=source_kind,
+                source_persona_id=source_persona_id,
+                source_prompt=source_prompt,
+                display_name=display_name,
+                admin_requirements=admin_requirements,
+                progress=progress,
+                converter_provider_id=converter_provider_id,
+            )
+        finally:
+            if task is not None:
+                self._active_conversion_tasks.discard(task)
+
+    async def _convert_tracked(
+        self,
+        *,
+        source_kind: object,
+        source_persona_id: object,
+        source_prompt: object,
+        display_name: object,
+        admin_requirements: object,
+        progress: ConversionProgress | None = None,
+        converter_provider_id: object | None = None,
     ) -> dict[str, Any]:
         started_at = time.monotonic()
-        self._diagnostic(
+        self._conversion_progress(
+            progress,
             "persona.convert.started",
-            component="persona",
-            status="processing",
-            phase="source_lookup",
+            stage="accepted",
         )
         try:
             result = await self._convert_impl(
@@ -188,13 +265,15 @@ class QuestPersonaService:
                 source_prompt=source_prompt,
                 display_name=display_name,
                 admin_requirements=admin_requirements,
+                progress=progress,
+                converter_provider_id=converter_provider_id,
             )
         except Exception as exc:
             self._diagnostic(
                 "persona.convert.failed",
                 component="persona",
                 status="failed",
-                phase="conversion",
+                phase="failed",
                 code=str(getattr(exc, "code", "persona_conversion_failed")),
                 error_type=type(exc).__name__,
                 duration_ms=round((time.monotonic() - started_at) * 1000),
@@ -204,10 +283,264 @@ class QuestPersonaService:
             "persona.convert.completed",
             component="persona",
             status="completed",
-            phase="preview",
+            phase="preview_ready",
             duration_ms=round((time.monotonic() - started_at) * 1000),
         )
         return result
+
+    async def start_conversion(
+        self,
+        *,
+        owner: object,
+        source_kind: object,
+        source_persona_id: object,
+        source_prompt: object,
+        display_name: object,
+        admin_requirements: object,
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise QuestPersonaServiceError(
+                "persona_service_closed", 503, "临人格服务正在关闭"
+            )
+        try:
+            normalized_kind = normalize_source_kind(source_kind)
+        except PersonaProfileError as exc:
+            raise _profile_error(exc) from exc
+        if not self.converter_provider_id:
+            raise QuestPersonaServiceError(
+                "converter_provider_not_configured", 409, "请先保存人格转换模型"
+            )
+        converter_provider_id = self.converter_provider_id
+        normalized_owner = _normalize_conversion_owner(owner)
+        request_fingerprint = _conversion_request_fingerprint(
+            source_kind=normalized_kind,
+            source_persona_id=source_persona_id,
+            source_prompt=source_prompt,
+            display_name=display_name,
+            admin_requirements=admin_requirements,
+            converter_provider_id=converter_provider_id,
+        )
+
+        now = time.monotonic()
+        async with self._conversion_job_lock:
+            self._prune_conversion_jobs(now)
+            active = next(
+                (
+                    job
+                    for job in self._conversion_jobs.values()
+                    if job.status in {"queued", "running"}
+                ),
+                None,
+            )
+            if active is not None:
+                if (
+                    active.owner == normalized_owner
+                    and active.request_fingerprint == request_fingerprint
+                ):
+                    snapshot = self._conversion_job_payload(active, now=now)
+                    snapshot["reused"] = True
+                    return snapshot
+                raise QuestPersonaServiceError(
+                    "conversion_job_in_progress",
+                    409,
+                    "已有其他人格转换正在运行，请等待或取消后重试",
+                )
+            if self._active_conversion_tasks:
+                raise QuestPersonaServiceError(
+                    "conversion_job_in_progress",
+                    409,
+                    "已有其他人格转换正在运行，请等待或取消后重试",
+                )
+            while len(self._conversion_jobs) >= _MAX_CONVERSION_JOBS:
+                terminal = [
+                    job
+                    for job in self._conversion_jobs.values()
+                    if job.status not in {"queued", "running"}
+                ]
+                if not terminal:
+                    raise QuestPersonaServiceError(
+                        "conversion_job_capacity_reached",
+                        429,
+                        "人格转换任务过多，请稍后重试",
+                    )
+                oldest = min(terminal, key=lambda item: item.updated_at)
+                self._conversion_jobs.pop(oldest.job_id, None)
+
+            job_id = "pcj_" + secrets.token_hex(24)
+            job = _ConversionJob(
+                job_id=job_id,
+                owner=normalized_owner,
+                request_fingerprint=request_fingerprint,
+                converter_provider_id=converter_provider_id,
+                source_kind=normalized_kind,
+                created_at=now,
+                updated_at=now,
+            )
+            self._conversion_jobs[job_id] = job
+            job.task = asyncio.create_task(
+                self._run_conversion_job(
+                    job,
+                    source_kind=normalized_kind,
+                    source_persona_id=source_persona_id,
+                    source_prompt=source_prompt,
+                    display_name=display_name,
+                    admin_requirements=admin_requirements,
+                    converter_provider_id=converter_provider_id,
+                ),
+                name="quest-avatar:persona-conversion",
+            )
+            return self._conversion_job_payload(job, now=now)
+
+    async def conversion_status(
+        self,
+        job_id: object,
+        *,
+        owner: object,
+    ) -> dict[str, Any]:
+        normalized = str(job_id or "").strip()
+        normalized_owner = _normalize_conversion_owner(owner)
+        now = time.monotonic()
+        async with self._conversion_job_lock:
+            self._prune_conversion_jobs(now)
+            job = self._conversion_jobs.get(normalized)
+            if job is None or job.owner != normalized_owner:
+                raise QuestPersonaServiceError(
+                    "conversion_job_not_found",
+                    404,
+                    "人格转换任务不存在或已经过期",
+                )
+            return self._conversion_job_payload(job, now=now)
+
+    async def cancel_conversion(
+        self,
+        job_id: object,
+        *,
+        owner: object,
+    ) -> dict[str, Any]:
+        normalized = str(job_id or "").strip()
+        normalized_owner = _normalize_conversion_owner(owner)
+        async with self._conversion_job_lock:
+            self._prune_conversion_jobs(time.monotonic())
+            job = self._conversion_jobs.get(normalized)
+            if job is None or job.owner != normalized_owner:
+                raise QuestPersonaServiceError(
+                    "conversion_job_not_found",
+                    404,
+                    "人格转换任务不存在或已经过期",
+                )
+            task = job.task if job.status in {"queued", "running"} else None
+            if task is not None:
+                task.cancel()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        fallback_cancelled = False
+        async with self._conversion_job_lock:
+            current = self._conversion_jobs.get(normalized)
+            if current is None or current.owner != normalized_owner:
+                raise QuestPersonaServiceError(
+                    "conversion_job_not_found",
+                    404,
+                    "人格转换任务不存在或已经过期",
+                )
+            if current.status in {"queued", "running"}:
+                finished_at = time.monotonic()
+                current.status = "cancelled"
+                current.stage = "cancelled"
+                current.finished_at = finished_at
+                current.updated_at = finished_at
+                fallback_cancelled = True
+            result = self._conversion_job_payload(current)
+        if fallback_cancelled:
+            self._diagnostic(
+                "persona.convert.cancelled",
+                component="persona",
+                status="cancelled",
+                phase="cancelled",
+                duration_ms=result["elapsed_ms"],
+            )
+        return result
+
+    async def _run_conversion_job(
+        self,
+        job: _ConversionJob,
+        **conversion_input: object,
+    ) -> None:
+        started_at = time.monotonic()
+        job.status = "running"
+        job.stage = "accepted"
+        job.started_at = started_at
+        job.updated_at = started_at
+
+        def progress(stage: str) -> None:
+            if job.status == "running":
+                job.stage = stage
+                job.updated_at = time.monotonic()
+
+        try:
+            result = await self.convert(
+                **conversion_input,
+                progress=progress,
+                conversion_job_id=job.job_id,
+            )
+        except asyncio.CancelledError:
+            finished_at = time.monotonic()
+            job.status = "cancelled"
+            job.stage = "cancelled"
+            job.finished_at = finished_at
+            job.updated_at = finished_at
+            self._diagnostic(
+                "persona.convert.cancelled",
+                component="persona",
+                status="cancelled",
+                phase="cancelled",
+                duration_ms=round((finished_at - started_at) * 1000),
+            )
+            raise
+        except Exception as exc:
+            finished_at = time.monotonic()
+            job.status = "failed"
+            job.stage = "failed"
+            job.finished_at = finished_at
+            job.updated_at = finished_at
+            if isinstance(exc, QuestPersonaServiceError):
+                job.error_code = exc.code[:96]
+                job.error_message = exc.public_message[:240]
+            else:
+                job.error_code = "persona_conversion_failed"
+                job.error_message = "人格转换失败，请查看下方独立日志"
+            return
+
+        finished_at = time.monotonic()
+        job.status = "completed"
+        job.stage = "preview_ready"
+        job.finished_at = finished_at
+        job.updated_at = finished_at
+        job.result = result
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        async with self._conversion_job_lock:
+            tasks = {
+                job.task
+                for job in self._conversion_jobs.values()
+                if job.task is not None and not job.task.done()
+            }
+            tasks.update(
+                task for task in self._active_conversion_tasks if not task.done()
+            )
+            current_task = asyncio.current_task()
+            tasks.discard(current_task)
+            for task in tasks:
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        async with self._conversion_job_lock:
+            self._conversion_jobs.clear()
+            self._active_conversion_tasks.clear()
+        async with self._draft_lock:
+            self._drafts.clear()
 
     async def _convert_impl(
         self,
@@ -217,7 +550,15 @@ class QuestPersonaService:
         source_prompt: object,
         display_name: object,
         admin_requirements: object,
+        progress: ConversionProgress | None,
+        converter_provider_id: object | None,
     ) -> dict[str, Any]:
+        source_started_at = time.monotonic()
+        self._conversion_progress(
+            progress,
+            "persona.convert.source.started",
+            stage="source_lookup",
+        )
         try:
             kind = normalize_source_kind(source_kind)
         except PersonaProfileError as exc:
@@ -238,7 +579,14 @@ class QuestPersonaService:
             except PersonaProfileError as exc:
                 raise _profile_error(exc) from exc
 
-        provider_id = self.converter_provider_id
+        self._conversion_progress(
+            progress,
+            "persona.convert.source.completed",
+            stage="source_ready",
+            duration_ms=round((time.monotonic() - source_started_at) * 1000),
+        )
+
+        provider_id = str(converter_provider_id or self.converter_provider_id).strip()
         if not provider_id:
             raise QuestPersonaServiceError(
                 "converter_provider_not_configured", 409, "请先保存人格转换模型"
@@ -250,6 +598,7 @@ class QuestPersonaService:
                 source_persona_id=source_id,
                 suggested_display_name=display_name,
                 admin_requirements=admin_requirements,
+                progress=lambda stage: self._converter_progress(progress, stage),
             )
         except PersonaProfileError as exc:
             raise _profile_error(exc) from exc
@@ -273,6 +622,11 @@ class QuestPersonaService:
                 )
                 self._drafts.pop(oldest, None)
             self._drafts[token] = pending
+        self._conversion_progress(
+            progress,
+            "persona.convert.draft.created",
+            stage="preview_ready",
+        )
         return {
             "draft_token": token,
             "conversion": _conversion_payload(conversion),
@@ -539,6 +893,79 @@ class QuestPersonaService:
         self.llm.configure_quest_persona(profile.quest_persona_prompt)
         self.active_status = "ready"
 
+    def _conversion_progress(
+        self,
+        callback: ConversionProgress | None,
+        event: str,
+        *,
+        stage: str,
+        duration_ms: int | None = None,
+    ) -> None:
+        if callback is not None:
+            try:
+                callback(stage)
+            except Exception:
+                pass
+        fields: dict[str, Any] = {
+            "component": "persona",
+            "status": "processing",
+            "phase": stage,
+        }
+        if duration_ms is not None:
+            fields["duration_ms"] = duration_ms
+        self._diagnostic(event, **fields)
+
+    def _converter_progress(
+        self,
+        callback: ConversionProgress | None,
+        stage: str,
+    ) -> None:
+        events = {
+            "provider_wait": "persona.convert.model.started",
+            "provider_response": "persona.convert.model.completed",
+            "response_validation": "persona.convert.validation.started",
+            "response_validated": "persona.convert.validation.completed",
+        }
+        event = events.get(stage)
+        if event is None:
+            return
+        self._conversion_progress(callback, event, stage=stage)
+
+    def _conversion_job_payload(
+        self,
+        job: _ConversionJob,
+        *,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        current = time.monotonic() if now is None else now
+        started = job.started_at if job.started_at is not None else job.created_at
+        ended = job.finished_at if job.finished_at is not None else current
+        payload: dict[str, Any] = {
+            "job_id": job.job_id,
+            "status": job.status,
+            "stage": job.stage,
+            "source_type": job.source_kind,
+            "elapsed_ms": max(0, round((ended - started) * 1000)),
+        }
+        if job.status == "completed" and job.result is not None:
+            payload["result"] = job.result
+        elif job.status == "failed":
+            payload["error"] = {
+                "code": job.error_code or "persona_conversion_failed",
+                "message": job.error_message or "人格转换失败，请查看下方独立日志",
+            }
+        return payload
+
+    def _prune_conversion_jobs(self, now: float) -> None:
+        expired = [
+            job_id
+            for job_id, job in self._conversion_jobs.items()
+            if job.status not in {"queued", "running"}
+            and now - job.updated_at >= _CONVERSION_JOB_TTL_SECONDS
+        ]
+        for job_id in expired:
+            self._conversion_jobs.pop(job_id, None)
+
     def _diagnostic(self, event: str, **fields: Any) -> None:
         if self.diagnostic_log is None:
             return
@@ -629,6 +1056,42 @@ def _conversion_payload(conversion: PersonaConversion) -> dict[str, Any]:
             key: list(values) for key, values in conversion.conversion_report.items()
         },
     }
+
+
+def _normalize_conversion_owner(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not 1 <= len(normalized) <= 256:
+        raise QuestPersonaServiceError(
+            "astrbot_dashboard_auth_required",
+            401,
+            "AstrBot Dashboard authentication is required",
+        )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _conversion_request_fingerprint(
+    *,
+    source_kind: object,
+    source_persona_id: object,
+    source_prompt: object,
+    display_name: object,
+    admin_requirements: object,
+    converter_provider_id: object,
+) -> str:
+    payload = json.dumps(
+        {
+            "source_kind": str(source_kind or ""),
+            "source_persona_id": str(source_persona_id or ""),
+            "source_prompt": str(source_prompt or ""),
+            "display_name": str(display_name or ""),
+            "admin_requirements": str(admin_requirements or ""),
+            "converter_provider_id": str(converter_provider_id or ""),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _profile_error(exc: PersonaProfileError) -> QuestPersonaServiceError:

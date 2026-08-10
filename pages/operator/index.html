@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜Quest 角色设置</title>
-  <link rel="stylesheet" href="./style.css?v=0.4.19-1" />
+  <link rel="stylesheet" href="./style.css?v=0.4.20-1" />
 </head>
 <body>
   <main class="shell">
@@ -277,6 +277,7 @@
               <p id="persona-profile-status" class="field-status" role="status">请选择来源或从左侧打开已有人格。</p>
               <div class="persona-editor-actions">
                 <button id="convert-persona-button" type="button" aria-busy="false" disabled>转换为临人格</button>
+                <button id="cancel-persona-conversion-button" class="danger-quiet" type="button" aria-busy="false" hidden>取消转换</button>
                 <button id="save-persona-profile-button" class="primary" type="button" aria-busy="false" disabled>保存人格</button>
                 <button id="activate-persona-profile-button" type="button" aria-busy="false" disabled>启用已保存人格</button>
               </div>
@@ -320,7 +321,7 @@
       <section class="setting-panel diagnostics-panel" aria-labelledby="diagnostics-title">
         <span class="section-label">诊断</span>
         <h2 id="diagnostics-title">“临”独立日志</h2>
-        <p>仅显示脱敏后的事件状态、错误码和耗时，不包含对话正文、身份、密钥或音频。</p>
+        <p>每秒自动刷新脱敏后的任务阶段、事件状态、错误码和耗时；模型转换仅显示生成与结构校验状态，不显示隐藏推理内容。</p>
         <div class="inline-actions">
           <button id="load-diagnostics" type="button" aria-busy="false">刷新日志</button>
         </div>
@@ -346,6 +347,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=0.4.19-1"></script>
+  <script type="module" src="./app.js?v=0.4.20-1"></script>
 </body>
 </html>

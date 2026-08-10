@@ -15,9 +15,17 @@ let personaOpenedConverterPromptVersion = "";
 let bridgeReady = false;
 let eventsBound = false;
 let serviceRefreshTimer = null;
+let diagnosticsRefreshTimer = null;
+let diagnosticsRefreshInFlight = null;
+let personaConversionJobId = "";
+let personaConversionJobSnapshot = null;
+let personaConversionPollTimer = null;
+let personaConversionPollInFlight = null;
 let initialDataPromise = null;
 const PAGE_REQUEST_TIMEOUT_MS = 10000;
-const PERSONA_CONVERSION_TIMEOUT_MS = 135000;
+const PERSONA_CONVERSION_POLL_MS = 1000;
+const DIAGNOSTICS_REFRESH_MS = 1000;
+const PERSONA_CONVERSION_JOB_STORAGE_KEY = "quest-avatar-bridge.persona-conversion-job";
 
 async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -35,9 +43,15 @@ async function resolveBridge(timeout = 8000) {
 function parseResponse(value) {
   const data = typeof value === "string" ? JSON.parse(value) : value;
   if (data?.success === false || data?.status === "error") {
-    throw new Error(
-      data.message || data.detail || data.error || data?.data?.code || "请求失败"
+    const error = new Error(
+      data.message ||
+      data.detail ||
+      (typeof data.error === "string" ? data.error : "") ||
+      data?.data?.code ||
+      "请求失败"
     );
+    error.code = String(data?.data?.code || data?.code || "");
+    throw error;
   }
   return data;
 }
@@ -924,17 +938,14 @@ async function convertPersona() {
   const button = document.getElementById("convert-persona-button");
   if (button.disabled || !setButtonBusy(button, true, "正在转换…")) return;
   const progress = document.getElementById("persona-conversion-progress");
-  const startedAt = Date.now();
-  const updateProgress = () => {
-    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    const phase = elapsedSeconds < 3
-      ? "正在读取来源人格"
-      : "正在等待转换模型生成并校验结果";
-    progress.textContent = `${phase}，已用时 ${elapsedSeconds} 秒。请保持页面打开。`;
-    progress.hidden = false;
+  progress.textContent = "正在创建后台转换任务……";
+  progress.hidden = false;
+  personaConversionJobSnapshot = {
+    status: "queued",
+    stage: "accepted",
+    elapsed_ms: 0
   };
-  updateProgress();
-  const progressTimer = window.setInterval(updateProgress, 1000);
+  setPersonaConversionLocked(true);
   const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
   const requiresConversionOnFailure = Boolean(
     personaConversionDraftToken ||
@@ -948,38 +959,279 @@ async function convertPersona() {
     document.getElementById("persona-source-prompt").value = "";
   }
   try {
-    const response = await apiPost(
-      "pairing/persona-convert",
-      {
-        source_type: sourceType,
-        source_persona_id: sourceType === "astrbot"
-          ? document.getElementById("persona-import-source").value
-          : "",
-        source_prompt: sourceType === "manual"
-          ? document.getElementById("persona-source-prompt").value
-          : "",
-        display_name: document.getElementById("persona-profile-name").value,
-        admin_requirements: document.getElementById("persona-admin-requirements").value
-      },
-      {
-        timeout: PERSONA_CONVERSION_TIMEOUT_MS,
-        timeoutMessage: "人格转换等待超过 135 秒，请查看“临”独立日志后重试"
-      }
-    );
-    applyPersonaConversionResult(response);
-    const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    progress.textContent = `转换预览完成，用时 ${elapsedSeconds} 秒；尚未保存或启用。`;
-    toast("人格转换完成，请确认后保存");
+    const response = await apiPost("pairing/persona-conversion-start", {
+      source_type: sourceType,
+      source_persona_id: sourceType === "astrbot"
+        ? document.getElementById("persona-import-source").value
+        : "",
+      source_prompt: sourceType === "manual"
+        ? document.getElementById("persona-source-prompt").value
+        : "",
+      display_name: document.getElementById("persona-profile-name").value,
+      admin_requirements: document.getElementById("persona-admin-requirements").value
+    });
+    const job = response.job;
+    if (!job?.job_id) throw new Error("后台转换任务响应不完整");
+    personaConversionJobId = String(job.job_id);
+    storePersonaConversionJobId(personaConversionJobId);
+    renderPersonaConversionJob(job);
+    schedulePersonaConversionPoll(0);
   } catch (error) {
-    const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
-    progress.textContent = `转换失败，用时 ${elapsedSeconds} 秒：${error.message}`;
+    personaConversionJobSnapshot = null;
+    setPersonaConversionLocked(false);
+    progress.textContent = `转换任务创建失败：${error.message}`;
     document.getElementById("persona-profile-status").textContent =
-      "转换失败：" + error.message;
-    toast("人格转换失败：" + error.message, true);
-  } finally {
-    window.clearInterval(progressTimer);
+      "转换任务创建失败：" + error.message;
+    toast("转换任务创建失败：" + error.message, true);
     setButtonBusy(button, false);
     updatePersonaEditorActions();
+  }
+}
+
+function storePersonaConversionJobId(jobId) {
+  try {
+    if (jobId) {
+      window.sessionStorage.setItem(
+        PERSONA_CONVERSION_JOB_STORAGE_KEY,
+        JSON.stringify({
+          job_id: jobId,
+          mode: personaWorkflowMode,
+          profile_id: document.getElementById("persona-profile-id").value,
+          source_persona_id: personaWorkflowMode === "import"
+            ? document.getElementById("persona-import-source").value
+            : ""
+        })
+      );
+    } else {
+      window.sessionStorage.removeItem(PERSONA_CONVERSION_JOB_STORAGE_KEY);
+    }
+  } catch (_error) {
+    // sessionStorage can be unavailable in restricted embedded-page contexts.
+  }
+}
+
+function restorePersonaConversionContext() {
+  try {
+    const raw = String(
+      window.sessionStorage.getItem(PERSONA_CONVERSION_JOB_STORAGE_KEY) || ""
+    ).trim();
+    if (!raw) return null;
+    if (raw.startsWith("pcj_")) return { job_id: raw };
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || !String(value.job_id || "")) {
+      return null;
+    }
+    return {
+      job_id: String(value.job_id),
+      mode: ["import", "independent"].includes(String(value.mode))
+        ? String(value.mode)
+        : "import",
+      profile_id: String(value.profile_id || ""),
+      source_persona_id: String(value.source_persona_id || "")
+    };
+  } catch (_error) {
+    return null;
+  }
+}
+
+function restorePersonaConversionEditor(context) {
+  if (!context) return;
+  setPersonaWorkflowMode(context.mode || "import");
+  document.getElementById("persona-profile-id").value = context.profile_id || "";
+  if (context.mode === "import" && context.source_persona_id) {
+    document.getElementById("persona-import-source").value =
+      context.source_persona_id;
+  }
+}
+
+function personaConversionStageLabel(stage) {
+  const labels = {
+    accepted: "任务已受理",
+    source_lookup: "正在读取来源人格",
+    source_ready: "来源人格读取完成",
+    provider_wait: "正在等待转换模型生成",
+    provider_response: "模型生成已返回",
+    response_validation: "正在校验转换结果结构",
+    response_validated: "转换结果结构校验完成",
+    preview_ready: "转换预览已就绪",
+    failed: "转换失败",
+    cancelled: "转换已取消"
+  };
+  return labels[String(stage || "")] || "正在处理转换任务";
+}
+
+function isPersonaConversionJobFinished(status) {
+  return ["completed", "failed", "cancelled"].includes(String(status || ""));
+}
+
+function personaConversionErrorMessage(job) {
+  const code = job?.error_code || job?.error?.code;
+  return String(
+    job?.error_message ||
+    job?.error?.message ||
+    (code ? diagnosticReasonLabel(code) : "") ||
+    "后台转换任务失败"
+  );
+}
+
+function setPersonaConversionLocked(locked) {
+  const panel = document.querySelector(".persona-panel");
+  if (!panel) return;
+  panel.classList.toggle("conversion-locked", locked);
+  panel.setAttribute("aria-busy", String(locked));
+  panel.querySelectorAll(
+    "#persona-workflow-tabs button, " +
+    "#persona-editor-workflow button, " +
+    "#persona-editor-workflow input, " +
+    "#persona-editor-workflow select, " +
+    "#persona-editor-workflow textarea"
+  ).forEach((control) => {
+    if (control.id === "cancel-persona-conversion-button") return;
+    if (locked) {
+      if (!control.hasAttribute("data-conversion-was-disabled")) {
+        control.dataset.conversionWasDisabled = String(Boolean(control.disabled));
+      }
+      control.disabled = true;
+      return;
+    }
+    if (control.hasAttribute("data-conversion-was-disabled")) {
+      control.disabled = control.dataset.conversionWasDisabled === "true";
+      control.removeAttribute("data-conversion-was-disabled");
+    }
+  });
+}
+
+function renderPersonaConversionJob(job) {
+  const status = String(job?.status || "queued");
+  const elapsedMs = Number(job?.elapsed_ms);
+  const elapsedSeconds = (
+    Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) / 1000 : 0
+  ).toFixed(1);
+  const progress = document.getElementById("persona-conversion-progress");
+  const convertButton = document.getElementById("convert-persona-button");
+  const cancelButton = document.getElementById("cancel-persona-conversion-button");
+  const stage = personaConversionStageLabel(job?.stage);
+  personaConversionJobSnapshot = {
+    status,
+    stage: String(job?.stage || "accepted"),
+    elapsed_ms: Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
+  };
+  progress.hidden = false;
+  progress.dataset.status = status;
+  progress.textContent = `${stage}，后台任务已用时 ${elapsedSeconds} 秒。`;
+
+  if (!isPersonaConversionJobFinished(status)) {
+    setPersonaConversionLocked(true);
+    setButtonBusy(convertButton, true, "转换进行中…");
+    cancelButton.hidden = false;
+    cancelButton.disabled = false;
+    return;
+  }
+
+  personaConversionJobId = "";
+  personaConversionJobSnapshot = null;
+  storePersonaConversionJobId("");
+  setPersonaConversionLocked(false);
+  if (personaConversionPollTimer !== null) {
+    window.clearTimeout(personaConversionPollTimer);
+    personaConversionPollTimer = null;
+  }
+  cancelButton.hidden = true;
+  setButtonBusy(convertButton, false);
+
+  if (status === "completed") {
+    if (!job.result || typeof job.result !== "object") {
+      progress.dataset.status = "failed";
+      progress.textContent = `转换任务完成，但结果响应不完整；后台任务用时 ${elapsedSeconds} 秒。`;
+      personaDraftRequiresConversion = true;
+      toast("人格转换结果响应不完整", true);
+    } else {
+      applyPersonaConversionResult(job.result);
+      progress.textContent = `转换预览完成，后台任务用时 ${elapsedSeconds} 秒；尚未保存或启用。`;
+      toast("人格转换完成，请确认后保存");
+    }
+  } else if (status === "cancelled") {
+    progress.textContent = `转换已取消，后台任务用时 ${elapsedSeconds} 秒。`;
+    document.getElementById("persona-profile-status").textContent = "人格转换已取消。";
+  } else {
+    const message = personaConversionErrorMessage(job);
+    progress.textContent = `转换失败，后台任务用时 ${elapsedSeconds} 秒：${message}`;
+    document.getElementById("persona-profile-status").textContent =
+      "转换失败：" + message;
+    toast("人格转换失败：" + message, true);
+  }
+  updatePersonaEditorActions();
+  loadDiagnostics({ silent: true });
+}
+
+function schedulePersonaConversionPoll(delay = PERSONA_CONVERSION_POLL_MS) {
+  if (!personaConversionJobId || personaConversionPollTimer !== null) return;
+  personaConversionPollTimer = window.setTimeout(() => {
+    personaConversionPollTimer = null;
+    refreshPersonaConversionJob();
+  }, delay);
+}
+
+async function refreshPersonaConversionJob() {
+  if (!personaConversionJobId || personaConversionPollInFlight) {
+    return personaConversionPollInFlight;
+  }
+  const jobId = personaConversionJobId;
+  personaConversionPollInFlight = (async () => {
+    try {
+      const response = await apiPost("pairing/persona-conversion-status", {
+        job_id: jobId
+      });
+      const job = response.job;
+      if (!job?.job_id || String(job.job_id) !== jobId) {
+        throw new Error("后台转换任务状态响应不完整");
+      }
+      if (personaConversionJobId !== jobId) return null;
+      renderPersonaConversionJob(job);
+      return job;
+    } catch (error) {
+      const progress = document.getElementById("persona-conversion-progress");
+      progress.hidden = false;
+      if (error.code === "conversion_job_not_found") {
+        personaConversionJobId = "";
+        personaConversionJobSnapshot = null;
+        setPersonaConversionLocked(false);
+        storePersonaConversionJobId("");
+        progress.dataset.status = "failed";
+        progress.textContent = "上次转换任务不存在或已经过期，请重新发起转换。";
+        document.getElementById("cancel-persona-conversion-button").hidden = true;
+        setButtonBusy(document.getElementById("convert-persona-button"), false);
+        updatePersonaEditorActions();
+        return null;
+      }
+      progress.dataset.status = "retrying";
+      progress.textContent = `任务状态读取失败，将自动重试：${error.message}`;
+      return null;
+    }
+  })();
+  try {
+    return await personaConversionPollInFlight;
+  } finally {
+    personaConversionPollInFlight = null;
+    if (personaConversionJobId === jobId) schedulePersonaConversionPoll();
+  }
+}
+
+async function cancelPersonaConversion() {
+  if (!personaConversionJobId) return;
+  const button = document.getElementById("cancel-persona-conversion-button");
+  if (!setButtonBusy(button, true, "正在取消…")) return;
+  try {
+    const response = await apiPost("pairing/persona-conversion-cancel", {
+      job_id: personaConversionJobId
+    });
+    if (response.job) renderPersonaConversionJob(response.job);
+    else schedulePersonaConversionPoll(0);
+  } catch (error) {
+    toast("取消转换失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.hidden = !personaConversionJobId;
   }
 }
 
@@ -1375,6 +1627,14 @@ function diagnosticReasonLabel(code) {
     audio_http_request_failed: "音频上传请求失败",
     turn_failed: "对话生成失败",
     interaction_failed: "触碰交互决策失败",
+    conversion_timeout: "人格转换模型等待超时",
+    conversion_provider_failed: "人格转换模型调用失败",
+    conversion_response_invalid: "人格转换结果无法解析",
+    conversion_schema_invalid: "人格转换结果结构不符合要求",
+    conversion_schema_unsupported: "人格转换结果版本不受支持",
+    persona_conversion_failed: "人格转换任务失败",
+    conversion_job_in_progress: "已有其他人格转换正在运行",
+    conversion_job_not_found: "人格转换任务不存在或已经过期",
     response_first_event_timeout: "后端接收后没有返回首个事件",
     response_event_stall_timeout: "后端事件流在回复结束前停滞",
     ready: "链路就绪"
@@ -1402,7 +1662,12 @@ function diagnosticStageLabel(value) {
     reply: "回复交付",
     turn: "对话轮次",
     audio_playback: "音频播放",
-    interrupt: "打断"
+    interrupt: "打断",
+    persona: "人格转换",
+    persona_conversion: "人格转换",
+    persona_source: "人格来源读取",
+    persona_model: "人格模型生成",
+    persona_validation: "人格结构校验"
   };
   return labels[String(value || "")] || String(value || "运行链路");
 }
@@ -1431,6 +1696,17 @@ function diagnosticEventLabel(value) {
     "persona.convert.started": "开始转换具身人格",
     "persona.convert.completed": "具身人格预览转换完成",
     "persona.convert.failed": "具身人格转换失败",
+    "persona.convert.job.queued": "人格转换后台任务已排队",
+    "persona.convert.job.cancelled": "人格转换后台任务已取消",
+    "persona.convert.cancelled": "人格转换后台任务已取消",
+    "persona.convert.source.started": "开始读取人格来源",
+    "persona.convert.source.completed": "人格来源读取完成",
+    "persona.convert.model.started": "转换模型开始生成",
+    "persona.convert.model.completed": "转换模型生成完成",
+    "persona.convert.validation.started": "开始校验转换结果结构",
+    "persona.convert.validation.completed": "转换结果结构校验完成",
+    "persona.convert.draft.created": "转换预览草稿已就绪",
+    "persona.convert.progress": "人格转换任务实时进度",
     "persona.save.started": "开始保存具身人格",
     "persona.save.completed": "具身人格文件保存完成",
     "persona.save.failed": "具身人格保存失败",
@@ -1473,6 +1749,12 @@ function diagnosticStatusLabel(value) {
 
 function diagnosticMeta(event) {
   const parts = [];
+  if (
+    String(event.event || "").startsWith("persona.convert.") &&
+    event.phase
+  ) {
+    parts.push(`阶段：${personaConversionStageLabel(event.phase)}`);
+  }
   if (Number.isFinite(event.http_status)) parts.push(`HTTP ${event.http_status}`);
   if (Number.isFinite(event.duration_ms)) parts.push(`${Math.round(event.duration_ms)} ms`);
   if (Number.isFinite(event.chunks)) parts.push(`${event.chunks} 块`);
@@ -1486,14 +1768,28 @@ function diagnosticMeta(event) {
 function renderDiagnosticEvents(events) {
   const container = document.getElementById("diagnostics-events");
   container.replaceChildren();
-  if (!events.length) {
+  if (!events.length && !personaConversionJobSnapshot) {
     const empty = document.createElement("p");
     empty.className = "diagnostics-empty";
     empty.textContent = "尚无诊断事件。发起一次 Quest 连接或对话后再刷新。";
     container.append(empty);
     return;
   }
-  events.slice(-40).forEach((event) => {
+  const timeline = events.slice(-39);
+  if (personaConversionJobSnapshot) {
+    const snapshot = personaConversionJobSnapshot;
+    timeline.push({
+      timestamp: new Date().toISOString(),
+      event: "persona.convert.progress",
+      component: "persona",
+      status: isPersonaConversionJobFinished(snapshot.status)
+        ? snapshot.status
+        : "processing",
+      phase: snapshot.stage,
+      duration_ms: snapshot.elapsed_ms
+    });
+  }
+  timeline.forEach((event) => {
     const item = document.createElement("div");
     const status = String(event.status || "");
     item.className = `diagnostic-line status-${status || "unknown"}`;
@@ -1543,38 +1839,97 @@ function renderDiagnosticSummary(events) {
   });
 }
 
-async function loadDiagnostics() {
+async function loadDiagnostics({ silent = false } = {}) {
+  if (diagnosticsRefreshInFlight) return diagnosticsRefreshInFlight;
   const button = document.getElementById("load-diagnostics");
-  if (!setButtonBusy(button, true, "读取中……")) return;
+  diagnosticsRefreshInFlight = (async () => {
+    if (!silent && !setButtonBusy(button, true, "读取中……")) return false;
+    try {
+      const response = await apiGet("pairing/diagnostics");
+      const diagnostics = response.diagnostics || {};
+      const events = Array.isArray(diagnostics.events) ? diagnostics.events : [];
+      const statusLabels = {
+        ready: "可用",
+        memory_only: "内存诊断可用（文件日志未启用）",
+        disabled: "未启用",
+        unavailable: "暂不可用"
+      };
+      const status = String(diagnostics.status || "unavailable");
+      document.getElementById("diagnostics-status").textContent =
+        `实时刷新 · 状态：${statusLabels[status] || status} · 事件：${events.length} 条`;
+      const rootCause = diagnostics.root_cause || {};
+      document.getElementById("diagnostics-root-cause").textContent = rootCause.code
+        ? `当前根因：${diagnosticStageLabel(rootCause.stage)} · ${diagnosticReasonLabel(rootCause.code)}`
+        : "当前根因：未发现明确的失败事件";
+      renderDiagnosticSummary(events);
+      renderDiagnosticEvents(events);
+      return true;
+    } catch (error) {
+      if (!silent) {
+        document.getElementById("diagnostics-status").textContent =
+          "诊断日志暂不可用";
+        document.getElementById("diagnostics-root-cause").textContent =
+          "当前根因：诊断接口读取失败";
+        toast("读取诊断日志失败：" + error.message, true);
+      }
+      return false;
+    } finally {
+      if (!silent) setButtonBusy(button, false);
+    }
+  })();
   try {
-    const response = await apiGet("pairing/diagnostics");
-    const diagnostics = response.diagnostics || {};
-    const events = Array.isArray(diagnostics.events) ? diagnostics.events : [];
-    const statusLabels = {
-      ready: "可用",
-      memory_only: "内存诊断可用（文件日志未启用）",
-      disabled: "未启用",
-      unavailable: "暂不可用"
-    };
-    const status = String(diagnostics.status || "unavailable");
-    document.getElementById("diagnostics-status").textContent =
-      `状态：${statusLabels[status] || status} · 事件：${events.length} 条`;
-    const rootCause = diagnostics.root_cause || {};
-    document.getElementById("diagnostics-root-cause").textContent = rootCause.code
-      ? `当前根因：${diagnosticStageLabel(rootCause.stage)} · ${diagnosticReasonLabel(rootCause.code)}`
-      : "当前根因：未发现明确的失败事件";
-    renderDiagnosticSummary(events);
-    renderDiagnosticEvents(events);
-  } catch (error) {
-    document.getElementById("diagnostics-status").textContent =
-      "诊断日志暂不可用";
-    document.getElementById("diagnostics-root-cause").textContent =
-      "当前根因：诊断接口读取失败";
-    renderDiagnosticSummary([]);
-    renderDiagnosticEvents([]);
-    toast("读取诊断日志失败：" + error.message, true);
+    return await diagnosticsRefreshInFlight;
   } finally {
-    setButtonBusy(button, false);
+    diagnosticsRefreshInFlight = null;
+  }
+}
+
+function stopDiagnosticsRefresh() {
+  if (diagnosticsRefreshTimer !== null) {
+    window.clearTimeout(diagnosticsRefreshTimer);
+    diagnosticsRefreshTimer = null;
+  }
+}
+
+function scheduleDiagnosticsRefresh(delay = DIAGNOSTICS_REFRESH_MS) {
+  stopDiagnosticsRefresh();
+  if (document.hidden || !bridgeReady) return;
+  diagnosticsRefreshTimer = window.setTimeout(async () => {
+    diagnosticsRefreshTimer = null;
+    await loadDiagnostics({ silent: true });
+    scheduleDiagnosticsRefresh();
+  }, delay);
+}
+
+function handlePageVisibilityChange() {
+  if (document.hidden) {
+    stopDiagnosticsRefresh();
+    return;
+  }
+  scheduleDiagnosticsRefresh(0);
+  startServiceRefresh();
+  if (personaConversionJobId && personaConversionPollTimer === null) {
+    schedulePersonaConversionPoll(0);
+  }
+}
+
+function startServiceRefresh() {
+  if (serviceRefreshTimer !== null || !bridgeReady || document.hidden) return;
+  serviceRefreshTimer = window.setInterval(
+    () => loadServiceStatus({ silent: true }),
+    10000
+  );
+}
+
+function clearPageTimers() {
+  stopDiagnosticsRefresh();
+  if (serviceRefreshTimer !== null) {
+    window.clearInterval(serviceRefreshTimer);
+    serviceRefreshTimer = null;
+  }
+  if (personaConversionPollTimer !== null) {
+    window.clearTimeout(personaConversionPollTimer);
+    personaConversionPollTimer = null;
   }
 }
 
@@ -1691,6 +2046,9 @@ function bindEvents() {
     .getElementById("convert-persona-button")
     .addEventListener("click", convertPersona);
   document
+    .getElementById("cancel-persona-conversion-button")
+    .addEventListener("click", cancelPersonaConversion);
+  document
     .getElementById("save-persona-profile-button")
     .addEventListener("click", savePersonaProfile);
   document
@@ -1704,7 +2062,10 @@ function bindEvents() {
     .addEventListener("click", saveIdentitySelection);
   document
     .getElementById("load-diagnostics")
-    .addEventListener("click", loadDiagnostics);
+    .addEventListener("click", () => loadDiagnostics());
+  document.addEventListener("visibilitychange", handlePageVisibilityChange);
+  window.addEventListener("pagehide", clearPageTimers);
+  window.addEventListener("pageshow", handlePageVisibilityChange);
 }
 
 // Keep the page interactive while the parent Dashboard context is still loading.
@@ -1868,12 +2229,20 @@ async function initializeBridgeAndData() {
     bridgeInitPromise = null;
   }
   await loadInitialData();
-  if (serviceRefreshTimer === null) {
-    serviceRefreshTimer = window.setInterval(
-      () => loadServiceStatus({ silent: true }),
-      10000
-    );
+  if (!personaConversionJobId) {
+    const context = restorePersonaConversionContext();
+    personaConversionJobId = String(context?.job_id || "");
+    if (personaConversionJobId) restorePersonaConversionEditor(context);
   }
+  if (personaConversionJobId) {
+    const convertButton = document.getElementById("convert-persona-button");
+    setPersonaConversionLocked(true);
+    setButtonBusy(convertButton, true, "恢复转换任务…");
+    document.getElementById("cancel-persona-conversion-button").hidden = false;
+    schedulePersonaConversionPoll(0);
+  }
+  scheduleDiagnosticsRefresh(0);
+  startServiceRefresh();
   return true;
 }
 

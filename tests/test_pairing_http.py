@@ -1047,6 +1047,48 @@ def test_quest_persona_library_conversion_activation_and_live_fallback(
                 )
                 assert selected.status == 200
 
+                denied_job = await client.post(
+                    server.url("/pairing/persona-conversion-start"),
+                    json={
+                        "source_type": "astrbot",
+                        "source_persona_id": "quest-persona",
+                        "display_name": "心夏",
+                    },
+                )
+                assert denied_job.status == 401
+
+                job_response = await client.post(
+                    server.url("/pairing/persona-conversion-start"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "source_type": "astrbot",
+                        "source_persona_id": "quest-persona",
+                        "display_name": "心夏",
+                        "admin_requirements": "保持自然的面对面交流。",
+                    },
+                )
+                assert job_response.status == 202
+                job = (await job_response.json())["job"]
+                assert job["status"] == "queued"
+                for _attempt in range(50):
+                    status_response = await client.post(
+                        server.url("/pairing/persona-conversion-status"),
+                        headers=PAGE_AUTH,
+                        json={"job_id": job["job_id"]},
+                    )
+                    assert status_response.status == 200
+                    job = (await status_response.json())["job"]
+                    if job["status"] == "completed":
+                        break
+                    await asyncio.sleep(0.01)
+                assert job["status"] == "completed"
+                assert job["stage"] == "preview_ready"
+                assert (
+                    job["result"]["conversion"]["quest_persona_prompt"]
+                    == converted_prompt
+                )
+                assert "private contract persona prompt" not in repr(job)
+
                 preview_response = await client.post(
                     server.url("/pairing/persona-convert"),
                     headers=PAGE_AUTH,

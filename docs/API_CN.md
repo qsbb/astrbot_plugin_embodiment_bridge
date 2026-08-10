@@ -188,7 +188,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/listener-port`、`pairing/operator-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/listener-port`、`pairing/operator-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-conversion-start`、`pairing/persona-conversion-status`、`pairing/persona-conversion-cancel`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -217,6 +217,9 @@ sequenceDiagram
 | GET | `/pairing/persona-library` | 200 | 读取安全 Provider/来源人格目录与临人格摘要，不返回人格正文 |
 | POST | `/pairing/persona-converter-settings` | 200 | 验证并保存单独的人格转换 Provider ID |
 | POST | `/pairing/persona-convert` | 200 | 从服务端 AstrBot 人格或管理员手动来源生成仅内存转换预览与一次性草稿 token |
+| POST | `/pairing/persona-conversion-start` | 202/200 | 启动后台转换；仅当 Dashboard owner 与包含 Provider 的请求指纹完全相同时返回既有任务，其他活动转换返回 409 |
+| POST | `/pairing/persona-conversion-status` | 200 | 读取后台转换的真实阶段、耗时、公开错误或已完成预览 |
+| POST | `/pairing/persona-conversion-cancel` | 200 | 幂等取消仍在排队或运行的后台转换任务 |
 | POST | `/pairing/persona-profile-open` | 200 | 通过服务端随机 ID 显式打开一个完整临人格文件 |
 | POST | `/pairing/persona-profile-save` | 200 | 保存已审阅的转换草稿或手动人格；保存不自动启用 |
 | POST | `/pairing/persona-profile-activate` | 200 | 验证并启用临人格；空 `profile_id` 表示停用并实时继承 AstrBot |

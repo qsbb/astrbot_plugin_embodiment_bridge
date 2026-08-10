@@ -255,6 +255,15 @@ class PersonaConverterStub:
 
     async def convert(self, **kwargs: Any) -> PersonaConversion:
         self.calls.append(dict(kwargs))
+        progress = kwargs.get("progress")
+        if callable(progress):
+            for stage in (
+                "provider_wait",
+                "provider_response",
+                "response_validation",
+                "response_validated",
+            ):
+                progress(stage)
         return PersonaConversion(
             display_name="心夏",
             aliases=("Kokona",),
@@ -376,6 +385,13 @@ def test_persona_lifecycle_diagnostics_are_stage_specific_and_redacted(
         names = [event for event, _fields in diagnostic.events]
         assert names == [
             "persona.convert.started",
+            "persona.convert.source.started",
+            "persona.convert.source.completed",
+            "persona.convert.model.started",
+            "persona.convert.model.completed",
+            "persona.convert.validation.started",
+            "persona.convert.validation.completed",
+            "persona.convert.draft.created",
             "persona.convert.completed",
             "persona.save.started",
             "persona.save.completed",
@@ -386,6 +402,236 @@ def test_persona_lifecycle_diagnostics_are_stage_specific_and_redacted(
         assert READY_PROMPT not in rendered
         assert preview["draft_token"] not in rendered
         assert saved.profile_id not in rendered
+
+    asyncio.run(scenario())
+
+
+def test_persona_conversion_job_is_recoverable_and_reports_real_stages(
+    tmp_path: Path,
+) -> None:
+    class BlockingConverter:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.used_provider = ""
+
+        async def convert(self, **kwargs: Any) -> PersonaConversion:
+            self.used_provider = str(kwargs.get("provider_id") or "")
+            progress = kwargs.get("progress")
+            if callable(progress):
+                progress("provider_wait")
+            self.started.set()
+            await self.release.wait()
+            if callable(progress):
+                progress("provider_response")
+                progress("response_validation")
+                progress("response_validated")
+            return PersonaConversion(
+                display_name="心夏",
+                aliases=("Kokona",),
+                quest_persona_prompt=READY_PROMPT,
+                conversion_report={
+                    "preserved": ("身份",),
+                    "adapted": ("面对面表达",),
+                    "removed": ("QQ 渠道",),
+                    "unresolved_questions": (),
+                },
+            )
+
+    async def scenario() -> None:
+        service, _, _ = build_persona_service(tmp_path)
+        converter = BlockingConverter()
+        service.converter = converter
+        request = {
+            "owner": "dashboard-owner",
+            "source_kind": "manual",
+            "source_persona_id": "",
+            "source_prompt": "仅用于后台转换任务的来源人格正文",
+            "display_name": "心夏",
+            "admin_requirements": "",
+        }
+
+        accepted = await service.start_conversion(**request)
+        assert accepted["status"] == "queued"
+        assert accepted["stage"] == "accepted"
+        assert accepted["job_id"].startswith("pcj_")
+        assert "dashboard-owner" not in repr(accepted)
+        assert request["source_prompt"] not in repr(accepted)
+        assert service._conversion_jobs[accepted["job_id"]].owner != ("dashboard-owner")
+
+        resumed = await service.start_conversion(**request)
+        assert resumed["job_id"] == accepted["job_id"]
+        assert resumed["reused"] is True
+        with pytest.raises(QuestPersonaServiceError) as changed_request:
+            await service.start_conversion(**{**request, "display_name": "另一人格"})
+        assert changed_request.value.code == "conversion_job_in_progress"
+        with pytest.raises(QuestPersonaServiceError) as other_owner:
+            await service.start_conversion(**{**request, "owner": "other-owner"})
+        assert other_owner.value.code == "conversion_job_in_progress"
+        with pytest.raises(QuestPersonaServiceError) as hidden_from_other_owner:
+            await service.conversion_status(accepted["job_id"], owner="other-owner")
+        assert hidden_from_other_owner.value.code == "conversion_job_not_found"
+
+        await asyncio.wait_for(converter.started.wait(), timeout=1)
+        service.config["persona_converter_provider_id"] = "other-provider"
+        with pytest.raises(QuestPersonaServiceError) as legacy_conflict:
+            await service.convert(
+                source_kind="manual",
+                source_persona_id="",
+                source_prompt="另一个来源",
+                display_name="另一个人格",
+                admin_requirements="",
+            )
+        assert legacy_conflict.value.code == "conversion_job_in_progress"
+        running = await service.conversion_status(
+            accepted["job_id"], owner="dashboard-owner"
+        )
+        assert running["status"] == "running"
+        assert running["stage"] == "provider_wait"
+        assert running["elapsed_ms"] >= 0
+
+        converter.release.set()
+        await asyncio.wait_for(
+            service._conversion_jobs[accepted["job_id"]].task,
+            timeout=1,
+        )
+        completed = await service.conversion_status(
+            accepted["job_id"], owner="dashboard-owner"
+        )
+        assert completed["status"] == "completed"
+        assert completed["stage"] == "preview_ready"
+        assert completed["source_type"] == "manual"
+        assert converter.used_provider == "converter"
+        assert completed["result"]["draft_token"]
+        assert completed["result"]["conversion"]["quest_persona_prompt"] == (
+            READY_PROMPT
+        )
+        await service.close()
+
+    asyncio.run(scenario())
+
+
+def test_persona_conversion_job_errors_are_redacted_and_close_cancels_tasks(
+    tmp_path: Path,
+) -> None:
+    secret = "PROVIDER_SECRET_MUST_NOT_APPEAR"
+
+    class BrokenConverter:
+        async def convert(self, **_kwargs: Any) -> PersonaConversion:
+            raise RuntimeError(secret)
+
+    async def scenario() -> None:
+        diagnostic = DiagnosticCapture()
+        service, _, _ = build_persona_service(tmp_path, diagnostic=diagnostic)
+        service.converter = BrokenConverter()
+        accepted = await service.start_conversion(
+            owner="dashboard-owner",
+            source_kind="manual",
+            source_persona_id="",
+            source_prompt="来源人格正文",
+            display_name="心夏",
+            admin_requirements="",
+        )
+        task = service._conversion_jobs[accepted["job_id"]].task
+        assert task is not None
+        await asyncio.wait_for(task, timeout=1)
+
+        failed = await service.conversion_status(
+            accepted["job_id"], owner="dashboard-owner"
+        )
+        assert failed["status"] == "failed"
+        assert failed["error"]["code"] == "persona_conversion_failed"
+        assert secret not in repr(failed)
+        assert secret not in repr(diagnostic.events)
+        await service.close()
+        assert service._conversion_jobs == {}
+        assert service._drafts == {}
+
+    asyncio.run(scenario())
+
+
+def test_persona_conversion_job_can_be_cancelled(tmp_path: Path) -> None:
+    class NeverConverter:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+
+        async def convert(self, **kwargs: Any) -> PersonaConversion:
+            progress = kwargs.get("progress")
+            if callable(progress):
+                progress("provider_wait")
+            self.started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    async def scenario() -> None:
+        diagnostic = DiagnosticCapture()
+        service, _, _ = build_persona_service(tmp_path, diagnostic=diagnostic)
+        converter = NeverConverter()
+        service.converter = converter
+        accepted = await service.start_conversion(
+            owner="dashboard-owner",
+            source_kind="manual",
+            source_persona_id="",
+            source_prompt="来源人格正文",
+            display_name="心夏",
+            admin_requirements="",
+        )
+        cancelled = await service.cancel_conversion(
+            accepted["job_id"], owner="dashboard-owner"
+        )
+
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["stage"] == "cancelled"
+        assert "persona.convert.cancelled" in [
+            event for event, _fields in diagnostic.events
+        ]
+        await service.close()
+
+    asyncio.run(scenario())
+
+
+def test_persona_service_close_cancels_legacy_synchronous_conversion(
+    tmp_path: Path,
+) -> None:
+    class NeverConverter:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+
+        async def convert(self, **_kwargs: Any) -> PersonaConversion:
+            self.started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    async def scenario() -> None:
+        service, _, _ = build_persona_service(tmp_path)
+        converter = NeverConverter()
+        service.converter = converter
+        task = asyncio.create_task(
+            service.convert(
+                source_kind="manual",
+                source_persona_id="",
+                source_prompt="来源人格正文",
+                display_name="心夏",
+                admin_requirements="",
+            )
+        )
+        await asyncio.wait_for(converter.started.wait(), timeout=1)
+        with pytest.raises(QuestPersonaServiceError) as background_conflict:
+            await service.start_conversion(
+                owner="dashboard-owner",
+                source_kind="manual",
+                source_persona_id="",
+                source_prompt="另一个来源人格正文",
+                display_name="另一个人格",
+                admin_requirements="",
+            )
+        assert background_conflict.value.code == "conversion_job_in_progress"
+
+        await service.close()
+
+        assert task.cancelled()
+        assert service._active_conversion_tasks == set()
+        assert service._drafts == {}
 
     asyncio.run(scenario())
 
@@ -738,6 +984,9 @@ def test_persona_page_routes_are_not_exposed_by_public_8520_listener() -> None:
         "persona-library",
         "persona-converter-settings",
         "persona-convert",
+        "persona-conversion-start",
+        "persona-conversion-status",
+        "persona-conversion-cancel",
         "persona-profile-open",
         "persona-profile-save",
         "persona-profile-activate",
@@ -755,6 +1004,9 @@ def test_all_persona_page_handlers_require_dashboard_authentication() -> None:
         "persona_library",
         "save_persona_converter_settings",
         "convert_persona",
+        "start_persona_conversion",
+        "persona_conversion_status",
+        "cancel_persona_conversion",
         "open_persona_profile",
         "save_persona_profile",
         "activate_persona_profile",

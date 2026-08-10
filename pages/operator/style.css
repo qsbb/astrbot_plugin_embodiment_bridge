@@ -321,6 +321,17 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   color: #c7e8dc;
   font-size: 13px;
 }
+.conversion-progress[data-status="failed"],
+.conversion-progress[data-status="retrying"] {
+  border-color: rgba(223, 109, 105, 0.42);
+  color: #efaaa5;
+  background: rgba(105, 42, 40, 0.2);
+}
+.conversion-progress[data-status="cancelled"] {
+  border-color: rgba(211, 168, 74, 0.38);
+  color: #dfc57d;
+  background: rgba(95, 77, 35, 0.18);
+}
 .conversion-report-heading {
   display: flex;
   align-items: baseline;
@@ -349,6 +360,18 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .unresolved-warning strong { font-size: 13px; }
 .unresolved-warning ul { color: #e1c985; }
 .persona-editor-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.persona-editor-actions .danger-quiet {
+  border-color: #75413e;
+  color: #efaaa5;
+  background: #261817;
+}
+.persona-panel.conversion-locked .persona-editor-layout,
+.persona-panel.conversion-locked #persona-workflow-tabs {
+  cursor: progress;
+}
+.persona-panel.conversion-locked [data-conversion-was-disabled] {
+  opacity: 0.66;
+}
 
 .diagnostics-events {
   display: grid;
