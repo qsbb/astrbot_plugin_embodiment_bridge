@@ -93,9 +93,7 @@ def test_resolves_strict_server_only_private_identity() -> None:
 
 def test_missing_or_incompatible_provider_fails_closed() -> None:
     async def scenario() -> None:
-        missing = RelationshipQuestEventIdentityAdapter(
-            ContextStub(None), LoggerStub()
-        )
+        missing = RelationshipQuestEventIdentityAdapter(ContextStub(None), LoggerStub())
         missing_resolution = await missing.resolve(
             person_id="person-a", platform_candidates=("platform-a",)
         )
@@ -144,6 +142,7 @@ def test_rejects_leaky_mismatched_or_non_private_payloads() -> None:
     )
 
     for identity in variants:
+
         class InvalidProvider(CompatibleProvider):
             async def resolve_quest_event_identity(
                 self, **request: Any
@@ -175,9 +174,7 @@ def test_accepts_only_declared_unavailable_reasons() -> None:
         def __init__(self, reason: str) -> None:
             self.reason = reason
 
-        async def resolve_quest_event_identity(
-            self, **request: Any
-        ) -> dict[str, Any]:
+        async def resolve_quest_event_identity(self, **request: Any) -> dict[str, Any]:
             del request
             return {
                 "contract_version": "1.0",

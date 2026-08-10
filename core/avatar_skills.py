@@ -22,18 +22,87 @@ class AvatarSkillRegistry:
     """Resolve model action calls into safe protocol intents."""
 
     _skills = (
-        AvatarSkill("idle", Gesture.IDLE, "Return to the natural idle pose", LookAt.USER, 0.2, 1_200),
-        AvatarSkill("talk", Gesture.TALK, "Use the conversational speaking pose", LookAt.USER, 0.35, 2_000),
-        AvatarSkill("wave", Gesture.WAVE, "Perform a natural feminine wave", LookAt.USER, 0.5, 2_400),
-        AvatarSkill("bow", Gesture.BOW, "Perform a short polite bow", LookAt.USER, 0.45, 1_800),
-        AvatarSkill("dance", Gesture.DANCE, "Play the selected dance motion", LookAt.USER, 0.7, 8_000),
-        AvatarSkill("nod", Gesture.NOD, "Nod naturally in agreement", LookAt.USER, 0.35, 1_300),
-        AvatarSkill("sway", Gesture.SWAY, "Use a subtle idle sway", LookAt.USER, 0.25, 2_000),
-        AvatarSkill("handshake", Gesture.HANDSHAKE, "Respond to a detected handshake", LookAt.HAND, 0.45, 2_000),
-        AvatarSkill("head_pat", Gesture.HEAD_PAT, "Respond to a detected head pat", LookAt.HAND, 0.45, 2_000),
-        AvatarSkill("cheek_pinch", Gesture.CHEEK_PINCH, "Respond to a detected cheek pinch", LookAt.HAND, 0.45, 2_000),
-        AvatarSkill("refuse", Gesture.REFUSE, "Set a clear but non-aggressive boundary", LookAt.AWAY, 0.55, 1_800),
-        AvatarSkill("step_back", Gesture.STEP_BACK, "Take a small boundary-respecting step back", LookAt.AWAY, 0.55, 1_800),
+        AvatarSkill(
+            "idle",
+            Gesture.IDLE,
+            "Return to the natural idle pose",
+            LookAt.USER,
+            0.2,
+            1_200,
+        ),
+        AvatarSkill(
+            "talk",
+            Gesture.TALK,
+            "Use the conversational speaking pose",
+            LookAt.USER,
+            0.35,
+            2_000,
+        ),
+        AvatarSkill(
+            "wave",
+            Gesture.WAVE,
+            "Perform a natural feminine wave",
+            LookAt.USER,
+            0.5,
+            2_400,
+        ),
+        AvatarSkill(
+            "bow", Gesture.BOW, "Perform a short polite bow", LookAt.USER, 0.45, 1_800
+        ),
+        AvatarSkill(
+            "dance",
+            Gesture.DANCE,
+            "Play the selected dance motion",
+            LookAt.USER,
+            0.7,
+            8_000,
+        ),
+        AvatarSkill(
+            "nod", Gesture.NOD, "Nod naturally in agreement", LookAt.USER, 0.35, 1_300
+        ),
+        AvatarSkill(
+            "sway", Gesture.SWAY, "Use a subtle idle sway", LookAt.USER, 0.25, 2_000
+        ),
+        AvatarSkill(
+            "handshake",
+            Gesture.HANDSHAKE,
+            "Respond to a detected handshake",
+            LookAt.HAND,
+            0.45,
+            2_000,
+        ),
+        AvatarSkill(
+            "head_pat",
+            Gesture.HEAD_PAT,
+            "Respond to a detected head pat",
+            LookAt.HAND,
+            0.45,
+            2_000,
+        ),
+        AvatarSkill(
+            "cheek_pinch",
+            Gesture.CHEEK_PINCH,
+            "Respond to a detected cheek pinch",
+            LookAt.HAND,
+            0.45,
+            2_000,
+        ),
+        AvatarSkill(
+            "refuse",
+            Gesture.REFUSE,
+            "Set a clear but non-aggressive boundary",
+            LookAt.AWAY,
+            0.55,
+            1_800,
+        ),
+        AvatarSkill(
+            "step_back",
+            Gesture.STEP_BACK,
+            "Take a small boundary-respecting step back",
+            LookAt.AWAY,
+            0.55,
+            1_800,
+        ),
     )
     _by_name = {skill.name: skill for skill in _skills}
 
@@ -61,12 +130,17 @@ class AvatarSkillRegistry:
         if skill is None:
             return None
         args = arguments if isinstance(arguments, dict) else {}
-        if any(str(key) not in {"emotion", "intensity", "duration_ms", "look_at"} for key in args):
+        if any(
+            str(key) not in {"emotion", "intensity", "duration_ms", "look_at"}
+            for key in args
+        ):
             return None
         emotion = cls._emotion(args.get("emotion"), Emotion.NEUTRAL)
         look_at = cls._look_at(args.get("look_at"), skill.default_look_at)
         intensity = cls._bounded_float(args.get("intensity"), skill.default_intensity)
-        duration_ms = cls._bounded_int(args.get("duration_ms"), skill.default_duration_ms)
+        duration_ms = cls._bounded_int(
+            args.get("duration_ms"), skill.default_duration_ms
+        )
         return ProposedIntent(
             emotion=emotion,
             gesture=skill.gesture,

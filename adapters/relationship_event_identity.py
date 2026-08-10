@@ -160,7 +160,10 @@ class RelationshipQuestEventIdentityAdapter:
         status = payload.get("status")
         reason = payload.get("reason")
         if status == "unavailable":
-            if reason not in _UNAVAILABLE_REASONS or payload.get("identity") is not None:
+            if (
+                reason not in _UNAVAILABLE_REASONS
+                or payload.get("identity") is not None
+            ):
                 return None, "invalid_response", "invalid_response"
             return None, "unavailable", str(reason)
         if status != "ok" or reason != "resolved_unique_active_private_account":
@@ -187,7 +190,9 @@ class RelationshipQuestEventIdentityAdapter:
         ):
             return None, "invalid_response", "invalid_response"
         allowed_platforms = {
-            str(item).strip().casefold() for item in platform_candidates if str(item).strip()
+            str(item).strip().casefold()
+            for item in platform_candidates
+            if str(item).strip()
         }
         if fields["platform_id"].casefold() not in allowed_platforms:
             return None, "invalid_response", "invalid_response"

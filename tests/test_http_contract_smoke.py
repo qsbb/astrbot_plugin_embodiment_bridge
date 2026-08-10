@@ -49,6 +49,15 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
                 health_body = await health.json()
                 assert health_body["data"]["protocol_version"] == "1.0"
                 assert health_body["data"]["input_audio"]["stt_available"] is True
+                assert health_body["data"]["input_audio"]["stt_source"] == {
+                    "source": "adapter",
+                    "available": True,
+                    "status": "ready",
+                }
+                health_serialized = json.dumps(health_body, ensure_ascii=False)
+                assert "plugin_mimo_stt_api_key" not in health_serialized
+                assert "plugin_mimo_stt_api_base" not in health_serialized
+                assert "provider_config" not in health_serialized
                 assert health_body["data"]["output_audio"]["tts_available"] is True
                 assert health_body["data"]["diagnostic_log"] == {
                     "enabled": False,

@@ -15,7 +15,7 @@
 - 插件安装在 AstrBot 的 `data/plugins/astrbot_plugin_quest_avatar_bridge/`。
 - 已配置可用的聊天模型 Provider，并取得它的 Provider ID。
 - Unity Editor 或 Quest 设备能够访问 AstrBot Dashboard 所在主机。
-- 如果要联调真实语音：已在 AstrBot Provider 设置中启用并选定默认 STT/TTS Provider。
+- 如果要联调真实语音：已在 AstrBot Provider 设置中实例化 STT/TTS Provider；随后在「Quest 角色设置」Page 显式选择 STT Provider，Core TTS fallback 仍使用 AstrBot 当前默认 TTS Provider。
 
 安装生产依赖：
 
@@ -62,8 +62,7 @@ $bridgeBytes = New-Object byte[] 32
 | `persona_prompt` / 四个 `character_*` 字段 | 仅 `manual_override` 兼容模式生效；未知经历必须明确不知道，且不由 `relationship_person_id` 推断 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |
-| `enable_astrbot_stt` | 真实 STT 联调时设为 `true`，否则 `audio/end` 返回 SSE `stt_unavailable` |
-| `enable_plugin_mimo_stt` / `plugin_mimo_stt_*` | 可选插件独立 MiMo ASR；只使用本插件专属配置，不修改 AstrBot 全局 STT |
+| `astrbot_stt_provider_id` | 在「Quest 角色设置」Page 选择已实例化的正式 `STTProvider`；留空关闭 STT，`audio/end` 返回 SSE `stt_unavailable` |
 | `enable_astrbot_tts` | 真实 TTS 联调时设为 `true`，否则只发送文字和意图 |
 | `enable_voice_hub_tts` | 默认 `true`；安装“声”后优先消费 `voice.audio_output@1.0` |
 | `trusted_client_id` / `trusted_platform_id` | 由 AstrBot 管理员在服务端配置；留空会关闭受保护关系上下文 |
@@ -99,9 +98,11 @@ allow_private_http_pairing=true
 
 ### 3.1 真实语音 Provider 检查
 
-插件不接受 STT/TTS Provider ID 字符串并自行寻找对象，而是读取 AstrBot 当前选中的默认 Provider。这与 4.26.8 的公开 `Context.get_using_stt_provider()` / `get_using_tts_provider()` 契约一致。启用前用 AstrBot 的 Provider 页面或 `/provider` 确认两类 Provider 都可用。
+Bridge 通过 AstrBot 公开 `Context.get_all_stt_providers()` 枚举已实例化的正式 `STTProvider`，并按服务端 `astrbot_stt_provider_id` 与 `provider.meta().id` 精确匹配。Operator Page 只显示 `id`、`model`、`adapter_type`、`provider_type`；不读取 `provider_config`，也不返回 API 地址、API Key、headers。所选实例被删除或停用时显示 `selected_missing` 并关闭 STT，不自动切换其他 Provider。
 
-安装“声”时，Bridge 优先消费无消息副作用的 `voice.audio_output@1.0`，只读 provider 管理的 PCM16 WAV，且不删除/移动源文件。未安装或失败时，只有 `enable_astrbot_tts=true` 才会回退 AstrBot Core TTS。Core Provider 必须返回本地、未压缩 PCM16 WAV；MP3、浮点/压缩/截断或超限文件产生 `tts_failed`，文字和 `reply.end(audio_sent=false)` 保留。不得调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
+AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract，因此 Bridge 不猜测插件方法或工具名。第三方 STT 只有通过 AstrBot 正式 Provider 机制注册为 `STTProvider`，才会自然出现在目录中并可被选择。旧版 Bridge 私有 MiMo URL、Key、model 不再在配置 Page 或 Operator Page 展示，也不再作为推荐路径；保存新的 Provider 选择时会清理旧私有字段，但任何管理响应、日志或迁移结果都不会回显旧密钥。旧 `enable_astrbot_stt=true` 且新 ID 为空的安装仅保留临时默认 Provider 兼容路径，管理员应尽快完成显式选择。
+
+安装“声”时，Bridge 优先消费无消息副作用的 `voice.audio_output@1.0`，只读 provider 管理的 PCM16 WAV，且不删除/移动源文件。本次 STT 选择重构不改变 `enable_voice_hub_tts` 开关或 `voice.audio_output@1.0` 语义。未安装或失败时，只有 `enable_astrbot_tts=true` 才会回退 AstrBot Core TTS。Core Provider 必须返回本地、未压缩 PCM16 WAV；MP3、浮点/压缩/截断或超限文件产生 `tts_failed`，文字和 `reply.end(audio_sent=false)` 保留。不得调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
 可选配置 `server_timing_enabled=true` 时，既有 `reply.end` 会带上 `server_timing@1.0` 脱敏摘要；该摘要只包含非负整数耗时和固定决策路径枚举，不增加 SSE 事件，不改变 Protocol 1.0 顺序。默认关闭，旧客户端可继续忽略缺失字段。
 
@@ -275,7 +276,7 @@ python -m pytest -q tests/test_http_contract_smoke.py tests/test_protocol_fixtur
 | 503 `bridge_service_disabled` | 在「Quest 角色设置」Page 重新启动服务；关闭服务会主动清理旧会话 |
 | 422 `schema_validation_failed` | 对照 manifest、请求 fixture 和 Pydantic 字段范围 |
 | SSE 无事件 | 是否先创建会话、SSE 是否仍连接、interaction 是否被去抖 |
-| `stt_unavailable` | `enable_astrbot_stt` 是否打开，以及 AstrBot 是否选中了可用 STT Provider |
+| `stt_unavailable` | `astrbot_stt_provider_id` 是否已选择且仍精确命中一个已实例化的正式 STT Provider；旧私有 MiMo 配置不会自动启用 |
 | `stt_failed` | Provider 是否能读取插件生成的 PCM16 16000 Hz WAV；查看错误类型而不是重试旧轮数据 |
 | `tts_failed` | Provider 是否返回未压缩 PCM16 WAV；文字仍应可见，`reply.end.audio_sent` 应为 `false` |
 | Quest 无法访问电脑 | 不要使用 127.0.0.1；检查局域网 IP、专用网络防火墙和 AP 隔离 |

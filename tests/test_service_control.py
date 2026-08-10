@@ -29,6 +29,16 @@ class ConfigStub(dict[str, Any]):
         return True
 
 
+class LegacySyncConfigStub(dict[str, Any]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.saves: list[dict[str, Any]] = []
+
+    def save_config(self, changes: dict[str, Any]) -> None:
+        self.update(changes)
+        self.saves.append(dict(changes))
+
+
 class ListenerStub:
     def __init__(self) -> None:
         self.config = SimpleNamespace(port=8520)
@@ -151,6 +161,29 @@ def test_service_can_stop_close_sessions_and_start_again() -> None:
         assert config.saves[-1] == {"bridge_service_enabled": True}
         await control.close()
         assert listener.closes == 1
+
+    asyncio.run(scenario())
+
+
+def test_astrbot_4265_sync_config_enables_service_control() -> None:
+    async def scenario() -> None:
+        config = LegacySyncConfigStub()
+        listener = ListenerStub()
+        sessions = SessionManager()
+        control = BridgeServiceControl(
+            config=config,
+            listener=listener,
+            sessions=sessions,
+            orchestrator=OrchestratorStub(),
+            logger=LoggerStub(),
+            enabled=True,
+        )
+
+        await control.initialize()
+        assert (await control.status_snapshot())["config_writable"] is True
+        stopped = await control.set_enabled(False)
+        assert stopped["status"] == "stopped"
+        assert config.saves == [{"bridge_service_enabled": False}]
 
     asyncio.run(scenario())
 

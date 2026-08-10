@@ -273,6 +273,11 @@ class PersistSettingStub:
         self.config[key] = value
 
 
+class LegacySyncConfigStub(dict[str, Any]):
+    def save_config(self, changes: dict[str, Any]) -> None:
+        self.update(changes)
+
+
 def build_persona_service(
     tmp_path: Path,
     *,
@@ -305,6 +310,18 @@ def build_persona_service(
         logger=LoggerStub(),
     )
     return service, store, converter
+
+
+def test_astrbot_4265_sync_config_enables_persona_library(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        config = LegacySyncConfigStub({"persona_converter_provider_id": "converter"})
+        service, _, _ = build_persona_service(tmp_path, config=config)
+
+        snapshot = await service.library_snapshot()
+
+        assert snapshot["config_writable"] is True
+
+    asyncio.run(scenario())
 
 
 async def convert_preview(service: QuestPersonaService) -> dict[str, Any]:

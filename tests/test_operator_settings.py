@@ -88,6 +88,16 @@ class NativeConfigStub(dict[str, Any]):
         return True
 
 
+class LegacySyncConfigStub(dict[str, Any]):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.saves: list[dict[str, Any]] = []
+
+    def save_config(self, changes: dict[str, Any]) -> None:
+        self.update(changes)
+        self.saves.append(dict(changes))
+
+
 class LlmStub:
     def __init__(self, provider_id: str = "") -> None:
         self.chat_provider_id = provider_id
@@ -121,6 +131,51 @@ class LlmStub:
 
     def configure_quest_persona(self, prompt: str) -> None:
         self.quest_persona_prompt = str(prompt or "")
+
+
+class SttSettingsStub:
+    def __init__(self, provider_id: str = "stt-a") -> None:
+        self.provider_id = provider_id
+        self.providers = [
+            {
+                "id": "stt-a",
+                "model": "speech-a",
+                "adapter_type": "official-stt",
+                "provider_type": "speech_to_text",
+            },
+            {
+                "id": "stt-b",
+                "model": "speech-b",
+                "adapter_type": "third-party-stt",
+                "provider_type": "speech_to_text",
+            },
+        ]
+
+    def provider_catalog(self) -> list[dict[str, str]]:
+        return [dict(item) for item in self.providers]
+
+    def status_snapshot(self) -> dict[str, Any]:
+        provider_ids = {item["id"] for item in self.providers}
+        status = (
+            "ready"
+            if self.provider_id in provider_ids
+            else "selected_missing"
+            if self.provider_id
+            else "disabled"
+        )
+        return {
+            "source": "astrbot_stt_provider",
+            "available": status == "ready",
+            "status": status,
+            "selected": bool(self.provider_id),
+            "selected_id": self.provider_id,
+            "legacy_default": False,
+            "external_contract_status": "no_standard_contract",
+            "providers": self.provider_catalog(),
+        }
+
+    def configure_provider(self, provider_id: str) -> None:
+        self.provider_id = provider_id
 
 
 class RelationshipStub:
@@ -227,6 +282,7 @@ def build_settings(
         context=context,
         config=config,
         llm=LlmStub(selected),
+        stt=SttSettingsStub(str(config.get("astrbot_stt_provider_id", "stt-a"))),
         relationship=RelationshipStub(),
         persona=AstrBotPersonaAdapter(context),
         logger=LoggerStub(),
@@ -262,6 +318,23 @@ def test_snapshot_lists_only_safe_provider_metadata() -> None:
     ]
     assert "key" not in repr(snapshot)
     assert snapshot["config_writable"] is False
+
+
+def test_astrbot_4265_sync_config_enables_all_operator_workflows() -> None:
+    async def scenario() -> None:
+        config = LegacySyncConfigStub({"chat_provider_id": "model-a"})
+        settings = build_settings(config=config, selected="model-a")
+
+        assert settings.snapshot()["config_writable"] is True
+        assert settings.platform_snapshot()["config_writable"] is True
+        assert settings.persona_snapshot()["config_writable"] is True
+        assert (await settings.quest_identity_overview())["config_writable"] is True
+
+        saved = await settings.save_chat_provider_id("model-b")
+        assert saved["selected_id"] == "model-b"
+        assert config.saves == [{"chat_provider_id": "model-b"}]
+
+    asyncio.run(scenario())
 
 
 def test_platform_snapshot_lists_only_safe_loaded_platform_metadata() -> None:
@@ -302,6 +375,70 @@ def test_model_and_relationship_selection_persist_before_runtime_switch() -> Non
             {"chat_provider_id": "model-b"},
             {"relationship_person_id": "person-a"},
         ]
+
+    asyncio.run(scenario())
+
+
+def test_stt_selection_uses_safe_catalog_and_clears_legacy_private_settings() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "astrbot_stt_provider_id": "stt-a",
+                "enable_astrbot_stt": True,
+                "enable_plugin_mimo_stt": True,
+                "plugin_mimo_stt_api_base": "sensitive-value",
+                "plugin_mimo_stt_api_key": "sensitive-value",
+                "plugin_mimo_stt_model": "sensitive-value",
+            }
+        )
+        settings = build_settings(config=config)
+
+        before = settings.stt_snapshot()
+        assert before["selected_id"] == "stt-a"
+        assert before["providers"][1]["adapter_type"] == "third-party-stt"
+        assert "sensitive-value" not in repr(before)
+
+        saved = await settings.save_stt_provider_id("stt-b")
+
+        assert saved["selected_id"] == "stt-b"
+        assert saved["available"] is True
+        assert settings.stt.provider_id == "stt-b"
+        assert config.saves == [
+            {
+                "astrbot_stt_provider_id": "stt-b",
+                "enable_astrbot_stt": False,
+                "enable_plugin_mimo_stt": False,
+                "plugin_mimo_stt_api_base": "",
+                "plugin_mimo_stt_api_key": "",
+                "plugin_mimo_stt_model": "",
+            }
+        ]
+        assert "sensitive-value" not in repr(saved)
+
+        disabled = await settings.save_stt_provider_id("")
+        assert disabled["selected_id"] == ""
+        assert disabled["status"] == "disabled"
+        assert settings.stt.provider_id == ""
+
+    asyncio.run(scenario())
+
+
+def test_invalid_or_failed_stt_save_does_not_change_runtime_selection() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({"astrbot_stt_provider_id": "stt-a"})
+        settings = build_settings(config=config)
+
+        with pytest.raises(OperatorSettingsError) as missing:
+            await settings.save_stt_provider_id("missing")
+        assert missing.value.code == "stt_provider_not_available"
+        assert settings.stt.provider_id == "stt-a"
+
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_stt_provider_id("stt-b")
+        assert failed.value.code == "config_save_failed"
+        assert settings.stt.provider_id == "stt-a"
+        assert config["astrbot_stt_provider_id"] == "stt-a"
 
     asyncio.run(scenario())
 

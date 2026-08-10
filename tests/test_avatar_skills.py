@@ -29,7 +29,9 @@ def test_intent_parser_accepts_action_call_without_trusting_animation_paths() ->
 
 
 def test_llm_prompt_advertises_skill_calls() -> None:
-    adapter = AstrBotLLMAdapter(object(), chat_provider_id="provider", persona_prompt="")
+    adapter = AstrBotLLMAdapter(
+        object(), chat_provider_id="provider", persona_prompt=""
+    )
     prompt = adapter._system_prompt()
     assert '"action": null' in prompt
     assert "Available skills" in prompt

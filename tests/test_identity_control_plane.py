@@ -199,9 +199,7 @@ def test_upsert_hashes_principal_and_returns_only_redacted_counts() -> None:
                 "api_key:11111111-2222-3333-4444-555555555555"
             )
         )
-        assert "11111111-2222-3333-4444-555555555555" not in repr(
-            provider.requests
-        )
+        assert "11111111-2222-3333-4444-555555555555" not in repr(provider.requests)
         assert "11111111-2222-3333-4444-555555555555" not in repr(result)
 
     asyncio.run(scenario())

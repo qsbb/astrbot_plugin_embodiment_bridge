@@ -42,7 +42,7 @@ Unity 负责感知、播放和执行：
 - 一个至少 32 字符的随机 `bridge_api_key`。
 - 一个具有 `plugin` scope 的 AstrBot API Key，供 Unity 调用 `/api/v1/plugins/extensions/...`。
 - AstrBot 主机与 Quest 在可达网络中。正式网络建议使用 HTTPS 反向代理，不要把 Dashboard 直接暴露到公网。
-- 可选：AstrBot 已启用并选定默认 STT/TTS Provider；只有需要生产语音输入或输出时才配置。
+- 可选：AstrBot 已实例化可用的 STT/TTS Provider；只有需要生产语音输入或输出时才配置。STT 在「Quest 角色设置」Page 中显式选择，Core TTS 仍使用 AstrBot 当前默认 Provider。
 
 把插件目录安装到 AstrBot 的 `data/plugins/astrbot_plugin_quest_avatar_bridge/` 后安装 `requirements.txt`，在 AstrBot 插件配置页设置以上配置并重载插件。运行数据目录由 `StarTools.get_data_dir()` 解析到 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/`；插件不会向安装目录写运行数据。
 
@@ -88,6 +88,7 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 - 只有统一或本地身份授权成功且服务端 `trusted_platform_id` 对应平台实例仍在线时，Bridge 才按绑定的原始平台、Bot 与用户构造私聊消息来源并进入 EventBus；Quest 不能自选平台、人格或管理员身份。未授权或旧版 AstrBot 不支持该入口时，默认明确报错；只有显式开启 `allow_direct_provider_fallback` 才允许兼容 Provider 回退。
 - 原有姓名、自称、自我描述和关系定位字段继续保留，但只有显式选择 `persona_source_mode=manual_override` 时才覆盖 AstrBot 人格。默认升级路径是 `astrbot`，不会要求重复维护角色设定。
 - 点击“从‘情’读取”后，只消费 relationship.identity_candidates@1.0，展示 person_id、display_name 和 account_count；不调用“情”的 identities Page、私有 registry 或内部方法。
+- 管理设置优先通过新 Core 的 `save_config_async()` 持久化；AstrBot 4.26.5 只有原子同步 `save_config()` 时，临会在后台线程调用该公开接口，并继续用插件级锁串行化管理写入，避免把页面错误降级为只读。
 - 保存自然人时后端会重新读取正式候选目录，并通过仅服务端可见的 `relationship.quest_event_identity@1.0` 解析该自然人在当前活跃 AstrBot 平台上的唯一完整私聊账号；随后复用已验证 principal，通过“序”的 `identity.quest_binding_control@1.0` 保存 Quest 只读精确绑定，未安装“序”时使用本地严格绑定。该操作不修改 owner_users。原始账号和 UMO 不进入 Page 响应、Quest 或日志。
 - `session/start` 始终用服务端规范身份覆盖设备的 Bot/User 占位声明，并在每个新会话重新向“情”复核；插件升级后也会自动修复已有自然人选择，无需把真实账号重新下发给设备。身份同步处于 pending 或复核不一致时，新会话失败关闭。
 - 自然人选择提供身份映射事实，但本身不授予 owner、白名单、管理或平台操作权限；契约缺失、平台不在线、群聊/账号不完整、多账号歧义或授权控制面拒绝时失败关闭，不自动换人，也不读取“情”的私有 registry 兜底。
@@ -106,11 +107,11 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 
 ## 生产 STT/TTS 配置
 
-语音能力默认关闭。先在 AstrBot 的 Provider 设置中启用 STT/TTS，并分别选定默认 Provider，再在本插件配置中启用：
+语音能力默认关闭。先在 AstrBot 的 Provider 设置中实例化 STT/TTS Provider，再在本插件中配置：
 
 | 配置 | 默认 | 作用 |
 |---|---:|---|
-| `enable_astrbot_stt` | `false` | 调用 `get_using_stt_provider().get_text()` |
+| `astrbot_stt_provider_id` | 空 | 在「Quest 角色设置」Page 选择一个已实例化的正式 `STTProvider`；留空关闭语音识别 |
 | `enable_astrbot_tts` | `false` | 调用 `get_using_tts_provider().get_audio()` |
 | `enable_voice_hub_tts` | `true` | 优先消费“声”的 `voice.audio_output@1.0`；失败前未发送字节时可回退 Core TTS |
 | `trusted_client_id` | 空 | 服务端固定 Quest 客户端 ID；空值会关闭受保护上下文 |
@@ -145,9 +146,13 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 
 STT adapter 把 Unity 上传的原始 PCM16 封装为 16000 Hz、单声道 WAV，临时文件位于 AstrBot `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/`，完成、失败、取消和插件终止时都会清理。
 
+STT 下拉目录只读取 Provider 的安全元数据 `id`、`model`、`adapter_type`、`provider_type`，不会读取或返回 Provider 原始配置、API 地址、API Key 或 headers。显式选择的 Provider 被删除或停用时状态为 `selected_missing`，不会静默切换到其他 Provider。AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract；第三方语音识别若要被选择，必须通过 AstrBot 正式 Provider 机制注册为 `STTProvider`。
+
+旧版 Bridge 私有 MiMo URL、Key、model 配置不再作为推荐入口，也不会在配置 Page 或管理响应中显示。管理员保存新的 `astrbot_stt_provider_id` 时会清理这些旧私有字段且绝不回显旧密钥；升级后尚未选择正式 Provider 时安全关闭 STT。旧 `enable_astrbot_stt=true` 且未设置新 ID 的安装仅保留临时默认 Provider 兼容路径，建议尽快在 Page 中完成显式选择。
+
 AstrBot 4.26.8 的 TTS Provider 契约只保证返回音频文件路径，不保证采样格式。本插件因此只接受本地、未压缩 PCM WAV，源文件必须是 PCM16、单声道或立体声、8000-192000 Hz；随后下混并重采样为 24000 Hz 单声道 PCM16。MP3、压缩 WAV、浮点 WAV、截断文件和超限音频都会产生 `tts_failed`，不会把未知字节发给 Unity。Provider 返回的文件归 AstrBot/Provider 管理，本插件只读且不删除。
 
-启用后调用 `/health` 确认 `stt_available=true` 和 `tts_available=true`。TTS 优先使用“声”明确声明的 `voice.audio_output@1.0`；该契约缺失、不兼容或合成失败且尚未输出字节时，才使用显式启用的 AstrBot Core TTS。Bridge 不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`，也没有生产 mock 开关。
+配置后调用 `/health` 确认 `stt_available=true` 和 `tts_available=true`；STT 的脱敏状态会区分 ready、未选择、所选 Provider 缺失和旧配置待迁移。TTS 优先使用“声”明确声明的 `voice.audio_output@1.0`；该开关和契约语义没有改变。契约缺失、不兼容或合成失败且尚未输出字节时，才使用显式启用的 AstrBot Core TTS。Bridge 不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`，也没有生产 mock 开关。
 
 ## 完整 URL
 
@@ -361,7 +366,7 @@ LLM 输出必须是单个严格 JSON 对象。未知枚举、额外字段、Mark
 
 ## 当前限制
 
-- STT 与 AstrBot Core TTS 默认禁用；“声”PCM 输出默认启用但可安全缺失。没有任何可用 TTS 时文本决策链仍可用，音频输入在 `audio/end` 后产生 `stt_unavailable`。
+- STT 与 AstrBot Core TTS 默认禁用；STT 只有显式选择已实例化的正式 `STTProvider`（或命中临时旧默认兼容路径）才可用。“声”PCM 输出默认启用但可安全缺失。没有任何可用 TTS 时文本决策链仍可用，音频输入在 `audio/end` 后产生 `stt_unavailable`。
 - STT 是整轮文件式识别：插件在 `audio/end` 后才调用 Provider，不产生 `asr.partial`，也不执行 VAD、回声消除或唤醒词检测。
 - TTS Provider 仍是文件式合成，但 Bridge 会按安全句段顺序调用 Provider，并通过容量为 2 的生产者-消费者队列尽早发送已完成句段；不会无限并发。AstrBot 4.26.8 的 `get_audio(text)` 不接受结构化 emotion，因此角色意图中的情绪不会被猜测性地传成 Provider 参数。
 - TTS Provider 若不返回可解析的 PCM WAV，会安全产生 `tts_failed`；文字、意图和最终 `reply.end(audio_sent=false)` 保留。

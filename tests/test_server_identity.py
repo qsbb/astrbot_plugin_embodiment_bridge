@@ -52,7 +52,9 @@ def test_legacy_identity_stays_in_memory_until_flushed(tmp_path) -> None:
 
 def test_invalid_or_corrupt_identity_fails_closed(tmp_path) -> None:
     path = tmp_path / "server_identity.json"
-    path.write_text('{"version":1,"bot_id":"bad|bot","user_id":"user"}', encoding="utf-8")
+    path.write_text(
+        '{"version":1,"bot_id":"bad|bot","user_id":"user"}', encoding="utf-8"
+    )
     assert ServerIdentityStore(path).identity is None
 
     path.write_text("not-json", encoding="utf-8")

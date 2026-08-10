@@ -444,6 +444,127 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
     asyncio.run(scenario())
 
 
+def test_stt_provider_settings_are_dashboard_protected_strict_and_redacted(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={
+                "enable_plugin_mimo_stt": True,
+                "plugin_mimo_stt_api_base": "https://legacy.invalid/v1",
+                "plugin_mimo_stt_api_key": "legacy-private-value",
+                "plugin_mimo_stt_model": "legacy-private-model",
+            },
+        )
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/stt-settings"))
+                assert denied.status == 401
+                assert (await denied.json())["data"]["code"] == (
+                    "astrbot_auth_required"
+                )
+
+                api_key_denied = await client.get(
+                    server.url("/pairing/stt-settings"),
+                    headers=AUTH_HEADERS,
+                )
+                assert api_key_denied.status == 401
+                assert (await api_key_denied.json())["data"]["code"] == (
+                    "astrbot_dashboard_auth_required"
+                )
+
+                overview = await client.get(
+                    server.url("/pairing/stt-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert overview.status == 200
+                overview_body = await overview.json()
+                assert overview_body["success"] is True
+                assert overview_body["stt"] == {
+                    "source": "astrbot_stt_provider",
+                    "available": False,
+                    "status": "legacy_private_mimo_disabled",
+                    "selected": False,
+                    "selected_id": "",
+                    "legacy_default": False,
+                    "external_contract_status": "no_standard_contract",
+                    "providers": [
+                        {
+                            "id": "fake-stt-provider",
+                            "model": "contract-stt-model",
+                            "adapter_type": "contract-stt-adapter",
+                            "provider_type": "speech_to_text",
+                        }
+                    ],
+                    "config_writable": True,
+                }
+                serialized = json.dumps(overview_body, ensure_ascii=False)
+                for forbidden in (
+                    "plugin_mimo_stt_api_base",
+                    "plugin_mimo_stt_api_key",
+                    "plugin_mimo_stt_model",
+                    "legacy-private-value",
+                    "legacy.invalid",
+                ):
+                    assert forbidden not in serialized
+
+                extra = await client.post(
+                    server.url("/pairing/stt-settings"),
+                    headers=PAGE_AUTH,
+                    json={"provider_id": "fake-stt-provider", "unexpected": True},
+                )
+                assert extra.status == 422
+                assert (await extra.json())["data"]["code"] == (
+                    "schema_validation_failed"
+                )
+
+                missing = await client.post(
+                    server.url("/pairing/stt-settings"),
+                    headers=PAGE_AUTH,
+                    json={"provider_id": "missing-stt-provider"},
+                )
+                assert missing.status == 422
+                assert (await missing.json())["data"]["code"] == (
+                    "stt_provider_not_available"
+                )
+
+                selected = await client.post(
+                    server.url("/pairing/stt-settings"),
+                    headers=PAGE_AUTH,
+                    json={"provider_id": "fake-stt-provider"},
+                )
+                assert selected.status == 200
+                selected_body = await selected.json()
+                assert selected_body["stt"]["status"] == "ready"
+                assert selected_body["stt"]["available"] is True
+                assert selected_body["stt"]["selected"] is True
+                assert selected_body["stt"]["selected_id"] == "fake-stt-provider"
+                assert bundle.plugin.config["astrbot_stt_provider_id"] == (
+                    "fake-stt-provider"
+                )
+                assert bundle.plugin.config["enable_astrbot_stt"] is False
+                assert bundle.plugin.config["enable_plugin_mimo_stt"] is False
+                assert bundle.plugin.config["plugin_mimo_stt_api_base"] == ""
+                assert bundle.plugin.config["plugin_mimo_stt_api_key"] == ""
+                assert bundle.plugin.config["plugin_mimo_stt_model"] == ""
+
+                disabled = await client.post(
+                    server.url("/pairing/stt-settings"),
+                    headers=PAGE_AUTH,
+                    json={"provider_id": ""},
+                )
+                assert disabled.status == 200
+                disabled_stt = (await disabled.json())["stt"]
+                assert disabled_stt["status"] == "disabled"
+                assert disabled_stt["available"] is False
+                assert disabled_stt["selected"] is False
+
+    asyncio.run(scenario())
+
+
 def test_session_start_uses_server_canonical_identity_not_device_claims(
     monkeypatch: Any,
     tmp_path: Any,

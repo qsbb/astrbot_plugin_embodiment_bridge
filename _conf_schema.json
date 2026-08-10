@@ -204,35 +204,12 @@
     "hint": "由临的服务控制台保存和校验。留空时实时继承 AstrBot 人格；不要手工填写文件名或路径。",
     "default": ""
   },
-  "enable_astrbot_stt": {
-    "description": "启用 AstrBot 默认 STT Provider",
-    "type": "bool",
-    "hint": "启用后把 Quest PCM16 封装为 16000 Hz 单声道 WAV，再调用 AstrBot 4.26.8 的 get_using_stt_provider().get_text()。",
-    "default": false
-  },
-  "enable_plugin_mimo_stt": {
-    "description": "启用 Bridge 插件独立 MiMo STT",
-    "type": "bool",
-    "hint": "仅使用本插件配置，不启用或修改 AstrBot 全局 STT Provider。Quest PCM16 会封装为 WAV 后发送到下方 HTTPS API。",
-    "default": false
-  },
-  "plugin_mimo_stt_api_base": {
-    "description": "Bridge 插件 MiMo STT API 地址",
+  "astrbot_stt_provider_id": {
+    "description": "Quest 语音识别 STT Provider",
     "type": "string",
-    "hint": "必须是无内嵌凭据的 HTTPS URL；可填写 API 根地址或完整 chat/completions 地址。",
-    "default": "https://api.xiaomimimo.com/v1"
-  },
-  "plugin_mimo_stt_api_key": {
-    "description": "Bridge 插件 MiMo STT API Key",
-    "type": "string",
-    "hint": "仅保存在本插件配置中，不读取或修改 AstrBot 全局 Provider 选择。",
-    "obvious_hint": true,
+    "_special": "select_provider_stt",
+    "hint": "选择 AstrBot 已实例化的 STT Provider；包括通过 AstrBot 正式 Provider 机制注册的第三方实现。临不会读取或保存 Provider 的 API 地址、密钥或原始配置。留空时关闭语音识别。",
     "default": ""
-  },
-  "plugin_mimo_stt_model": {
-    "description": "Bridge 插件 MiMo STT 模型",
-    "type": "string",
-    "default": "mimo-v2.5-asr"
   },
   "enable_astrbot_tts": {
     "description": "启用 AstrBot 默认 TTS Provider",

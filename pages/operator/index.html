@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜Quest 角色设置</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css?v=0.4.18-1" />
 </head>
 <body>
   <main class="shell">
@@ -104,6 +104,19 @@
         </select>
         <p id="model-status" class="field-status" role="status">尚未读取</p>
         <button id="save-model-button" class="primary" type="button" aria-busy="false" disabled>保存模型</button>
+      </section>
+
+      <section class="setting-panel" aria-labelledby="stt-provider-title">
+        <span class="section-label">语音输入</span>
+        <h2 id="stt-provider-title">语音识别 Provider</h2>
+        <p>选择 AstrBot 已实例化的正式 STT Provider；这里只读取安全摘要，不读取或显示 API 地址、密钥和原始 Provider 配置。</p>
+        <label for="stt-provider-id">STT Provider</label>
+        <select id="stt-provider-id" disabled>
+          <option value="">正在读取可用语音识别模型</option>
+        </select>
+        <p id="stt-provider-help" class="field-help">AstrBot 暂无普通插件通用的 STT 契约；第三方语音识别需要通过 AstrBot 正式 STTProvider 机制注册后才能选择。</p>
+        <p id="stt-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-stt-button" class="primary" type="button" aria-busy="false" disabled>保存语音识别</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="platform-title">
@@ -332,6 +345,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=0.4.18-1"></script>
 </body>
 </html>

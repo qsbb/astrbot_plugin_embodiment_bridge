@@ -46,6 +46,12 @@ class ChatProviderSelectionRequest(BaseModel):
     chat_provider_id: str = Field(min_length=1, max_length=256)
 
 
+class STTProviderSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    provider_id: str = Field(default="", max_length=256)
+
+
 class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -227,6 +233,18 @@ class PairingHttpApi:
                 self.save_operator_settings,
                 ["POST"],
                 "Save Quest chat model selection",
+            ),
+            (
+                "pairing/stt-settings",
+                self.stt_settings_overview,
+                ["GET"],
+                "Read safe Quest speech recognition provider settings",
+            ),
+            (
+                "pairing/stt-settings",
+                self.save_stt_settings,
+                ["POST"],
+                "Save Quest speech recognition provider selection",
             ),
             (
                 "pairing/platform-settings",
@@ -437,6 +455,24 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "settings": settings})
         except Exception as exc:
             return self._error(exc, "save_operator_settings")
+
+    async def stt_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {"success": True, "stt": self.operator_settings.stt_snapshot()}
+            )
+        except Exception as exc:
+            return self._error(exc, "stt_settings_overview")
+
+    async def save_stt_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(STTProviderSelectionRequest)
+            stt = await self.operator_settings.save_stt_provider_id(payload.provider_id)
+            return _json_no_store({"success": True, "stt": stt})
+        except Exception as exc:
+            return self._error(exc, "save_stt_settings")
 
     async def platform_settings_overview(self) -> Any:
         try:

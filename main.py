@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +23,14 @@ from .adapters.relationship_event_identity import (
     RelationshipQuestEventIdentityAdapter,
 )
 from .adapters.runtime import SeriesRuntimeAdapter
-from .adapters.stt import (
-    AstrBotSTTAdapter,
-    ConfiguredMiMoSTTAdapter,
-    select_stt_adapter,
-)
+from .adapters.stt import AstrBotSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
 )
+from .core.config_persistence import config_is_writable, save_config_changes
 from .core.interaction_policy import InteractionPolicy
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
@@ -53,7 +51,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.17"
+__version__ = "0.4.18"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -157,20 +155,14 @@ class QuestAvatarBridgePlugin(Star):
         self.astrbot_stt = AstrBotSTTAdapter(
             context,
             data_dir=self.data_dir / "stt_input",
-            enabled=self._bool_config("enable_astrbot_stt", False),
-            timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
-        )
-        self.plugin_stt = ConfiguredMiMoSTTAdapter(
-            enabled=self._bool_config("enable_plugin_mimo_stt", False),
-            api_base=str(
-                config.get("plugin_mimo_stt_api_base", "https://api.xiaomimimo.com/v1")
-                or ""
+            provider_id=str(config.get("astrbot_stt_provider_id", "") or ""),
+            legacy_default_enabled=self._bool_config("enable_astrbot_stt", False),
+            legacy_private_mimo_enabled=self._bool_config(
+                "enable_plugin_mimo_stt", False
             ),
-            api_key=str(config.get("plugin_mimo_stt_api_key", "") or ""),
-            model=str(config.get("plugin_mimo_stt_model", "mimo-v2.5-asr") or ""),
             timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
         )
-        self.stt = select_stt_adapter(self.plugin_stt, self.astrbot_stt)
+        self.stt = self.astrbot_stt
         max_tts_audio_seconds = self._int_config("max_tts_audio_seconds", 120, 1, 300)
         self.astrbot_tts = AstrBotTTSAdapter(
             context,
@@ -279,9 +271,7 @@ class QuestAvatarBridgePlugin(Star):
             ),
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
             diagnostic_log=self.diagnostic_log,
-            server_timing_enabled=self._bool_config(
-                "server_timing_enabled", False
-            ),
+            server_timing_enabled=self._bool_config("server_timing_enabled", False),
         )
         self.pairing = PairingManager(
             bridge_api_key=bridge_api_key,
@@ -313,6 +303,7 @@ class QuestAvatarBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
         )
+        self._config_save_lock = asyncio.Lock()
         self.service = BridgeServiceControl(
             config=config,
             listener=self.pairing_listener,
@@ -321,6 +312,7 @@ class QuestAvatarBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
             enabled=self._bool_config("bridge_service_enabled", True),
+            config_save_lock=self._config_save_lock,
         )
         self.transport = HttpSseTransport(
             context=context,
@@ -347,6 +339,7 @@ class QuestAvatarBridgePlugin(Star):
             context=context,
             config=config,
             llm=self.llm,
+            stt=self.stt,
             relationship=self.relationship,
             persona=self.persona,
             logger=self._component_logger,
@@ -357,6 +350,7 @@ class QuestAvatarBridgePlugin(Star):
             pairing_manager=self.pairing,
             transport=self.transport,
             identity_store=self.server_identity_store,
+            config_save_lock=self._config_save_lock,
         )
         self.persona_service = QuestPersonaService(
             config=config,
@@ -419,9 +413,12 @@ class QuestAvatarBridgePlugin(Star):
         await self.server_identity_store.flush()
         await self.persona_service.initialize()
         if self._legacy_identity_migrated:
-            save = getattr(self.config, "save_config_async", None)
-            if callable(save):
-                await save({"pairing_bot_id": "", "pairing_user_id": ""})
+            if config_is_writable(self.config):
+                async with self._config_save_lock:
+                    await save_config_changes(
+                        self.config,
+                        {"pairing_bot_id": "", "pairing_user_id": ""},
+                    )
         identity_refresh = (
             await self.pairing_api.refresh_selected_relationship_identity()
         )

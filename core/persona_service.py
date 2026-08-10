@@ -24,6 +24,7 @@ from .persona_profiles import (
     normalize_source_kind,
     normalize_source_snapshot,
 )
+from .config_persistence import config_is_writable
 
 
 PersistSetting = Callable[[str, str], Awaitable[None]]
@@ -130,9 +131,7 @@ class QuestPersonaService:
         )
         return {
             "status": "ok",
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
             "active_quest_persona_id": active_id,
             "active_available": bool(
                 active and active.status == "ready" and active.quest_persona_prompt

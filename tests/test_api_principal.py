@@ -46,9 +46,7 @@ def test_verifier_uses_official_api_key_scheme_and_accepts_only_strict_proof() -
             assert digest == authenticated_principal_digest(
                 "api_key:11111111-2222-3333-4444-555555555555"
             )
-            assert observed == {
-                "authorization": "ApiKey test-api-key-credential"
-            }
+            assert observed == {"authorization": "ApiKey test-api-key-credential"}
         finally:
             await runner.cleanup()
 
@@ -58,9 +56,25 @@ def test_verifier_uses_official_api_key_scheme_and_accepts_only_strict_proof() -
 @pytest.mark.parametrize(
     ("payload", "status", "code"),
     (
-        ({"success": True, "api_principal_digest": "bad"}, 200, "api_principal_proof_invalid"),
-        ({"success": True, "api_principal_digest": "sha256:" + "0" * 64, "extra": True}, 200, "api_principal_proof_invalid"),
-        ({"success": False, "api_principal_digest": "sha256:" + "0" * 64}, 200, "api_principal_proof_invalid"),
+        (
+            {"success": True, "api_principal_digest": "bad"},
+            200,
+            "api_principal_proof_invalid",
+        ),
+        (
+            {
+                "success": True,
+                "api_principal_digest": "sha256:" + "0" * 64,
+                "extra": True,
+            },
+            200,
+            "api_principal_proof_invalid",
+        ),
+        (
+            {"success": False, "api_principal_digest": "sha256:" + "0" * 64},
+            200,
+            "api_principal_proof_invalid",
+        ),
         ({"message": "denied"}, 401, "astrbot_api_key_auth_failed"),
     ),
 )

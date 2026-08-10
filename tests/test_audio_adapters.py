@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 from typing import Any
 import wave
 
@@ -11,28 +13,60 @@ import pytest
 from astrbot_plugin_quest_avatar_bridge.adapters.stt import (
     AdapterUnavailable,
     AstrBotSTTAdapter,
-    ConfiguredMiMoSTTAdapter,
-    select_stt_adapter,
 )
 from astrbot_plugin_quest_avatar_bridge.adapters.tts import AstrBotTTSAdapter
 
 
 class ProviderContext:
-    def __init__(self, *, stt: Any = None, tts: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        stt: Any = None,
+        stt_providers: list[Any] | None = None,
+        tts: Any = None,
+    ) -> None:
         self.stt = stt
+        self.stt_providers = list(stt_providers or ([] if stt is None else [stt]))
         self.tts = tts
 
     def get_using_stt_provider(self) -> Any:
         return self.stt
 
+    def get_all_stt_providers(self) -> list[Any]:
+        return list(self.stt_providers)
+
     def get_using_tts_provider(self) -> Any:
         return self.tts
 
 
+class ProviderType(str, Enum):
+    SPEECH_TO_TEXT = "speech_to_text"
+
+
 class InspectingSTTProvider:
-    def __init__(self, expected_pcm: bytes) -> None:
+    def __init__(
+        self,
+        expected_pcm: bytes,
+        *,
+        provider_id: str = "stt-a",
+        model: str = "speech-model",
+        adapter_type: str = "official-stt",
+    ) -> None:
         self.expected_pcm = expected_pcm
         self.path: Path | None = None
+        self.provider_config = {
+            "api_key": "must-never-be-enumerated",
+            "api_base": "https://provider.invalid/v1",
+        }
+        self._meta = SimpleNamespace(
+            id=provider_id,
+            model=model,
+            type=adapter_type,
+            provider_type=ProviderType.SPEECH_TO_TEXT,
+        )
+
+    def meta(self) -> Any:
+        return self._meta
 
     async def get_text(self, audio_url: str) -> str:
         self.path = Path(audio_url)
@@ -53,6 +87,14 @@ class BlockingSTTProvider:
         self.started.set()
         await asyncio.Event().wait()
         return "unreachable"
+
+    def meta(self) -> Any:
+        return SimpleNamespace(
+            id="blocking-stt",
+            model="blocking",
+            type="test",
+            provider_type=ProviderType.SPEECH_TO_TEXT,
+        )
 
 
 class FileTTSProvider:
@@ -85,9 +127,9 @@ def test_astrbot_stt_adapter_wraps_pcm16_and_cleans_temp_file(tmp_path: Path) ->
         pcm16 = struct.pack("<hhhh", -1000, 0, 1000, 2000)
         provider = InspectingSTTProvider(pcm16)
         adapter = AstrBotSTTAdapter(
-            ProviderContext(stt=provider),
+            ProviderContext(stt_providers=[provider]),
             data_dir=tmp_path / "plugin_data" / "stt_input",
-            enabled=True,
+            provider_id="stt-a",
         )
 
         assert adapter.available is True
@@ -108,18 +150,19 @@ def test_astrbot_stt_adapter_unavailable_and_cancel_cleanup(tmp_path: Path) -> N
         unavailable = AstrBotSTTAdapter(
             ProviderContext(),
             data_dir=tmp_path / "unavailable",
-            enabled=True,
+            provider_id="missing-stt",
         )
         assert unavailable.available is False
+        assert unavailable.status_reason == "selected_missing"
         with pytest.raises(AdapterUnavailable):
             await unavailable.transcribe(b"\x00\x00", sample_rate=16_000)
 
         provider = BlockingSTTProvider()
         work_dir = tmp_path / "cancelled"
         adapter = AstrBotSTTAdapter(
-            ProviderContext(stt=provider),
+            ProviderContext(stt_providers=[provider]),
             data_dir=work_dir,
-            enabled=True,
+            provider_id="blocking-stt",
         )
         task = asyncio.create_task(adapter.transcribe(b"\x00\x00", sample_rate=16_000))
         await asyncio.wait_for(provider.started.wait(), timeout=1)
@@ -132,71 +175,92 @@ def test_astrbot_stt_adapter_unavailable_and_cancel_cleanup(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
-def test_plugin_mimo_stt_wraps_pcm_without_global_provider(monkeypatch) -> None:
+def test_stt_provider_catalog_is_safe_and_supports_formal_third_party_provider(
+    tmp_path: Path,
+) -> None:
+    official = InspectingSTTProvider(
+        b"\x00\x00", provider_id="official", model="official-model"
+    )
+    third_party = InspectingSTTProvider(
+        b"\x00\x00",
+        provider_id="third-party",
+        model="plugin-registered-model",
+        adapter_type="third-party-adapter",
+    )
+    context = ProviderContext(stt_providers=[third_party, official])
+    adapter = AstrBotSTTAdapter(
+        context,
+        data_dir=tmp_path / "catalog",
+        provider_id="third-party",
+    )
+
+    catalog = adapter.provider_catalog()
+
+    assert catalog == [
+        {
+            "id": "official",
+            "model": "official-model",
+            "adapter_type": "official-stt",
+            "provider_type": "speech_to_text",
+        },
+        {
+            "id": "third-party",
+            "model": "plugin-registered-model",
+            "adapter_type": "third-party-adapter",
+            "provider_type": "speech_to_text",
+        },
+    ]
+    assert adapter.available is True
+    assert "api_key" not in repr(catalog)
+    assert "api_base" not in repr(catalog)
+
+
+def test_selected_missing_never_falls_back_and_legacy_default_is_explicit(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
-        captured = {}
-
-        async def fake_post(url, *, api_key, payload, timeout_seconds):
-            captured.update(
-                url=url,
-                api_key=api_key,
-                payload=payload,
-                timeout_seconds=timeout_seconds,
-            )
-            return {"choices": [{"message": {"content": "  plugin transcript  "}}]}
-
-        monkeypatch.setattr(
-            "astrbot_plugin_quest_avatar_bridge.adapters.stt._post_mimo_json",
-            fake_post,
+        provider = InspectingSTTProvider(b"\x00\x00", provider_id="legacy-default")
+        context = ProviderContext(stt=provider, stt_providers=[provider])
+        selected_missing = AstrBotSTTAdapter(
+            context,
+            data_dir=tmp_path / "selected-missing",
+            provider_id="removed-provider",
+            legacy_default_enabled=True,
         )
-        adapter = ConfiguredMiMoSTTAdapter(
-            enabled=True,
-            api_base="https://api.xiaomimimo.com/v1",
-            api_key="plugin-only-key",
-            model="mimo-v2.5-asr",
-            timeout_seconds=12,
-        )
-        pcm16 = struct.pack("<hhhh", -1000, 0, 1000, 2000)
+        assert selected_missing.available is False
+        assert selected_missing.status_reason == "selected_missing"
+        with pytest.raises(AdapterUnavailable):
+            await selected_missing.transcribe(b"\x00\x00", sample_rate=16_000)
 
-        assert adapter.available is True
-        assert await adapter.transcribe(pcm16, sample_rate=16_000) == (
-            "plugin transcript"
+        legacy = AstrBotSTTAdapter(
+            context,
+            data_dir=tmp_path / "legacy-default",
+            legacy_default_enabled=True,
         )
-        assert captured["url"] == "https://api.xiaomimimo.com/v1/chat/completions"
-        assert captured["api_key"] == "plugin-only-key"
-        assert "max_completion_tokens" not in captured["payload"]
-        audio_url = captured["payload"]["messages"][0]["content"][0]["input_audio"][
-            "data"
-        ]
-        header = __import__("base64").b64decode(audio_url.split(",", 1)[1])[:12]
-        assert header[:4] == b"RIFF" and header[8:12] == b"WAVE"
-        await adapter.close()
-        assert adapter.available is False
+        assert legacy.status_reason == "legacy_default_ready"
+        assert await legacy.transcribe(b"\x00\x00", sample_rate=16_000) == (
+            "recognized text"
+        )
 
     asyncio.run(scenario())
 
 
-def test_plugin_mimo_stt_requires_https_and_has_explicit_fallback() -> None:
-    primary = ConfiguredMiMoSTTAdapter(
-        enabled=True,
-        api_base="http://api.example.test/v1",
-        api_key="key",
+def test_legacy_private_mimo_is_fail_closed_without_network_path(
+    tmp_path: Path,
+) -> None:
+    adapter = AstrBotSTTAdapter(
+        ProviderContext(),
+        data_dir=tmp_path / "legacy-private",
+        legacy_private_mimo_enabled=True,
     )
-    fallback = ProviderContext(stt=InspectingSTTProvider(b"\x00\x00"))
-    fallback_adapter = AstrBotSTTAdapter(
-        fallback,
-        data_dir=Path.cwd() / ".unused-stt-test",
-        enabled=True,
+
+    assert adapter.available is False
+    assert adapter.status_reason == "legacy_private_mimo_disabled"
+    assert adapter.status_snapshot()["external_contract_status"] == (
+        "no_standard_contract"
     )
-    try:
-        assert primary.available is False
-        assert select_stt_adapter(primary, fallback_adapter) is fallback_adapter
-    finally:
-        asyncio.run(fallback_adapter.close())
-        try:
-            (Path.cwd() / ".unused-stt-test").rmdir()
-        except OSError:
-            pass
+    with pytest.raises(AdapterUnavailable):
+        asyncio.run(adapter.transcribe(b"\x00\x00", sample_rate=16_000))
 
 
 def test_astrbot_tts_adapter_normalizes_stereo_48k_to_mono_24k(

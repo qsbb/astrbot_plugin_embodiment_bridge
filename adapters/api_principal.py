@@ -11,9 +11,7 @@ from .identity_control_plane import validate_principal_digest
 
 
 PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
-PROOF_PATH = (
-    f"/api/v1/plugins/extensions/{PLUGIN_NAME}/pairing/api-principal-proof"
-)
+PROOF_PATH = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/pairing/api-principal-proof"
 MAX_PROOF_RESPONSE_BYTES = 4_096
 
 
@@ -28,7 +26,9 @@ class ApiPrincipalVerificationError(RuntimeError):
 class AstrBotApiPrincipalVerifier:
     """Resolve a raw key through AstrBot's own auth layer over loopback HTTP."""
 
-    def __init__(self, upstream_base_url: object, *, timeout_seconds: float = 3.0) -> None:
+    def __init__(
+        self, upstream_base_url: object, *, timeout_seconds: float = 3.0
+    ) -> None:
         self.proof_url = _proof_url(upstream_base_url)
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 10.0))
 

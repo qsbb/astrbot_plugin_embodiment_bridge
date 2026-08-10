@@ -1,10 +1,11 @@
 let bridge = null;
 let operatorSettings = null;
+let sttSettings = null;
 let personaSettings = null;
 let platformSettings = null;
 let questIdentitySettings = null;
 let serviceState = null;
-let serviceRefreshInFlight = false;
+let serviceRefreshInFlight = null;
 let personaProfiles = null;
 let personaWorkflowMode = "live";
 let personaConversionReport = null;
@@ -14,6 +15,7 @@ let personaOpenedConverterPromptVersion = "";
 let bridgeReady = false;
 let eventsBound = false;
 let serviceRefreshTimer = null;
+let initialDataPromise = null;
 
 async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -157,19 +159,26 @@ function renderServiceStatus(service) {
 }
 
 async function loadServiceStatus({ silent = false } = {}) {
-  if (serviceRefreshInFlight) return;
-  serviceRefreshInFlight = true;
+  if (serviceRefreshInFlight) return serviceRefreshInFlight;
   const button = document.getElementById("refresh-service-button");
-  if (!silent) setButtonBusy(button, true, "刷新中…");
+  serviceRefreshInFlight = (async () => {
+    if (!silent) setButtonBusy(button, true, "刷新中…");
+    try {
+      const response = await apiGet("pairing/service-status");
+      renderServiceStatus(response.service);
+      return true;
+    } catch (error) {
+      setRuntimeState("error", "服务状态读取失败");
+      if (!silent) toast("读取服务状态失败：" + error.message, true);
+      return false;
+    } finally {
+      if (!silent) setButtonBusy(button, false);
+    }
+  })();
   try {
-    const response = await apiGet("pairing/service-status");
-    renderServiceStatus(response.service);
-  } catch (error) {
-    setRuntimeState("error", "服务状态读取失败");
-    if (!silent) toast("读取服务状态失败：" + error.message, true);
+    return await serviceRefreshInFlight;
   } finally {
-    serviceRefreshInFlight = false;
-    if (!silent) setButtonBusy(button, false);
+    serviceRefreshInFlight = null;
   }
 }
 
@@ -257,7 +266,7 @@ function renderOperatorSettings(settings) {
 
   const status = document.getElementById("model-status");
   if (operatorSettings.config_writable !== true) {
-    status.textContent = "当前 AstrBot 配置对象不支持异步保存。";
+    status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
   } else if (operatorSettings.status === "selected_missing") {
     status.textContent = "已配置模型当前不可用，请重新选择。";
   } else if (operatorSettings.selected_available) {
@@ -277,6 +286,55 @@ function renderOperatorSettings(settings) {
     personSelect.add(new Option("已选择 · " + selectedPerson, selectedPerson));
   }
   personSelect.value = selectedPerson;
+}
+
+function sttProviderLabel(provider) {
+  const id = String(provider?.id || "");
+  const model = String(provider?.model || "");
+  const adapterType = String(provider?.adapter_type || "");
+  const providerType = String(provider?.provider_type || "");
+  return [model, adapterType, providerType, id].filter(Boolean).join(" · ");
+}
+
+function renderSttSettings(settings) {
+  sttSettings = settings || {};
+  const select = document.getElementById("stt-provider-id");
+  const button = document.getElementById("save-stt-button");
+  const status = document.getElementById("stt-status");
+  const providers = Array.isArray(sttSettings.providers)
+    ? sttSettings.providers.map((provider) => ({
+      id: String(provider?.id || ""),
+      model: String(provider?.model || ""),
+      adapter_type: String(provider?.adapter_type || ""),
+      provider_type: String(provider?.provider_type || "")
+    })).filter((provider) => provider.id)
+    : [];
+  const selected = String(sttSettings.selected_id || "");
+  const writable = sttSettings.config_writable === true;
+  select.replaceChildren(new Option("关闭 Quest 语音识别", ""));
+  providers.forEach((provider) => {
+    select.add(new Option(sttProviderLabel(provider), provider.id));
+  });
+  if (selected && !providers.some((provider) => provider.id === selected)) {
+    select.add(new Option("已配置但当前不可用 · " + selected, selected));
+  }
+  select.value = selected;
+  select.disabled = !writable;
+  button.disabled = !writable;
+
+  const messages = {
+    ready: "所选 STT Provider 已就绪。",
+    selected_missing: "所选 STT Provider 已删除、禁用或尚未实例化；不会自动切换其他模型。",
+    legacy_default_ready: "正在兼容旧版默认 STT 设置；请保存一个明确的 STT Provider。",
+    legacy_default_missing: "旧版默认 STT 当前不可用；请重新选择正式 STT Provider。",
+    legacy_private_mimo_disabled: "旧版插件私有 MiMo 配置已停用；请改选 AstrBot 正式 STT Provider。",
+    disabled: "Quest 语音识别已关闭；文本对话不受影响。",
+    adapter_unavailable: "当前 Bridge 没有可用的 STT 适配器；文本对话不受影响。",
+    closed: "语音识别适配器已关闭。"
+  };
+  status.textContent = writable
+    ? messages[String(sttSettings.status || "")] || "语音识别状态未知，请刷新后重试。"
+    : "当前 AstrBot 配置对象不支持安全保存。";
 }
 
 function renderPlatformSettings(platform) {
@@ -380,23 +438,32 @@ function renderPersonaSettings(persona) {
   };
   status.textContent = writable
     ? statusMessages[personaSettings.status] || "当前使用通用 MR 身份"
-    : "当前 AstrBot 配置对象不支持异步保存";
+    : "当前 AstrBot 配置对象不支持安全保存";
   document.getElementById("save-persona-button").disabled = !writable;
 }
 
 async function loadOperatorSettings() {
   const response = await apiGet("pairing/operator-settings");
   renderOperatorSettings(response.settings);
+  return true;
+}
+
+async function loadSttSettings() {
+  const response = await apiGet("pairing/stt-settings");
+  renderSttSettings(response.stt);
+  return true;
 }
 
 async function loadPlatformSettings() {
   const response = await apiGet("pairing/platform-settings");
   renderPlatformSettings(response.platform);
+  return true;
 }
 
 async function loadPersonaSettings() {
   const response = await apiGet("pairing/persona-settings");
   renderPersonaSettings(response.persona);
+  return true;
 }
 
 function safeArray(value) {
@@ -763,11 +830,13 @@ async function loadPersonaProfiles() {
     const response = await apiGet("pairing/persona-library");
     const catalog = response.library || response.persona_profiles || response.catalog || response;
     renderPersonaProfiles(catalog);
+    return true;
   } catch (error) {
     document.getElementById("active-persona-name").textContent = "独立人格不可用";
     document.getElementById("persona-profile-status").textContent =
       "读取临人格失败：" + error.message;
     toast("读取临人格失败：" + error.message, true);
+    return false;
   }
 }
 
@@ -1029,13 +1098,14 @@ function renderQuestIdentitySettings(identity) {
   const validationText = validation?.authorized === true ? "；保存后授权校验通过" : "";
   document.getElementById("quest-identity-status").textContent = writable
     ? source + (missing.length ? `；待补充：${missing.join("、")}` : "；身份配置完整") + validationText
-    : "当前 AstrBot 配置对象不支持异步保存";
+    : "当前 AstrBot 配置对象不支持安全保存";
   document.getElementById("save-quest-identity-button").disabled = !writable;
 }
 
 async function loadQuestIdentitySettings() {
   const response = await apiGet("pairing/quest-identity-settings");
   renderQuestIdentitySettings(response.identity);
+  return true;
 }
 
 async function saveQuestIdentitySettings() {
@@ -1116,6 +1186,25 @@ async function saveModelSelection() {
   } finally {
     setButtonBusy(button, false);
     button.disabled = !document.getElementById("chat-provider-id").value;
+  }
+}
+
+async function saveSttSettings() {
+  const button = document.getElementById("save-stt-button");
+  if (!setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const response = await apiPost("pairing/stt-settings", {
+      provider_id: document.getElementById("stt-provider-id").value
+    });
+    renderSttSettings(response.stt);
+    toast(response.stt?.selected_id
+      ? "语音识别 Provider 已保存并立即生效"
+      : "Quest 语音识别已关闭");
+  } catch (error) {
+    toast("语音识别保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    button.disabled = sttSettings?.config_writable !== true;
   }
 }
 
@@ -1466,6 +1555,9 @@ function bindEvents() {
     .getElementById("save-model-button")
     .addEventListener("click", saveModelSelection);
   document
+    .getElementById("save-stt-button")
+    .addEventListener("click", saveSttSettings);
+  document
     .getElementById("save-platform-button")
     .addEventListener("click", savePlatformSettings);
   document
@@ -1607,6 +1699,83 @@ function clearStartupError() {
   node.replaceChildren();
 }
 
+const INITIAL_DATA_SECTIONS = [
+  { key: "service", label: "服务状态", load: () => loadServiceStatus() },
+  { key: "operator", label: "聊天模型", load: loadOperatorSettings },
+  { key: "stt", label: "语音识别", load: loadSttSettings },
+  { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
+  { key: "persona", label: "实时人格", load: loadPersonaSettings },
+  { key: "persona-library", label: "具身人格库", load: loadPersonaProfiles },
+  { key: "quest-identity", label: "Quest 身份", load: loadQuestIdentitySettings }
+];
+
+function markInitialSectionFailed(key) {
+  const messages = {
+    operator: ["model-status", "聊天模型读取失败，可单独重试。"],
+    stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
+    platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
+    persona: ["persona-status", "实时人格读取失败，可单独重试。"],
+    "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"]
+  };
+  const target = messages[key];
+  if (target) document.getElementById(target[0]).textContent = target[1];
+}
+
+function showInitialDataError(failedSections) {
+  const node = document.getElementById("startup-error");
+  node.replaceChildren();
+  const message = document.createElement("span");
+  message.textContent =
+    "页面已连接，但部分设置读取失败：" +
+    failedSections.map((section) => section.label).join("、");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.id = "retry-initial-data-button";
+  retry.className = "primary startup-retry";
+  retry.textContent = "重试失败区域";
+  retry.addEventListener("click", () =>
+    loadInitialData(failedSections.map((section) => section.key))
+  );
+  node.append(message, retry);
+  node.hidden = false;
+  setRuntimeState("warning", "页面已连接，部分设置未加载");
+}
+
+async function loadInitialData(sectionKeys = null) {
+  if (initialDataPromise) return initialDataPromise;
+  const requested = Array.isArray(sectionKeys) ? new Set(sectionKeys) : null;
+  const sections = requested
+    ? INITIAL_DATA_SECTIONS.filter((section) => requested.has(section.key))
+    : INITIAL_DATA_SECTIONS;
+  clearStartupError();
+  initialDataPromise = (async () => {
+    const results = await Promise.allSettled(
+      sections.map(async (section) => {
+        const loaded = await section.load();
+        if (loaded === false) throw new Error(section.key);
+        return section.key;
+      })
+    );
+    const failedSections = sections.filter(
+      (_section, index) => results[index].status === "rejected"
+    );
+    failedSections.forEach((section) => markInitialSectionFailed(section.key));
+    if (failedSections.length) {
+      showInitialDataError(failedSections);
+      return false;
+    }
+    clearStartupError();
+    if (serviceState) renderServiceStatus(serviceState);
+    else setRuntimeState("ready", "页面 Bridge 已连接");
+    return true;
+  })();
+  try {
+    return await initialDataPromise;
+  } finally {
+    initialDataPromise = null;
+  }
+}
+
 function showStartupError(error) {
   const node = document.getElementById("startup-error");
   node.replaceChildren();
@@ -1629,6 +1798,7 @@ async function initializeBridgeAndData() {
   if (bridgeInitPromise) return bridgeInitPromise;
   bridgeInitPromise = (async () => {
     bridgeReady = false;
+    clearStartupError();
     setRuntimeState("warning", "正在连接页面 Bridge…");
     bridge = await resolveBridge(8000);
     if (typeof bridge.ready !== "function") {
@@ -1642,29 +1812,24 @@ async function initializeBridgeAndData() {
     bridgeReady = true;
     clearStartupError();
     setPersonaWorkflowMode(personaWorkflowMode);
-    await Promise.all([
-      loadServiceStatus(),
-      loadOperatorSettings(),
-      loadPlatformSettings(),
-      loadPersonaSettings(),
-      loadPersonaProfiles(),
-      loadQuestIdentitySettings()
-    ]);
-    if (serviceRefreshTimer === null) {
-      serviceRefreshTimer = window.setInterval(
-        () => loadServiceStatus({ silent: true }),
-        10000
-      );
-    }
   })();
   try {
     await bridgeInitPromise;
   } catch (error) {
     bridgeReady = false;
     showStartupError(error);
+    return false;
   } finally {
     bridgeInitPromise = null;
   }
+  await loadInitialData();
+  if (serviceRefreshTimer === null) {
+    serviceRefreshTimer = window.setInterval(
+      () => loadServiceStatus({ silent: true }),
+      10000
+    );
+  }
+  return true;
 }
 
 async function init() {

@@ -258,14 +258,22 @@ class QuestSessionAuthorizationAdapter:
             "owner_confirmed",
             "grants_platform_action",
         }
-        owner_authorized = bool(
-            response.get("reason") == "authorized_private_owner_identity"
-            and response.get("owner_confirmed") is True
-        ) if isinstance(response, dict) else False
-        quest_authorized = bool(
-            response.get("reason") == "authorized_private_quest_identity"
-            and response.get("owner_confirmed") is False
-        ) if isinstance(response, dict) else False
+        owner_authorized = (
+            bool(
+                response.get("reason") == "authorized_private_owner_identity"
+                and response.get("owner_confirmed") is True
+            )
+            if isinstance(response, dict)
+            else False
+        )
+        quest_authorized = (
+            bool(
+                response.get("reason") == "authorized_private_quest_identity"
+                and response.get("owner_confirmed") is False
+            )
+            if isinstance(response, dict)
+            else False
+        )
         valid = (
             isinstance(response, dict)
             and set(response) == expected_fields
@@ -397,6 +405,8 @@ def _stored_principal_fingerprint(value: object) -> str:
     normalized = str(value or "").strip().lower()
     if normalized.startswith("sha256:"):
         normalized = normalized.removeprefix("sha256:")
-    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+    if len(normalized) != 64 or any(
+        char not in "0123456789abcdef" for char in normalized
+    ):
         return ""
     return normalized

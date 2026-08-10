@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 
@@ -21,11 +22,26 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js"></script>' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js")
+    assert '<script type="module" src="./app.js?v=0.4.18-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=0.4.18-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.18-1")
     assert "凝心溯溪-临｜Quest 角色设置" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
+
+
+def test_operator_page_asset_cache_busters_follow_plugin_version() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    metadata = (PLUGIN_ROOT / "metadata.yaml").read_text(encoding="utf-8")
+    version_match = re.search(r"^version:\s*([^\s]+)\s*$", metadata, re.MULTILINE)
+    assert version_match is not None
+    cache_busters = re.findall(
+        r'\./(?:app\.js|style\.css)\?v=([^"\s]+)',
+        html,
+    )
+    assert len(cache_busters) == 2
+    assert len(set(cache_busters)) == 1
+    assert cache_busters[0].startswith(version_match.group(1) + "-")
 
 
 def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
@@ -36,7 +52,21 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "function initializeBridgeAndData()" in js
     assert "function showStartupError(error)" in js
     assert "retry-startup-button" in js
+    assert "retry-initial-data-button" in js
     assert "eventsBound" in js
+    assert "Promise.allSettled" in js
+    assert "showInitialDataError(failedSections)" in js
+    assert "页面已连接，但部分设置读取失败" in js
+    assert "bridgeReady = false;\n    showStartupError(error);\n    return false;" in js
+    assert "await loadInitialData();" in js
+
+    data_loader = js[
+        js.index("async function loadInitialData") : js.index(
+            "function showStartupError"
+        )
+    ]
+    assert "Promise.allSettled" in data_loader
+    assert "bridgeReady = false" not in data_loader
 
     for element_id in (
         "service-status-badge",
@@ -49,6 +79,10 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "queued-event-count",
         "chat-provider-id",
         "save-model-button",
+        "stt-provider-id",
+        "stt-provider-help",
+        "stt-status",
+        "save-stt-button",
         "trusted-platform-id",
         "save-platform-button",
         "persona-source-mode",
@@ -92,6 +126,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         assert f'data-capability="{capability}"' in html
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
+    assert 'apiGet("pairing/stt-settings")' in js
+    assert 'apiPost("pairing/stt-settings"' in js
+    assert "load: loadSttSettings" in js
+    assert 'stt: ["stt-status", "语音识别设置读取失败，可单独重试。"]' in js
+    assert "if (serviceRefreshInFlight) return serviceRefreshInFlight;" in js
+    assert "if (serviceRefreshInFlight) return true;" not in js
     assert 'apiGet("pairing/platform-settings")' in js
     assert 'apiPost("pairing/platform-settings"' in js
     assert "platformSettings.platforms" in js
@@ -123,6 +163,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert 'apiPost("pairing/identity-selection"' in js
     assert "provider.id" in js
     assert "provider?.model" in js
+    assert "provider?.adapter_type" in js
+    assert "provider?.provider_type" in js
     assert "candidate.display_name" in js
     assert "candidate.person_id" in js
     assert "candidate.account_count" in js
@@ -142,6 +184,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "@media (max-width: 820px)" in css
     assert "prefers-reduced-motion" in css
     assert "页面 Bridge 请求超时" in js
+    assert "AstrBot 暂无普通插件通用的 STT 契约" in html
+    assert "正式 STTProvider 机制注册" in html
+    assert "API 地址、密钥和原始 Provider 配置" in html
+    assert "legacy_private_mimo_disabled" in js
+    assert "不会自动切换其他模型" in js
 
 
 def test_operator_page_does_not_expose_secrets_or_private_relationship_storage() -> (
@@ -165,6 +212,9 @@ def test_operator_page_does_not_expose_secrets_or_private_relationship_storage()
         "system_prompt",
         "begin_dialogs",
         "private-tool",
+        "plugin_mimo_stt_api_key",
+        "plugin_mimo_stt_api_base",
+        "plugin_mimo_stt_model",
     ):
         assert forbidden not in combined
 

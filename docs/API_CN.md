@@ -18,7 +18,9 @@ Unity 只上报事实、播放音频并执行模型无关的语义意图。角�
 
 ### 1.1 语音适配器可用性
 
-STT 与 AstrBot Core TTS 默认关闭；“声”的 `voice.audio_output@1.0` 默认作为首选 TTS，但缺插件或契约不兼容时安全降级。管理员若要使用 Core fallback，需要先在 AstrBot Provider 设置中选定默认 STT/TTS，再打开 `enable_astrbot_stt` 或 `enable_astrbot_tts`。本插件不通过 `hasattr()`/`getattr()` 猜测跨插件接口，也不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
+STT 与 AstrBot Core TTS 默认关闭。管理员在「Quest 角色设置」Page 中把 `astrbot_stt_provider_id` 显式设置为一个已实例化的正式 `STTProvider` 后，Bridge 才调用其 `get_text(audio_url)`；所选实例缺失时失败关闭，不自动切换其他 Provider。目录和状态只包含 `id`、`model`、`adapter_type`、`provider_type`，不读取或返回 Provider 原始配置、API 地址、API Key 或 headers。AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract；第三方能力必须通过 AstrBot 正式 Provider 机制注册为 `STTProvider` 才能被选择。
+
+旧版 Bridge 私有 MiMo URL、Key、model 不再作为推荐或可见配置入口；迁移到正式 Provider 时会清理旧字段，但管理响应、日志和 Page 都不会回显旧密钥。旧 `enable_astrbot_stt=true` 且新 Provider ID 为空的安装仅保留临时默认 Provider 兼容路径。TTS 边界没有改变：“声”的 `voice.audio_output@1.0` 仍默认作为首选 TTS，缺插件或契约不兼容时安全降级；显式启用的 Core fallback 仍读取 AstrBot 当前默认 TTS Provider。本插件不通过 `hasattr()`/`getattr()` 猜测跨插件接口，也不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
 STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS 同样整轮生成：Bridge 优先调用“声”的 `render_pcm_wav()`，严格校验 provider 管理的 PCM16 WAV；必要时回退 `TTSProvider.get_audio(text)`。最终都转换为 24000 Hz 单声道 PCM16 SSE 块。
 
@@ -186,7 +188,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/listener-port`、`pairing/operator-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/listener-port`、`pairing/operator-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -206,6 +208,8 @@ sequenceDiagram
 | POST | `/pairing/listener-port` | 200 | 保存并立即应用内置 listener 端口；默认 8520，修改会断开旧端口上的 Quest 会话 |
 | GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
+| GET | `/pairing/stt-settings` | 200 | 枚举已实例化正式 STT Provider 的安全摘要并读取当前选择/降级状态 |
+| POST | `/pairing/stt-settings` | 200 | 验证并持久化 `astrbot_stt_provider_id`；空值关闭 STT，成功后立即更新运行时选择 |
 | GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |
 | POST | `/pairing/platform-settings` | 200 | 验证并持久化 `trusted_platform_id`，成功后立即启用正式消息链路 |
 | GET | `/pairing/persona-settings` | 200 | 读取 AstrBot 人格安全 ID、来源、状态和手动兼容字段 |
@@ -228,6 +232,14 @@ sequenceDiagram
 ```json
 {"chat_provider_id":"provider-instance-id"}
 ```
+
+STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；不会代理 AstrBot Dashboard Provider API，也不会读取 Provider 私有配置。保存请求只允许：
+
+```json
+{"provider_id":"stt-provider-instance-id"}
+```
+
+`provider_id` 为空字符串表示关闭 STT。非空值必须精确命中当前已实例化 `STTProvider`，否则拒绝保存，运行时选择保持不变。
 
 平台枚举只返回已加载实例的 `id`、`adapter_type` 和 `display_name`，不返回平台账号、原始配置、Token、Webhook 或错误详情。保存请求只允许：
 
@@ -907,7 +919,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 
 ## 18. 首版能力限制
 
-- STT 与 Core TTS adapter 默认关闭；`voice.audio_output@1.0` 默认优先但可安全缺失。文本轮次和角色意图链始终独立可用。
+- STT 与 Core TTS adapter 默认关闭；STT 通过服务端配置的 `astrbot_stt_provider_id` 精确选择已实例化正式 `STTProvider`，缺失时不自动回退。`voice.audio_output@1.0` 的开关与首选 TTS 语义不变且可安全缺失。文本轮次和角色意图链始终独立可用。
 - AstrBot 4.26.8 的公开 TTS Provider 没有结构化 emotion 或固定输出 PCM 契约；本插件通过 WAV 解析和重采样建立输出约束，无法解析的 Provider 音频会 `tts_failed`。
 - LLM 使用公开的整轮 `context.llm_generate()`，该接口不提供 token 流；模型完成后 Bridge 先发送全部 `reply.text.delta`，再以单生产者、容量 2 的有界队列顺序合成并发送句段音频。取消会同步终止旧 TTS producer，所有发送仍复核 turn generation。
 - 本插件只消费 `astrbot_plugin_voice_hub` 的 `voice.audio_output@1.0`；明确不消费带事件/投递副作用的 `voice.delivery@1.0`。

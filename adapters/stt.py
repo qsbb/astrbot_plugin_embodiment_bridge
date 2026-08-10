@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 import wave
-
-import aiohttp
 
 
 INPUT_SAMPLE_RATE = 16_000
@@ -46,19 +41,23 @@ class DisabledSTTAdapter:
 
 
 class AstrBotSTTAdapter:
-    """Adapt AstrBot's selected file-based STT provider to Quest PCM16 input."""
+    """Adapt one explicitly selected AstrBot STT provider to Quest PCM16."""
 
     def __init__(
         self,
         context: Any,
         *,
         data_dir: Path,
-        enabled: bool,
+        provider_id: str = "",
+        legacy_default_enabled: bool = False,
+        legacy_private_mimo_enabled: bool = False,
         timeout_seconds: float = 45.0,
     ) -> None:
         self.context = context
         self.data_dir = data_dir
-        self.enabled = enabled
+        self.provider_id = str(provider_id or "").strip()
+        self.legacy_default_enabled = bool(legacy_default_enabled)
+        self.legacy_private_mimo_enabled = bool(legacy_private_mimo_enabled)
         self.timeout_seconds = max(1.0, timeout_seconds)
         self._active_files: set[Path] = set()
         self._closed = False
@@ -66,14 +65,14 @@ class AstrBotSTTAdapter:
 
     @property
     def available(self) -> bool:
-        return not self._closed and self.enabled and self._provider() is not None
+        return not self._closed and self._provider() is not None
 
     async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
-        if self._closed or not self.enabled:
+        if self._closed:
             raise AdapterUnavailable("AstrBot STT adapter is disabled")
         provider = self._provider()
         if provider is None:
-            raise AdapterUnavailable("AstrBot STT provider is not configured")
+            raise AdapterUnavailable(f"AstrBot STT unavailable: {self.status_reason}")
         if sample_rate != INPUT_SAMPLE_RATE:
             raise ValueError("STT input sample rate must be 16000 Hz")
         if not pcm16 or len(pcm16) % INPUT_SAMPLE_WIDTH:
@@ -105,148 +104,110 @@ class AstrBotSTTAdapter:
                 return_exceptions=True,
             )
 
-    def _provider(self) -> Any | None:
-        if not self.enabled:
-            return None
-        try:
-            return self.context.get_using_stt_provider()
-        except (RuntimeError, ValueError):
-            return None
-
-
-class ConfiguredMiMoSTTAdapter:
-    """Plugin-owned MiMo STT client independent of AstrBot global providers."""
-
-    def __init__(
-        self,
-        *,
-        enabled: bool,
-        api_base: str,
-        api_key: str,
-        model: str = "mimo-v2.5-asr",
-        timeout_seconds: float = 45.0,
-    ) -> None:
-        self.enabled = enabled
-        self.api_key = str(api_key or "").strip()
-        self.model = str(model or "").strip() or "mimo-v2.5-asr"
-        self.timeout_seconds = max(1.0, timeout_seconds)
-        self._closed = False
-        try:
-            self.api_url = _normalize_mimo_api_url(api_base)
-        except ValueError:
-            self.api_url = ""
+    def configure_provider(self, provider_id: str) -> None:
+        self.provider_id = str(provider_id or "").strip()
+        self.legacy_default_enabled = False
+        self.legacy_private_mimo_enabled = False
 
     @property
-    def available(self) -> bool:
-        return bool(
-            not self._closed
-            and self.enabled
-            and self.api_key
-            and self.api_url
-            and self.model
-        )
+    def status_reason(self) -> str:
+        if self._closed:
+            return "closed"
+        if self.provider_id:
+            return (
+                "ready" if self._selected_provider() is not None else "selected_missing"
+            )
+        if self.legacy_default_enabled:
+            return (
+                "legacy_default_ready"
+                if self._default_provider() is not None
+                else "legacy_default_missing"
+            )
+        if self.legacy_private_mimo_enabled:
+            return "legacy_private_mimo_disabled"
+        return "disabled"
 
-    async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
-        if not self.available:
-            raise AdapterUnavailable("Plugin MiMo STT is not configured")
-        if sample_rate != INPUT_SAMPLE_RATE:
-            raise ValueError("STT input sample rate must be 16000 Hz")
-        if not pcm16 or len(pcm16) % INPUT_SAMPLE_WIDTH:
-            raise ValueError("STT input must contain complete PCM16 samples")
-
-        audio_data_url = "data:audio/wav;base64," + base64.b64encode(
-            _pcm16_wav_bytes(pcm16)
-        ).decode("ascii")
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "input_audio": {"data": audio_data_url},
-                        }
-                    ],
-                }
-            ],
+    def status_snapshot(self) -> dict[str, Any]:
+        catalog = self.provider_catalog()
+        return {
+            "source": "astrbot_stt_provider",
+            "available": self.available,
+            "status": self.status_reason,
+            "selected": bool(self.provider_id),
+            "selected_id": self.provider_id,
+            "legacy_default": bool(
+                not self.provider_id and self.legacy_default_enabled
+            ),
+            "external_contract_status": "no_standard_contract",
+            "providers": catalog,
         }
-        data = await _post_mimo_json(
-            self.api_url,
-            api_key=self.api_key,
-            payload=payload,
-            timeout_seconds=self.timeout_seconds,
-        )
-        choices = data.get("choices") or []
-        first_choice = choices[0] if choices else {}
-        message = (first_choice or {}).get("message") or {}
-        content = message.get("content") or message.get("reasoning_content") or ""
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("Plugin MiMo STT returned an empty transcription")
-        return content.strip()
 
-    async def close(self) -> None:
-        self._closed = True
-
-
-def select_stt_adapter(primary: STTAdapter, fallback: STTAdapter) -> STTAdapter:
-    return primary if primary.available else fallback
-
-
-def _normalize_mimo_api_url(api_base: str) -> str:
-    raw = str(api_base or "").strip().rstrip("/")
-    try:
-        parsed = urlsplit(raw)
-        parsed.port
-    except ValueError as exc:
-        raise ValueError("Plugin STT API URL is invalid") from exc
-    if (
-        parsed.scheme.lower() != "https"
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("Plugin STT API URL must be an HTTPS URL without credentials")
-    path = parsed.path.rstrip("/")
-    if not path.endswith("/chat/completions"):
-        path += "/chat/completions"
-    return urlunsplit(("https", parsed.netloc, path, "", ""))
-
-
-async def _post_mimo_json(
-    url: str,
-    *,
-    api_key: str,
-    payload: dict[str, Any],
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    async with aiohttp.ClientSession(timeout=timeout) as client:
-        async with client.post(url, headers=headers, json=payload) as response:
-            if response.status < 200 or response.status >= 300:
-                raise RuntimeError(
-                    f"Plugin MiMo STT request failed: HTTP {response.status}"
+    def provider_catalog(self) -> list[dict[str, str]]:
+        providers = self._all_providers()
+        result: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for provider in providers:
+            try:
+                meta = provider.meta()
+                provider_id = str(meta.id or "").strip()
+                model = str(meta.model or "").strip()
+                adapter_type = str(meta.type or "").strip()
+                raw_provider_type = meta.provider_type
+                provider_type = (
+                    raw_provider_type.strip()
+                    if isinstance(raw_provider_type, str)
+                    else str(raw_provider_type.value or "").strip()
                 )
-            data = await response.json(content_type=None)
-    if not isinstance(data, dict):
-        raise TypeError("Plugin MiMo STT returned an invalid response")
-    return data
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+            if (
+                not provider_id
+                or len(provider_id) > 256
+                or provider_id in seen
+                or any(ord(char) < 33 for char in provider_id)
+                or provider_type != "speech_to_text"
+            ):
+                continue
+            seen.add(provider_id)
+            result.append(
+                {
+                    "id": provider_id,
+                    "model": model[:256],
+                    "adapter_type": adapter_type[:128],
+                    "provider_type": provider_type,
+                }
+            )
+        result.sort(key=lambda item: (item["model"].casefold(), item["id"]))
+        return result
 
+    def _provider(self) -> Any | None:
+        if self.provider_id:
+            return self._selected_provider()
+        if self.legacy_default_enabled:
+            return self._default_provider()
+        return None
 
-def _pcm16_wav_bytes(pcm16: bytes) -> bytes:
-    output = BytesIO()
-    with wave.open(output, "wb") as wav:
-        wav.setnchannels(INPUT_CHANNELS)
-        wav.setsampwidth(INPUT_SAMPLE_WIDTH)
-        wav.setframerate(INPUT_SAMPLE_RATE)
-        wav.writeframes(pcm16)
-    return output.getvalue()
+    def _selected_provider(self) -> Any | None:
+        for provider in self._all_providers():
+            try:
+                if str(provider.meta().id or "").strip() == self.provider_id:
+                    return provider
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+        return None
+
+    def _default_provider(self) -> Any | None:
+        try:
+            return self.context.get_using_stt_provider()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    def _all_providers(self) -> tuple[Any, ...]:
+        try:
+            providers = self.context.get_all_stt_providers()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ()
+        return tuple(providers) if isinstance(providers, (list, tuple)) else ()
 
 
 def _write_pcm16_wav(path: Path, pcm16: bytes) -> None:

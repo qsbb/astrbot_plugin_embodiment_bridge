@@ -50,6 +50,8 @@
     {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+      {"method": "GET", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+      {"method": "POST", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "POST", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "GET", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},

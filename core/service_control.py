@@ -4,6 +4,8 @@ import asyncio
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .config_persistence import config_is_writable, save_config_changes
+
 
 class BridgeServiceUnavailable(RuntimeError):
     code = "bridge_service_disabled"
@@ -32,6 +34,7 @@ class BridgeServiceControl:
         logger: Any,
         diagnostic_log: Any | None = None,
         enabled: bool = True,
+        config_save_lock: asyncio.Lock | None = None,
     ) -> None:
         self.config = config
         self.listener = listener
@@ -41,6 +44,7 @@ class BridgeServiceControl:
         self.diagnostic_log = diagnostic_log
         self.enabled = bool(enabled)
         self._lock = asyncio.Lock()
+        self._config_save_lock = config_save_lock or asyncio.Lock()
 
     async def initialize(self) -> None:
         if self.enabled:
@@ -89,9 +93,7 @@ class BridgeServiceControl:
                 "tts": bool(getattr(self.orchestrator.tts, "available", False)),
                 "avatar_actions": True,
             },
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
         }
 
     async def set_enabled(self, enabled: bool) -> dict[str, Any]:
@@ -164,25 +166,25 @@ class BridgeServiceControl:
         await self._persist_changes({"bridge_service_enabled": enabled})
 
     async def _persist_changes(self, changes: dict[str, Any]) -> None:
-        save = getattr(self.config, "save_config_async", None)
-        if not callable(save):
+        if not config_is_writable(self.config):
             raise BridgeServiceControlError(
                 "native_config_unavailable",
                 503,
-                "当前 AstrBot 配置对象不支持安全异步保存",
+                "当前 AstrBot 配置对象不支持安全保存",
             )
-        try:
-            committed = await save(dict(changes))
-        except Exception as exc:
-            self.logger.warning(
-                "[quest-avatar] service setting save failed: error_type=%s",
-                type(exc).__name__,
-            )
-            raise BridgeServiceControlError(
-                "config_save_failed",
-                500,
-                "服务状态保存失败，运行状态未改变",
-            ) from exc
+        async with self._config_save_lock:
+            try:
+                committed = await save_config_changes(self.config, changes)
+            except Exception as exc:
+                self.logger.warning(
+                    "[quest-avatar] service setting save failed: error_type=%s",
+                    type(exc).__name__,
+                )
+                raise BridgeServiceControlError(
+                    "config_save_failed",
+                    500,
+                    "服务状态保存失败，运行状态未改变",
+                ) from exc
         if committed is not True:
             raise BridgeServiceControlError(
                 "config_save_superseded",

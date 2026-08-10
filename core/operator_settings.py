@@ -15,6 +15,7 @@ from ..adapters.identity_control_plane import (
     IdentityControlPlaneError,
     validate_principal_digest,
 )
+from .config_persistence import config_is_writable, save_config_changes
 
 
 _PERSON_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -49,6 +50,7 @@ class OperatorSettings:
         relationship: Any,
         persona: Any,
         logger: Any,
+        stt: Any | None = None,
         diagnostic_log: Any | None = None,
         identity: Any | None = None,
         message_pipeline: Any | None = None,
@@ -56,10 +58,12 @@ class OperatorSettings:
         pairing_manager: Any | None = None,
         transport: Any | None = None,
         identity_store: Any | None = None,
+        config_save_lock: asyncio.Lock | None = None,
     ) -> None:
         self.context = context
         self.config = config
         self.llm = llm
+        self.stt = stt
         self.relationship = relationship
         self.persona = persona
         self.logger = logger
@@ -70,7 +74,7 @@ class OperatorSettings:
         self.pairing_manager = pairing_manager
         self.transport = transport
         self.identity_store = identity_store
-        self._save_lock = asyncio.Lock()
+        self._save_lock = config_save_lock or asyncio.Lock()
         self._identity_sync_lock = asyncio.Lock()
 
     def snapshot(self) -> dict[str, Any]:
@@ -92,9 +96,7 @@ class OperatorSettings:
                 getattr(self.relationship, "person_id", "") or ""
             ).strip(),
             "persona": self.persona_snapshot(),
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
         }
 
     def platform_snapshot(self) -> dict[str, Any]:
@@ -117,9 +119,7 @@ class OperatorSettings:
             "availability_reason": reason or "astrbot_event_api_unavailable",
             "platforms_status": "ok" if platforms else "empty",
             "platforms": platforms,
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
         }
 
     def persona_snapshot(self) -> dict[str, Any]:
@@ -155,9 +155,7 @@ class OperatorSettings:
                 if manual_mode
                 else inherited["name_configured"]
             ),
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
         }
 
     async def persona_overview(self) -> dict[str, Any]:
@@ -250,9 +248,7 @@ class OperatorSettings:
             "local_fallback_configured": bool(
                 getattr(self.identity, "local_binding_configured", False)
             ),
-            "config_writable": callable(
-                getattr(self.config, "save_config_async", None)
-            ),
+            "config_writable": config_is_writable(self.config),
         }
 
     async def save_quest_identity(
@@ -415,6 +411,57 @@ class OperatorSettings:
 
     def list_chat_providers(self) -> list[dict[str, str]]:
         return self._list_chat_providers()
+
+    def stt_snapshot(self) -> dict[str, Any]:
+        if self.stt is None:
+            return {
+                "source": "astrbot_stt_provider",
+                "available": False,
+                "status": "adapter_unavailable",
+                "selected": False,
+                "selected_id": "",
+                "legacy_default": False,
+                "external_contract_status": "no_standard_contract",
+                "providers": [],
+                "config_writable": config_is_writable(self.config),
+            }
+        snapshot = dict(self.stt.status_snapshot())
+        snapshot["config_writable"] = config_is_writable(self.config)
+        return snapshot
+
+    async def save_stt_provider_id(self, value: str) -> dict[str, Any]:
+        provider_id = str(value or "").strip()
+        if len(provider_id) > 256 or any(ord(char) < 33 for char in provider_id):
+            raise OperatorSettingsError(
+                "invalid_stt_provider_id",
+                422,
+                "语音识别 Provider ID 无效",
+            )
+        if self.stt is None:
+            raise OperatorSettingsError(
+                "stt_adapter_unavailable",
+                503,
+                "语音识别适配器当前不可用",
+            )
+        available = {item["id"] for item in self.stt.provider_catalog()}
+        if provider_id and provider_id not in available:
+            raise OperatorSettingsError(
+                "stt_provider_not_available",
+                422,
+                "所选语音识别 Provider 不存在或当前不可用",
+            )
+        await self._persist_many(
+            {
+                "astrbot_stt_provider_id": provider_id,
+                "enable_astrbot_stt": False,
+                "enable_plugin_mimo_stt": False,
+                "plugin_mimo_stt_api_base": "",
+                "plugin_mimo_stt_api_key": "",
+                "plugin_mimo_stt_model": "",
+            }
+        )
+        self.stt.configure_provider(provider_id)
+        return self.stt_snapshot()
 
     async def save_quest_persona_setting(self, key: str, value: str) -> None:
         if key not in {
@@ -866,12 +913,18 @@ class OperatorSettings:
     async def _persist(self, key: str, value: str) -> None:
         await self._persist_many({key: value})
 
-    async def _persist_many(self, changes: dict[str, str]) -> None:
+    async def _persist_many(self, changes: dict[str, Any]) -> None:
         if not changes or any(
             key
             not in {
                 *_PERSONA_KEYS,
                 "chat_provider_id",
+                "astrbot_stt_provider_id",
+                "enable_astrbot_stt",
+                "enable_plugin_mimo_stt",
+                "plugin_mimo_stt_api_base",
+                "plugin_mimo_stt_api_key",
+                "plugin_mimo_stt_model",
                 "persona_converter_provider_id",
                 "active_quest_persona_id",
                 "relationship_person_id",
@@ -893,12 +946,11 @@ class OperatorSettings:
                 422,
                 "配置字段不在允许范围内",
             )
-        save = getattr(self.config, "save_config_async", None)
-        if not callable(save):
+        if not config_is_writable(self.config):
             raise OperatorSettingsError(
                 "native_config_unavailable",
                 503,
-                "当前 AstrBot 配置对象不支持安全异步保存",
+                "当前 AstrBot 配置对象不支持安全保存",
             )
 
         async with self._save_lock:
@@ -914,7 +966,7 @@ class OperatorSettings:
                     old_value = None
                 old_values[key] = (old_value, old_exists)
             try:
-                committed = await save(dict(changes))
+                committed = await save_config_changes(self.config, changes)
             except Exception as exc:
                 self._restore_values(old_values)
                 self.logger.warning(

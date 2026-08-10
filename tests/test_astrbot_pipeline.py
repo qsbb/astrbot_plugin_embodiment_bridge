@@ -185,7 +185,9 @@ def test_empty_pipeline_reply_preserves_precise_event_outcome(
             SimpleNamespace(),
             platform_id="qq",
         )
-        with pytest.raises(astrbot_pipeline.MessagePipelineEmpty, match=expected_reason):
+        with pytest.raises(
+            astrbot_pipeline.MessagePipelineEmpty, match=expected_reason
+        ):
             await adapter.generate(session=session(), user_text="hello")
         assert adapter.status == "empty_reply"
         assert adapter.last_error == expected_reason

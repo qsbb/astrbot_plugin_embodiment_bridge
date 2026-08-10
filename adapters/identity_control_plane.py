@@ -138,9 +138,7 @@ class IdentityControlPlaneAdapter:
             }
         self._require_contract(provider)
         request = {
-            "api_principal_digest": validate_principal_digest(
-                api_principal_digest
-            ),
+            "api_principal_digest": validate_principal_digest(api_principal_digest),
             "client_id": client_id,
             "platform_id": platform_id,
             "bot_id": bot_id,
@@ -207,9 +205,7 @@ class IdentityControlPlaneAdapter:
             }
         self._require_quest_binding_contract(provider)
         request = {
-            "api_principal_digest": validate_principal_digest(
-                api_principal_digest
-            ),
+            "api_principal_digest": validate_principal_digest(api_principal_digest),
             "client_id": client_id,
             "platform_id": platform_id,
             "bot_id": bot_id,
@@ -315,8 +311,7 @@ class IdentityControlPlaneAdapter:
             and contract.get("natural_person_grants_permission") is False
             and contract.get("grants_owner") is False
             and contract.get("grants_platform_action") is False
-            and contract.get("provider_present_fallback")
-            == "deny_without_local_merge"
+            and contract.get("provider_present_fallback") == "deny_without_local_merge"
             and tuple(contract.get("request_fields") or ())
             == (
                 "api_principal_digest",
@@ -358,9 +353,7 @@ class IdentityControlPlaneAdapter:
             }
         self._require_quest_binding_contract(provider)
         request = {
-            "api_principal_digest": validate_principal_digest(
-                api_principal_digest
-            ),
+            "api_principal_digest": validate_principal_digest(api_principal_digest),
             "client_id": str(client_id or "").strip(),
         }
         try:

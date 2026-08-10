@@ -312,8 +312,7 @@ def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
             trusted_client_id="quest-room",
             trusted_platform_id="platform-test",
             local_api_principal_digest=(
-                "sha256:"
-                + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
+                "sha256:" + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
             ),
             local_bot_id="bot-test",
             local_user_id="user-test",
@@ -358,8 +357,7 @@ def test_missing_identity_guardian_uses_only_exact_local_binding() -> None:
             trusted_client_id="quest-room",
             trusted_platform_id="platform-test",
             local_api_principal_digest=(
-                "sha256:"
-                + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
+                "sha256:" + hashlib.sha256(b"api_key:plugin-scope-key").hexdigest()
             ),
             local_bot_id="bot-test",
             local_user_id="user-test",

@@ -2,9 +2,23 @@
 
 ## Unreleased
 
+## 0.4.18 - 2026-08-10
+
 ### Added
 
 - 增加可选 `server_timing@1.0` 摘要，在既有 `reply.end` 中提供脱敏的 STT、决策路径、TTS 和整轮服务端耗时；默认关闭，不新增 SSE 事件或改变 Protocol 1.0 顺序。
+
+### Changed
+
+- Quest 语音输入改为通过 `astrbot_stt_provider_id` 或 Operator Page 显式选择 AstrBot 已实例化的正式 `STTProvider`；目录只暴露 `id`、`model`、`adapter_type`、`provider_type`，所选实例缺失时安全关闭且不自动换模型。
+- 旧 Bridge 私有 MiMo URL、Key、model 不再作为推荐或可见配置入口；迁移会清理旧私有字段且绝不回显密钥。AstrBot 当前没有普通 Star 插件稳定 STT contract，第三方能力须通过正式 STT Provider 机制注册。
+- “声”的 `enable_voice_hub_tts` 开关和 `voice.audio_output@1.0` 首选 TTS 语义保持不变。
+
+### Fixed
+
+- 管理 Page 将 Bridge 连接与六个设置区域的首屏读取解耦；单个接口失败只禁用对应区域，不再把全局 Bridge 标记为不可用，并提供失败区域的独立重试。
+- Operator Page 的 JS 与 CSS 增加同步缓存戳，避免 Dashboard 继续执行旧版事件绑定脚本。
+- 配置写入优先使用新 Core 的 `save_config_async()`，并兼容 AstrBot 4.26.5 仅提供的原子 `save_config()`；旧 Core 不再把全部管理控件误判为只读。
 
 ## 0.4.17 - 2026-08-10
 

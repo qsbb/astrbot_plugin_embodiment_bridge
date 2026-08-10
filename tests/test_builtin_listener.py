@@ -783,5 +783,20 @@ def test_schema_and_requirements_declare_safe_listener_defaults() -> None:
         "http://127.0.0.1:6185"
     )
     assert schema["pairing_listener_public_url"]["default"] == ""
+    assert schema["astrbot_stt_provider_id"] == {
+        "description": schema["astrbot_stt_provider_id"]["description"],
+        "type": "string",
+        "_special": "select_provider_stt",
+        "hint": schema["astrbot_stt_provider_id"]["hint"],
+        "default": "",
+    }
+    for removed in (
+        "enable_astrbot_stt",
+        "enable_plugin_mimo_stt",
+        "plugin_mimo_stt_api_base",
+        "plugin_mimo_stt_api_key",
+        "plugin_mimo_stt_model",
+    ):
+        assert removed not in schema
     requirements = (root / "requirements.txt").read_text(encoding="utf-8")
     assert "aiohttp>=3.11.18,<4" in requirements.splitlines()

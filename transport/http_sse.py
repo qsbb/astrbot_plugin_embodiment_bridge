@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 from astrbot.api.web import error_response, json_response, request, stream_response
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from ..adapters.stt import AstrBotSTTAdapter
 from ..core.models import (
     AudioChunkRequest,
     AudioEndRequest,
@@ -357,6 +358,7 @@ class HttpSseTransport:
                             "sample_rate": 16_000,
                             "channels": 1,
                             "stt_available": self.orchestrator.stt.available,
+                            "stt_source": self._stt_health_snapshot(),
                         },
                         "output_audio": {
                             "format": "pcm16",
@@ -402,6 +404,24 @@ class HttpSseTransport:
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return self._error(exc, "health")
+
+    def _stt_health_snapshot(self) -> dict[str, Any]:
+        adapter = self.orchestrator.stt
+        if isinstance(adapter, AstrBotSTTAdapter):
+            snapshot = adapter.status_snapshot()
+            return {
+                "source": snapshot["source"],
+                "available": snapshot["available"],
+                "status": snapshot["status"],
+                "selected": snapshot["selected"],
+                "legacy_default": snapshot["legacy_default"],
+                "external_contract_status": snapshot["external_contract_status"],
+            }
+        return {
+            "source": "adapter",
+            "available": adapter.available,
+            "status": "ready" if adapter.available else "unavailable",
+        }
 
     async def _json_endpoint(
         self,

@@ -168,6 +168,7 @@ class ContextStub:
     def __init__(self) -> None:
         self.routes: list[tuple[str, Any, list[str], str]] = []
         self.providers = [ChatProviderStub()]
+        self.stt_providers = [SpeechToTextProviderStub()]
         self.persona_manager = PersonaManagerStub()
         self.stars: list[Any] = []
         self.contract_platform = types.SimpleNamespace(
@@ -197,6 +198,13 @@ class ContextStub:
     def get_all_providers(self) -> list[Any]:
         return self.providers
 
+    def get_all_stt_providers(self) -> list[Any]:
+        return self.stt_providers
+
+    def get_using_stt_provider(self, umo: Any = None) -> Any | None:
+        del umo
+        return self.stt_providers[0] if self.stt_providers else None
+
     def get_platform_inst(self, platform_id: str) -> Any | None:
         if platform_id != "contract-platform":
             return None
@@ -214,6 +222,20 @@ class ChatProviderStub:
             type="openai",
             provider_type="chat_completion",
         )
+
+
+class SpeechToTextProviderStub:
+    def meta(self) -> Any:
+        return types.SimpleNamespace(
+            id="fake-stt-provider",
+            model="contract-stt-model",
+            type="contract-stt-adapter",
+            provider_type="speech_to_text",
+        )
+
+    async def get_text(self, audio_url: str) -> str:
+        del audio_url
+        return "contract transcription"
 
 
 class PersonaManagerStub:

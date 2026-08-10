@@ -233,17 +233,23 @@ def test_pipeline_error_uses_safe_session_authorization_reason() -> None:
         )
         session.context_authorization_reason = "quest_identity_not_allowlisted"
 
-        assert orchestrator._public_pipeline_reason(
-            session,
-            MessagePipelineUnavailable("protected_context_not_authorized"),
-        ) == "quest_identity_not_allowlisted"
+        assert (
+            orchestrator._public_pipeline_reason(
+                session,
+                MessagePipelineUnavailable("protected_context_not_authorized"),
+            )
+            == "quest_identity_not_allowlisted"
+        )
         assert "五段绑定" in orchestrator._pipeline_error_message(
             "quest_identity_not_allowlisted"
         )
-        assert orchestrator._public_pipeline_reason(
-            session,
-            MessagePipelineUnavailable("private_internal_detail"),
-        ) == "astrbot_message_pipeline_unavailable"
+        assert (
+            orchestrator._public_pipeline_reason(
+                session,
+                MessagePipelineUnavailable("private_internal_detail"),
+            )
+            == "astrbot_message_pipeline_unavailable"
+        )
         await sessions.terminate()
 
     asyncio.run(scenario())
