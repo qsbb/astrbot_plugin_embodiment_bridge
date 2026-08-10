@@ -348,7 +348,7 @@ LLM、STT 或 interaction 决策失败会固定发送 `error`，随后发送 `re
 
 ```text
 emotion: neutral | happy | shy | surprised | concerned | uncomfortable
-gesture: idle | talk | wave | bow | handshake | head_pat | cheek_pinch | refuse | step_back
+gesture: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half | sit | lie | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back
 look_at: user | hand | away | none
 ```
 

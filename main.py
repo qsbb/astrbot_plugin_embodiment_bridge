@@ -26,6 +26,7 @@ from .adapters.runtime import SeriesRuntimeAdapter
 from .adapters.stt import AstrBotSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
+from .core.avatar_action_tool import execute_quest_action, inject_quest_action_tool
 from .core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
@@ -51,7 +52,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.21"
+__version__ = "0.4.22"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -513,6 +514,12 @@ class QuestAvatarBridgePlugin(Star):
             return
         if not is_bridge_turn:
             return
+        inject_quest_action_tool(
+            req,
+            event,
+            self._execute_quest_avatar_action,
+            self.diagnostic_log.record,
+        )
         overlay = build_eventbus_persona_overlay(self.llm.quest_persona_prompt)
         if not overlay:
             diagnostic = getattr(self, "diagnostic_log", None)
@@ -538,6 +545,27 @@ class QuestAvatarBridgePlugin(Star):
                 phase="llm_request",
                 persona_configured=True,
             )
+
+    async def _execute_quest_avatar_action(
+        self,
+        event: Any,
+        action: str = "",
+        emotion: str = "neutral",
+        intensity: float = 0.45,
+        duration_ms: int | None = None,
+        look_at: str = "user",
+        **extra: Any,
+    ) -> str:
+        return await execute_quest_action(
+            event,
+            action=action,
+            emotion=emotion,
+            intensity=intensity,
+            duration_ms=duration_ms,
+            look_at=look_at,
+            diagnostic=self.diagnostic_log.record,
+            **extra,
+        )
 
     def plugin_health(self) -> dict[str, object]:
         checks = {

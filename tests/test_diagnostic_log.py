@@ -264,6 +264,38 @@ def test_stage_fields_and_aggregate_counters_survive_redaction(tmp_path: Path) -
     }
 
 
+def test_action_decision_fields_are_preserved_without_free_form_content(
+    tmp_path: Path,
+) -> None:
+    diagnostic = DiagnosticLog(tmp_path)
+    diagnostic.record(
+        "avatar.action.accepted",
+        component="action",
+        operation="dance_next",
+        status="accepted",
+        reason_code="skill_dance_next",
+        emotion="happy",
+        gesture="dance_next",
+        look_at="user",
+        intensity=0.75,
+        duration_ms=8000,
+        reply_text="hidden",
+    )
+
+    details = diagnostic.diagnostic_events()["events"][0]["details"]
+    assert details == {
+        "component": "action",
+        "operation": "dance_next",
+        "status": "accepted",
+        "reason_code": "skill_dance_next",
+        "emotion": "happy",
+        "gesture": "dance_next",
+        "look_at": "user",
+        "intensity": 0.75,
+        "duration_ms": 8000,
+    }
+
+
 def test_rotation_and_concurrent_writes_keep_valid_jsonl(tmp_path: Path) -> None:
     async def scenario() -> None:
         diagnostic = DiagnosticLog(

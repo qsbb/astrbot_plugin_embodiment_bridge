@@ -9,6 +9,10 @@ from typing import Any
 import pytest
 
 from astrbot_plugin_quest_avatar_bridge.adapters import astrbot_pipeline
+from astrbot_plugin_quest_avatar_bridge.core.avatar_action_tool import (
+    QUEST_ACTION_INTENT_EXTRA,
+)
+from astrbot_plugin_quest_avatar_bridge.core.avatar_skills import AvatarSkillRegistry
 
 
 class QueueStub:
@@ -50,6 +54,7 @@ class CaptureEventStub:
         self.is_at_or_wake_command = woken
         self._stopped = stopped
         self._has_send_oper = send_observed
+        self.extras: dict[str, Any] = {}
 
     async def wait_completed(self) -> None:
         await asyncio.sleep(0)
@@ -58,7 +63,12 @@ class CaptureEventStub:
         return self.text
 
     def get_extra(self, key: str) -> Any:
-        return self.plan if key == "conversation_flow.delivery_plan" else None
+        if key == "conversation_flow.delivery_plan":
+            return self.plan
+        return self.extras.get(key)
+
+    def set_extra(self, key: str, value: Any) -> None:
+        self.extras[key] = value
 
     def is_stopped(self) -> bool:
         return self._stopped
@@ -112,6 +122,33 @@ def test_delivery_plan_recovers_text_when_voice_plugin_removed_plain_chain(
         )
         decision = await adapter.generate(session=session(), user_text="你好")
         assert decision.reply_text == "保留的最终正文"
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_action_tool_intent_replaces_fixed_talk_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = CaptureEventStub("那我换一支舞。")
+        event.set_extra("quest_avatar_bridge", True)
+        event.set_extra(
+            QUEST_ACTION_INTENT_EXTRA,
+            AvatarSkillRegistry.invoke("dance_next", {"intensity": 0.7}),
+        )
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(session=session(), user_text="换个舞蹈")
+
+        assert decision.reply_text == "那我换一支舞。"
+        assert decision.intent.gesture.value == "dance_next"
+        assert decision.intent.reason_code == "skill_dance_next"
 
     asyncio.run(scenario())
 

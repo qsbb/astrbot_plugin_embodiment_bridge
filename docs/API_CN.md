@@ -803,7 +803,7 @@ GET /health
 
 ```text
 emotion: neutral | happy | shy | surprised | concerned | uncomfortable
-gesture: idle | talk | wave | bow | dance | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back
+gesture: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half | sit | lie | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back
 look_at: user | hand | away | none
 ```
 

@@ -13,6 +13,7 @@ from ..core.models import (
     ModelDecision,
     ProposedIntent,
 )
+from ..core.avatar_action_tool import read_selected_intent
 from ..core.session_manager import SessionState
 
 
@@ -154,17 +155,19 @@ class AstrBotMessagePipelineAdapter:
         self.status = "ok"
         self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         reply = reply[:4000]
+        selected_intent = read_selected_intent(event)
+        intent = selected_intent or ProposedIntent(
+            emotion=Emotion.NEUTRAL,
+            gesture=Gesture.TALK,
+            look_at=LookAt.USER,
+            intensity=0.38,
+            duration_ms=min(8_000, max(1_200, len(reply) * 85)),
+            reason_code="astrbot_message_pipeline",
+        )
         return ModelDecision(
             should_reply=True,
             reply_text=reply,
-            intent=ProposedIntent(
-                emotion=Emotion.NEUTRAL,
-                gesture=Gesture.TALK,
-                look_at=LookAt.USER,
-                intensity=0.38,
-                duration_ms=min(8_000, max(1_200, len(reply) * 85)),
-                reason_code="astrbot_message_pipeline",
-            ),
+            intent=intent,
         )
 
     def status_snapshot(self) -> dict[str, Any]:

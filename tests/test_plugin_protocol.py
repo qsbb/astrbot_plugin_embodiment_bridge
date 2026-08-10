@@ -94,6 +94,29 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     )
     api.event = event
 
+    agent_tool = types.ModuleType("astrbot.core.agent.tool")
+
+    class FunctionTool:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    class ToolSet:
+        def __init__(self) -> None:
+            self.tools: list[Any] = []
+
+        def add_tool(self, tool: Any) -> None:
+            self.remove_tool(tool.name)
+            self.tools.append(tool)
+
+        def remove_tool(self, name: str) -> None:
+            self.tools = [tool for tool in self.tools if tool.name != name]
+
+        def get_tool(self, name: str) -> Any | None:
+            return next((tool for tool in self.tools if tool.name == name), None)
+
+    agent_tool.FunctionTool = FunctionTool
+    agent_tool.ToolSet = ToolSet
+
     star = types.ModuleType("astrbot.api.star")
 
     class Star:
@@ -132,6 +155,11 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event)
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star)
     monkeypatch.setitem(sys.modules, "astrbot.api.web", web)
+    monkeypatch.setitem(sys.modules, "astrbot.core", types.ModuleType("astrbot.core"))
+    monkeypatch.setitem(
+        sys.modules, "astrbot.core.agent", types.ModuleType("astrbot.core.agent")
+    )
+    monkeypatch.setitem(sys.modules, "astrbot.core.agent.tool", agent_tool)
     sys.modules.pop("astrbot_plugin_quest_avatar_bridge.transport.http_sse", None)
     sys.modules.pop("astrbot_plugin_quest_avatar_bridge.main", None)
     return request_stub

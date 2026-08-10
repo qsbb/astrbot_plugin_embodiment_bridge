@@ -58,6 +58,46 @@ class AvatarSkillRegistry:
             8_000,
         ),
         AvatarSkill(
+            "dance_next",
+            Gesture.DANCE_NEXT,
+            "Play the next imported dance motion",
+            LookAt.USER,
+            0.7,
+            8_000,
+        ),
+        AvatarSkill(
+            "raise_hand",
+            Gesture.RAISE_HAND,
+            "Raise one hand naturally",
+            LookAt.USER,
+            0.5,
+            3_000,
+        ),
+        AvatarSkill(
+            "turn_half",
+            Gesture.TURN_HALF,
+            "Turn the body about half a turn toward the requested direction",
+            LookAt.USER,
+            0.55,
+            2_400,
+        ),
+        AvatarSkill(
+            "sit",
+            Gesture.SIT,
+            "Sit on a detected suitable seat when one is available",
+            LookAt.USER,
+            0.45,
+            4_000,
+        ),
+        AvatarSkill(
+            "lie",
+            Gesture.LIE,
+            "Lie on a detected suitable resting surface when one is available",
+            LookAt.USER,
+            0.4,
+            5_000,
+        ),
+        AvatarSkill(
             "nod", Gesture.NOD, "Nod naturally in agreement", LookAt.USER, 0.35, 1_300
         ),
         AvatarSkill(
@@ -117,11 +157,14 @@ class AvatarSkillRegistry:
         )
         return (
             "Avatar skills are allowlisted methods, not free-form animation commands. "
-            "When an action is needed, set action to "
+            "For the direct JSON fallback only, set action to "
             '{"name":"<skill>","arguments":{"intensity":0.0,"duration_ms":0,"look_at":"user|hand|away|none"}} '
-            "and keep intent consistent. Available skills: "
+            "and keep intent consistent. On an AstrBot Quest EventBus turn, call the "
+            "quest_avatar_action function tool with its top-level action argument instead. "
+            "Available skills: "
             + skills
-            + ". Use null action for a normal reply."
+            + ". Use null action for a normal reply. A tool call is one action decision "
+            "for the turn; do not invent animation names or file paths."
         )
 
     @classmethod

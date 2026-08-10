@@ -1092,6 +1092,8 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
         assert first.count("具身人格正文") == 1
         assert bridge_request.system_prompt == first
         assert [event for event, _fields in diagnostic.events] == [
+            "avatar.action.tool_exposed",
+            "avatar.action.prompt_injected",
             "persona.overlay.injected"
         ]
 
