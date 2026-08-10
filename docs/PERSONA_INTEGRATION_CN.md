@@ -30,6 +30,8 @@ AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，
 
 转换成功先生成一个 30 分钟、最多 32 项、仅内存的一次性草稿 token；预览不会创建文件，也不返回来源正文。管理员确认并保存后，服务端才在 `StarTools.get_data_dir()/personas/qp_<32位随机十六进制>.json` 原子创建 ready 文件。每个文件包含严格 schema、来源快照与 SHA-256、转换版本和报告；列表只投影摘要，完整内容必须显式打开单个人格。
 
+转换模型后端等待上限为 120 秒。Operator Page 对人格转换单独等待 135 秒，并每秒显示真实已用时间；普通管理请求仍保持 10 秒超时。页面显示的是当前阶段和时间，不伪造百分比。转换完成只表示已收到并校验预览，仍须依次点击保存和启用。
+
 保存和启用是两个动作。启用只写 `active_quest_persona_id`，验证成功后才更新运行时；配置保存失败保持旧人格。保存“实时人格来源”会在同一次配置提交中清空该 ID。QQ 和其他平台事件没有服务端 `quest_avatar_bridge=true` 标记，因此不会收到独立人格覆盖。
 
 ## 安全边界
@@ -38,7 +40,7 @@ AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，
 
 独立人格正文和转换来源都以 JSON 数据封套传给模型，并转义 `<`、`>` 与 `&`，不能通过伪造闭合标签逃出数据区。文件 ID 只能由服务端生成且严格匹配 `qp_[0-9a-f]{32}`；文件读写拒绝路径片段与符号链接，使用临时文件、`fsync` 和原子替换，支持的平台上权限收敛为 `0600`。
 
-Operator Page 只返回 `source_mode`、`source`、`status`、`persona_selected`、`astrbot_persona_id`、`name_configured`、安全 ID 列表和手动兼容字段。它不返回 AstrBot 人格正文。独立诊断日志只允许固定枚举的 `persona_source`、`persona_status` 和布尔状态，不写人格 ID、姓名或正文。
+Operator Page 只返回 `source_mode`、`source`、`status`、`persona_selected`、`astrbot_persona_id`、`name_configured`、安全 ID 列表和手动兼容字段。它不返回 AstrBot 人格正文。独立诊断日志记录 `persona.convert.*`、`persona.save.*`、`persona.activate.*` 和 `persona.overlay.*` 的脱敏阶段、状态、错误码与耗时；不写人格 ID、姓名、正文、来源快照、草稿令牌或 Provider ID。
 
 `relationship_person_id` 始终只传给“情”的关系快照适配器；它不参与人格目录、人格选择或 system prompt 身份推断。
 

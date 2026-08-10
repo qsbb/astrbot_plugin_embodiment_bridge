@@ -66,6 +66,7 @@ class QuestPersonaService:
         persist_setting: PersistSetting,
         provider_catalog: ProviderCatalog,
         logger: Any,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.config = config
         self.llm = llm
@@ -75,6 +76,7 @@ class QuestPersonaService:
         self.persist_setting = persist_setting
         self.provider_catalog = provider_catalog
         self.logger = logger
+        self.diagnostic_log = diagnostic_log
         self._drafts: dict[str, _PendingConversion] = {}
         self._draft_lock = asyncio.Lock()
         self._mutation_lock = asyncio.Lock()
@@ -172,6 +174,50 @@ class QuestPersonaService:
         display_name: object,
         admin_requirements: object,
     ) -> dict[str, Any]:
+        started_at = time.monotonic()
+        self._diagnostic(
+            "persona.convert.started",
+            component="persona",
+            status="processing",
+            phase="source_lookup",
+        )
+        try:
+            result = await self._convert_impl(
+                source_kind=source_kind,
+                source_persona_id=source_persona_id,
+                source_prompt=source_prompt,
+                display_name=display_name,
+                admin_requirements=admin_requirements,
+            )
+        except Exception as exc:
+            self._diagnostic(
+                "persona.convert.failed",
+                component="persona",
+                status="failed",
+                phase="conversion",
+                code=str(getattr(exc, "code", "persona_conversion_failed")),
+                error_type=type(exc).__name__,
+                duration_ms=round((time.monotonic() - started_at) * 1000),
+            )
+            raise
+        self._diagnostic(
+            "persona.convert.completed",
+            component="persona",
+            status="completed",
+            phase="preview",
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+        )
+        return result
+
+    async def _convert_impl(
+        self,
+        *,
+        source_kind: object,
+        source_persona_id: object,
+        source_prompt: object,
+        display_name: object,
+        admin_requirements: object,
+    ) -> dict[str, Any]:
         try:
             kind = normalize_source_kind(source_kind)
         except PersonaProfileError as exc:
@@ -252,18 +298,45 @@ class QuestPersonaService:
         quest_persona_prompt: object,
         conversion_report: object,
     ) -> PersonaProfile:
+        started_at = time.monotonic()
+        self._diagnostic(
+            "persona.save.started",
+            component="persona",
+            status="processing",
+            phase="persist",
+        )
         async with self._mutation_lock:
-            return await self._save_profile_unlocked(
-                profile_id=profile_id,
-                draft_token=draft_token,
-                display_name=display_name,
-                aliases=aliases,
-                source_kind=source_kind,
-                source_persona_id=source_persona_id,
-                source_prompt=source_prompt,
-                quest_persona_prompt=quest_persona_prompt,
-                conversion_report=conversion_report,
-            )
+            try:
+                saved = await self._save_profile_unlocked(
+                    profile_id=profile_id,
+                    draft_token=draft_token,
+                    display_name=display_name,
+                    aliases=aliases,
+                    source_kind=source_kind,
+                    source_persona_id=source_persona_id,
+                    source_prompt=source_prompt,
+                    quest_persona_prompt=quest_persona_prompt,
+                    conversion_report=conversion_report,
+                )
+            except Exception as exc:
+                self._diagnostic(
+                    "persona.save.failed",
+                    component="persona",
+                    status="failed",
+                    phase="persist",
+                    code=str(getattr(exc, "code", "persona_save_failed")),
+                    error_type=type(exc).__name__,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                )
+                raise
+        self._diagnostic(
+            "persona.save.completed",
+            component="persona",
+            status="completed",
+            phase="persist",
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+        )
+        return saved
 
     async def _save_profile_unlocked(
         self,
@@ -374,21 +447,60 @@ class QuestPersonaService:
             raise _profile_error(exc) from exc
 
     async def activate(self, profile_id: object) -> dict[str, Any]:
+        started_at = time.monotonic()
+        self._diagnostic(
+            "persona.activate.started",
+            component="persona",
+            status="processing",
+            phase="activate",
+        )
         async with self._mutation_lock:
-            normalized = str(profile_id or "").strip()
-            if not normalized:
-                await self.persist_setting("active_quest_persona_id", "")
-                self.llm.configure_quest_persona("")
-                self.active_status = "not_configured"
-                return await self.library_snapshot()
             try:
-                profile = await self.store.get_activatable(normalized)
+                normalized = str(profile_id or "").strip()
+                if not normalized:
+                    await self.persist_setting("active_quest_persona_id", "")
+                    self.llm.configure_quest_persona("")
+                    self.active_status = "not_configured"
+                    result = await self.library_snapshot()
+                else:
+                    profile = await self.store.get_activatable(normalized)
+                    await self.persist_setting(
+                        "active_quest_persona_id", profile.profile_id
+                    )
+                    self.llm.configure_quest_persona(profile.quest_persona_prompt)
+                    self.active_status = "ready"
+                    result = await self.library_snapshot()
             except PersonaProfileError as exc:
-                raise _profile_error(exc) from exc
-            await self.persist_setting("active_quest_persona_id", profile.profile_id)
-            self.llm.configure_quest_persona(profile.quest_persona_prompt)
-            self.active_status = "ready"
-            return await self.library_snapshot()
+                wrapped = _profile_error(exc)
+                self._diagnostic(
+                    "persona.activate.failed",
+                    component="persona",
+                    status="failed",
+                    phase="activate",
+                    code=wrapped.code,
+                    error_type=type(exc).__name__,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                )
+                raise wrapped from exc
+            except Exception as exc:
+                self._diagnostic(
+                    "persona.activate.failed",
+                    component="persona",
+                    status="failed",
+                    phase="activate",
+                    code=str(getattr(exc, "code", "persona_activate_failed")),
+                    error_type=type(exc).__name__,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                )
+                raise
+        self._diagnostic(
+            "persona.activate.completed",
+            component="persona",
+            status="completed",
+            phase="activate",
+            duration_ms=round((time.monotonic() - started_at) * 1000),
+        )
+        return result
 
     async def delete(self, profile_id: object) -> PersonaProfile:
         async with self._mutation_lock:
@@ -426,6 +538,14 @@ class QuestPersonaService:
             return
         self.llm.configure_quest_persona(profile.quest_persona_prompt)
         self.active_status = "ready"
+
+    def _diagnostic(self, event: str, **fields: Any) -> None:
+        if self.diagnostic_log is None:
+            return
+        try:
+            self.diagnostic_log.record(event, **fields)
+        except Exception:
+            return
 
     def _providers(self, *, required: bool) -> list[dict[str, str]]:
         try:

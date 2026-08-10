@@ -222,6 +222,14 @@ class LoggerStub:
         del args, kwargs
 
 
+class DiagnosticCapture:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def record(self, event: str, **fields: Any) -> None:
+        self.events.append((event, dict(fields)))
+
+
 class LlmRuntimeStub:
     def __init__(self, prompt: str = "") -> None:
         self.quest_persona_prompt = prompt
@@ -284,6 +292,7 @@ def build_persona_service(
     config: dict[str, Any] | None = None,
     llm: LlmRuntimeStub | None = None,
     persist: PersistSettingStub | None = None,
+    diagnostic: DiagnosticCapture | None = None,
 ) -> tuple[QuestPersonaService, PersonaProfileStore, PersonaConverterStub]:
     values = (
         config if config is not None else {"persona_converter_provider_id": "converter"}
@@ -308,6 +317,7 @@ def build_persona_service(
             }
         ],
         logger=LoggerStub(),
+        diagnostic_log=diagnostic,
     )
     return service, store, converter
 
@@ -350,6 +360,34 @@ async def save_preview(
         quest_persona_prompt=conversion["quest_persona_prompt"],
         conversion_report=conversion["conversion_report"],
     )
+
+
+def test_persona_lifecycle_diagnostics_are_stage_specific_and_redacted(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticCapture()
+        service, _, _ = build_persona_service(tmp_path, diagnostic=diagnostic)
+
+        preview = await convert_preview(service)
+        saved = await save_preview(service, preview)
+        await service.activate(saved.profile_id)
+
+        names = [event for event, _fields in diagnostic.events]
+        assert names == [
+            "persona.convert.started",
+            "persona.convert.completed",
+            "persona.save.started",
+            "persona.save.completed",
+            "persona.activate.started",
+            "persona.activate.completed",
+        ]
+        rendered = repr(diagnostic.events)
+        assert READY_PROMPT not in rendered
+        assert preview["draft_token"] not in rendered
+        assert saved.profile_id not in rendered
+
+    asyncio.run(scenario())
 
 
 def test_persona_provider_catalog_projects_only_safe_public_metadata() -> None:
@@ -780,6 +818,8 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
         module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
         plugin = object.__new__(module.QuestAvatarBridgePlugin)
         plugin.llm = SimpleNamespace(quest_persona_prompt="具身人格正文")
+        diagnostic = DiagnosticCapture()
+        plugin.diagnostic_log = diagnostic
 
         for marker in (None, False, 1, "true"):
             request = SimpleNamespace(system_prompt="原 AstrBot 人格")
@@ -796,6 +836,9 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
         assert first.count("# 临：Quest 具象人格覆盖") == 1
         assert first.count("具身人格正文") == 1
         assert bridge_request.system_prompt == first
+        assert [event for event, _fields in diagnostic.events] == [
+            "persona.overlay.injected"
+        ]
 
     asyncio.run(scenario())
 

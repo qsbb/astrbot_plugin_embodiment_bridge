@@ -16,6 +16,8 @@ let bridgeReady = false;
 let eventsBound = false;
 let serviceRefreshTimer = null;
 let initialDataPromise = null;
+const PAGE_REQUEST_TIMEOUT_MS = 10000;
+const PERSONA_CONVERSION_TIMEOUT_MS = 135000;
 
 async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -921,6 +923,18 @@ function currentPersonaEditorProfile() {
 async function convertPersona() {
   const button = document.getElementById("convert-persona-button");
   if (button.disabled || !setButtonBusy(button, true, "正在转换…")) return;
+  const progress = document.getElementById("persona-conversion-progress");
+  const startedAt = Date.now();
+  const updateProgress = () => {
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const phase = elapsedSeconds < 3
+      ? "正在读取来源人格"
+      : "正在等待转换模型生成并校验结果";
+    progress.textContent = `${phase}，已用时 ${elapsedSeconds} 秒。请保持页面打开。`;
+    progress.hidden = false;
+  };
+  updateProgress();
+  const progressTimer = window.setInterval(updateProgress, 1000);
   const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
   const requiresConversionOnFailure = Boolean(
     personaConversionDraftToken ||
@@ -934,24 +948,36 @@ async function convertPersona() {
     document.getElementById("persona-source-prompt").value = "";
   }
   try {
-    const response = await apiPost("pairing/persona-convert", {
-      source_type: sourceType,
-      source_persona_id: sourceType === "astrbot"
-        ? document.getElementById("persona-import-source").value
-        : "",
-      source_prompt: sourceType === "manual"
-        ? document.getElementById("persona-source-prompt").value
-        : "",
-      display_name: document.getElementById("persona-profile-name").value,
-      admin_requirements: document.getElementById("persona-admin-requirements").value
-    });
+    const response = await apiPost(
+      "pairing/persona-convert",
+      {
+        source_type: sourceType,
+        source_persona_id: sourceType === "astrbot"
+          ? document.getElementById("persona-import-source").value
+          : "",
+        source_prompt: sourceType === "manual"
+          ? document.getElementById("persona-source-prompt").value
+          : "",
+        display_name: document.getElementById("persona-profile-name").value,
+        admin_requirements: document.getElementById("persona-admin-requirements").value
+      },
+      {
+        timeout: PERSONA_CONVERSION_TIMEOUT_MS,
+        timeoutMessage: "人格转换等待超过 135 秒，请查看“临”独立日志后重试"
+      }
+    );
     applyPersonaConversionResult(response);
+    const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    progress.textContent = `转换预览完成，用时 ${elapsedSeconds} 秒；尚未保存或启用。`;
     toast("人格转换完成，请确认后保存");
   } catch (error) {
+    const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    progress.textContent = `转换失败，用时 ${elapsedSeconds} 秒：${error.message}`;
     document.getElementById("persona-profile-status").textContent =
       "转换失败：" + error.message;
     toast("人格转换失败：" + error.message, true);
   } finally {
+    window.clearInterval(progressTimer);
     setButtonBusy(button, false);
     updatePersonaEditorActions();
   }
@@ -962,6 +988,9 @@ async function savePersonaProfile() {
   if (button.disabled || !setButtonBusy(button, true, "正在保存…")) return;
   const sourceType = personaWorkflowMode === "import" ? "astrbot" : "manual";
   const profileId = document.getElementById("persona-profile-id").value;
+  const wasActive = Boolean(
+    profileId && profileId === String(personaProfiles?.active_quest_persona_id || "")
+  );
   const editorSnapshot = currentPersonaEditorProfile();
   try {
     const response = await apiPost("pairing/persona-profile-save", {
@@ -991,9 +1020,10 @@ async function savePersonaProfile() {
       ...saved,
       profile_id: savedId
     });
-    document.getElementById("persona-profile-status").textContent =
-      "人格已保存，但没有自动启用。确认无误后可单独启用。";
-    toast("人格已保存，尚未启用");
+    document.getElementById("persona-profile-status").textContent = wasActive
+      ? "人格已保存，并已立即更新当前启用的人格。"
+      : "人格已保存，但没有自动启用。确认无误后可单独启用。";
+    toast(wasActive ? "人格已保存并立即更新" : "人格已保存，尚未启用");
   } catch (error) {
     toast("人格保存失败：" + error.message, true);
   } finally {
@@ -1398,6 +1428,17 @@ function diagnosticEventLabel(value) {
     "llm.error": "模型生成失败",
     "tts.completed": "语音合成完成",
     "tts.error": "语音合成失败",
+    "persona.convert.started": "开始转换具身人格",
+    "persona.convert.completed": "具身人格预览转换完成",
+    "persona.convert.failed": "具身人格转换失败",
+    "persona.save.started": "开始保存具身人格",
+    "persona.save.completed": "具身人格文件保存完成",
+    "persona.save.failed": "具身人格保存失败",
+    "persona.activate.started": "开始切换当前具身人格",
+    "persona.activate.completed": "当前具身人格切换完成",
+    "persona.activate.failed": "具身人格切换失败",
+    "persona.overlay.injected": "具身人格已注入 Quest 对话",
+    "persona.overlay.skipped": "本轮未注入具身人格",
     "reply.completed": "回复交付完成",
     "reply.failed": "回复交付失败",
     "http.health": "健康检查完成",
@@ -1686,10 +1727,14 @@ async function apiGet(name) {
   );
 }
 
-async function apiPost(name, payload) {
+async function apiPost(
+  name,
+  payload,
+  { timeout = PAGE_REQUEST_TIMEOUT_MS, timeoutMessage = "页面 Bridge 请求超时" } = {}
+) {
   if (!bridge || !bridgeReady) throw new Error("页面 Bridge 尚未连接");
   return parseResponse(
-    await withBridgeTimeout(bridge.apiPost(name, payload), 10000, "页面 Bridge 请求超时")
+    await withBridgeTimeout(bridge.apiPost(name, payload), timeout, timeoutMessage)
   );
 }
 

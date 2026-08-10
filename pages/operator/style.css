@@ -311,6 +311,16 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   border-top: 1px solid #334542;
   padding-top: 16px;
 }
+
+.conversion-progress {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(116, 199, 172, 0.28);
+  border-radius: 10px;
+  background: rgba(45, 91, 77, 0.18);
+  color: #c7e8dc;
+  font-size: 13px;
+}
 .conversion-report-heading {
   display: flex;
   align-items: baseline;

@@ -51,7 +51,7 @@ from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.18"
+__version__ = "0.4.19"
 
 
 class QuestAvatarBridgePlugin(Star):
@@ -361,6 +361,7 @@ class QuestAvatarBridgePlugin(Star):
             persist_setting=self.operator_settings.save_quest_persona_setting,
             provider_catalog=self.operator_settings.list_chat_providers,
             logger=self._component_logger,
+            diagnostic_log=self.diagnostic_log,
         )
         self.pairing_api = PairingHttpApi(
             context=context,
@@ -514,11 +515,29 @@ class QuestAvatarBridgePlugin(Star):
             return
         overlay = build_eventbus_persona_overlay(self.llm.quest_persona_prompt)
         if not overlay:
+            diagnostic = getattr(self, "diagnostic_log", None)
+            if diagnostic is not None:
+                diagnostic.record(
+                    "persona.overlay.skipped",
+                    component="persona",
+                    status="unavailable",
+                    phase="llm_request",
+                    reason_code="quest_persona_not_configured",
+                )
             return
         current = str(getattr(req, "system_prompt", "") or "")
         if "# 临：Quest 具象人格覆盖" in current:
             return
         req.system_prompt = current + overlay
+        diagnostic = getattr(self, "diagnostic_log", None)
+        if diagnostic is not None:
+            diagnostic.record(
+                "persona.overlay.injected",
+                component="persona",
+                status="completed",
+                phase="llm_request",
+                persona_configured=True,
+            )
 
     def plugin_health(self) -> dict[str, object]:
         checks = {
