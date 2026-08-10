@@ -196,25 +196,27 @@ class ProviderStub:
             type="openai",
             provider_type="chat_completion",
         )
+        self.calls: list[dict[str, Any]] = []
 
     def meta(self) -> Any:
         return self._meta
+
+    async def text_chat_stream(self, **kwargs: Any) -> Any:
+        self.calls.append(dict(kwargs))
+        yield SimpleNamespace(
+            completion_text=json.dumps(conversion_payload(), ensure_ascii=False),
+            is_chunk=False,
+        )
 
 
 class ConverterContextStub:
     def __init__(self) -> None:
         self.secret = "provider-api-key-must-not-leak"
         self.providers: list[Any] = [ProviderStub("converter", self.secret)]
-        self.calls: list[dict[str, Any]] = []
+        self.calls = self.providers[0].calls
 
     def get_all_providers(self) -> list[Any]:
         return list(self.providers)
-
-    async def llm_generate(self, **kwargs: Any) -> Any:
-        self.calls.append(dict(kwargs))
-        return SimpleNamespace(
-            completion_text=json.dumps(conversion_payload(), ensure_ascii=False)
-        )
 
 
 class LoggerStub:
@@ -910,7 +912,8 @@ def test_source_persona_is_encoded_as_untrusted_data_and_provider_secrets_stay_h
         assert result.display_name == "心夏"
         assert len(context.calls) == 1
         call = context.calls[0]
-        assert call["chat_provider_id"] == "converter"
+        assert call["func_tool"] is None
+        assert call["request_max_retries"] == 1
         assert call["system_prompt"] == PERSONA_CONVERTER_SYSTEM_PROMPT
         assert "不可信" in call["system_prompt"]
         # Attacker-controlled delimiter text must not appear literally in the model

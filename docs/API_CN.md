@@ -230,6 +230,8 @@ sequenceDiagram
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
 
+人格转换会精确复用 `persona_converter_provider_id` 对应的已实例化 Chat Provider，并调用其公开流式接口。首个流块、流持续活动和完整返回只作为脱敏阶段进入状态与诊断；响应正文和隐藏推理不会进入日志。首块等待、流空闲和总时限分别有界，Provider 不支持流式时明确失败，不回退或自动换模型。
+
 模型枚举只返回 `id`、`model`、`adapter_type` 和固定的 `provider_type=chat_completion`，绝不返回 Provider 原始配置、API Key、`base_url`、headers。保存请求只允许：
 
 ```json

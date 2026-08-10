@@ -8,7 +8,7 @@
 - HTTP 和内置 listener 使用 aiohttp；SSE 使用异步生成器、心跳和每会话有界事件队列。
 - STT 临时 WAV 写入/删除、TTS WAV 解析与重采样、同步只读环境/身份 provider 调用均通过 `asyncio.to_thread()` 卸载。
 - 关系、知识与缓存环境读取并发执行；LLM、STT、TTS turn 任务可取消，发送前复核 session、turn 和 generation。
-- `reply.text.delta` 在 TTS 之前下发。AstrBot 当前公开 `context.llm_generate()` 是整轮生成接口，没有可用于本插件的 token streaming 契约。
+- 普通 Quest 对话仍通过 AstrBot EventBus 或公开的整轮 `context.llm_generate()` 回退链生成，`reply.text.delta` 在 TTS 之前下发。人格转换是独立管理任务：它精确复用管理员所选的已实例化 Chat Provider，并直接消费公开 `text_chat_stream()`，从而报告等待首块、持续生成和完整返回阶段；两条链路不会互相替代。
 - 慢 SSE 客户端对关键事件施加背压；`asr.partial` 可合并，文字 delta 可丢弃，意图、音频、结束和错误不会为了非关键事件被丢弃。
 
 ## 已证实并修复的串行问题

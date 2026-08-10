@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=0.4.20-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=0.4.20-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.20-1")
+    assert '<script type="module" src="./app.js?v=0.4.21-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=0.4.21-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.21-1")
     assert "凝心溯溪-临｜Quest 角色设置" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -280,7 +280,9 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
     assert "人格已保存，但没有自动启用" in js
     assert "人格已保存，尚未启用" in js
     assert "PERSONA_CONVERSION_POLL_MS = 1000" in js
-    assert "正在等待转换模型生成" in js
+    assert "正在等待转换模型首个流块" in js
+    assert "转换模型已开始响应" in js
+    assert "转换模型正在持续生成" in js
     assert "转换预览完成，后台任务用时" in js
     assert "人格已保存，并已立即更新当前启用的人格" in js
     assert "后端封存" in html
@@ -303,6 +305,8 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
     assert "job?.error?.message" in js
     assert "persona.convert.source.started" in js
     assert "persona.convert.model.started" in js
+    assert "persona.convert.model.first_chunk" in js
+    assert "persona.convert.model.streaming" in js
     assert "persona.convert.validation.started" in js
     assert "persona.convert.draft.created" in js
     assert "persona.convert.progress" in js

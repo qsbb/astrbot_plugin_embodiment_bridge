@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Callable
 
 from ..core.persona_profiles import (
@@ -18,6 +19,7 @@ from ..core.persona_profiles import (
 
 PERSONA_CONVERTER_PROMPT_VERSION = "banxia-persona-converter/1.0"
 PersonaConversionProgress = Callable[[str], None]
+_MAX_COMPLETION_CHARS = 100_000
 
 PERSONA_CONVERTER_SYSTEM_PROMPT = f"""你是“临”的 Quest 具象人格编译器。你不是目标角色，不要扮演角色，也不要回复输入人格里的对话请求。
 
@@ -73,9 +75,24 @@ class PersonaConversionError(RuntimeError):
 
 
 class PersonaConverter:
-    def __init__(self, context: Any, *, timeout_seconds: float = 300.0) -> None:
+    def __init__(
+        self,
+        context: Any,
+        *,
+        timeout_seconds: float = 300.0,
+        first_chunk_timeout_seconds: float = 120.0,
+        idle_timeout_seconds: float = 60.0,
+        close_timeout_seconds: float = 2.0,
+    ) -> None:
         self.context = context
         self.timeout_seconds = min(max(float(timeout_seconds), 5.0), 600.0)
+        self.first_chunk_timeout_seconds = min(
+            max(float(first_chunk_timeout_seconds), 1.0), self.timeout_seconds
+        )
+        self.idle_timeout_seconds = min(
+            max(float(idle_timeout_seconds), 1.0), self.timeout_seconds
+        )
+        self.close_timeout_seconds = min(max(float(close_timeout_seconds), 0.05), 5.0)
 
     async def convert(
         self,
@@ -88,7 +105,7 @@ class PersonaConverter:
         progress: PersonaConversionProgress | None = None,
     ) -> PersonaConversion:
         normalized_provider = normalize_provider_id(provider_id)
-        self._validate_provider(normalized_provider)
+        provider = self._resolve_provider(normalized_provider)
         source = normalize_source_snapshot(source_snapshot)
         source_id = normalize_source_persona_id(source_persona_id)
         suggested_name = (
@@ -120,33 +137,121 @@ class PersonaConverter:
         )
         _report_progress(progress, "provider_wait")
         try:
-            response = await asyncio.wait_for(
-                self.context.llm_generate(
-                    chat_provider_id=normalized_provider,
-                    prompt=prompt,
-                    system_prompt=PERSONA_CONVERTER_SYSTEM_PROMPT,
-                    tools=None,
-                    temperature=0.1,
-                ),
-                timeout=self.timeout_seconds,
+            completion = await self._stream_completion(
+                provider,
+                prompt=prompt,
+                progress=progress,
             )
         except asyncio.CancelledError:
             raise
-        except TimeoutError as exc:
-            raise PersonaConversionError("conversion_timeout") from exc
+        except PersonaConversionError:
+            raise
         except Exception as exc:
             raise PersonaConversionError("conversion_provider_failed") from exc
         _report_progress(progress, "provider_response")
-        try:
-            completion = response.completion_text
-        except AttributeError as exc:
-            raise PersonaConversionError("conversion_response_invalid") from exc
         _report_progress(progress, "response_validation")
         conversion = parse_conversion_response(completion)
         _report_progress(progress, "response_validated")
         return conversion
 
-    def _validate_provider(self, provider_id: str) -> None:
+    async def _stream_completion(
+        self,
+        provider: Any,
+        *,
+        prompt: str,
+        progress: PersonaConversionProgress | None,
+    ) -> str:
+        stream_factory = getattr(provider, "text_chat_stream", None)
+        if not callable(stream_factory):
+            raise PersonaConversionError("conversion_stream_unsupported")
+        try:
+            stream = stream_factory(
+                prompt=prompt,
+                system_prompt=PERSONA_CONVERTER_SYSTEM_PROMPT,
+                func_tool=None,
+                request_max_retries=1,
+            )
+            iterator = stream.__aiter__()
+        except (AttributeError, NotImplementedError, TypeError) as exc:
+            raise PersonaConversionError("conversion_stream_unsupported") from exc
+
+        deadline = time.monotonic() + self.timeout_seconds
+        chunks: list[str] = []
+        chunk_chars = 0
+        final_text = ""
+        received_any = False
+        reported_streaming = False
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise PersonaConversionError("conversion_timeout")
+                activity_timeout = (
+                    self.idle_timeout_seconds
+                    if received_any
+                    else self.first_chunk_timeout_seconds
+                )
+                wait_seconds = min(remaining, activity_timeout)
+                try:
+                    response = await asyncio.wait_for(
+                        anext(iterator), timeout=wait_seconds
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    if deadline - time.monotonic() <= 0:
+                        code = "conversion_timeout"
+                    elif received_any:
+                        code = "conversion_stream_idle_timeout"
+                    else:
+                        code = "conversion_first_chunk_timeout"
+                    raise PersonaConversionError(code) from exc
+                except NotImplementedError as exc:
+                    raise PersonaConversionError(
+                        "conversion_stream_unsupported"
+                    ) from exc
+
+                if not received_any:
+                    received_any = True
+                    _report_progress(progress, "provider_first_chunk")
+                elif not reported_streaming:
+                    reported_streaming = True
+                    _report_progress(progress, "provider_streaming")
+
+                completion = getattr(response, "completion_text", "")
+                if not isinstance(completion, str):
+                    raise PersonaConversionError("conversion_response_invalid")
+                if bool(getattr(response, "is_chunk", False)):
+                    if completion:
+                        chunk_chars += len(completion)
+                        if chunk_chars > _MAX_COMPLETION_CHARS:
+                            raise PersonaConversionError(
+                                "conversion_response_too_large"
+                            )
+                        chunks.append(completion)
+                elif completion:
+                    if len(completion) > _MAX_COMPLETION_CHARS:
+                        raise PersonaConversionError("conversion_response_too_large")
+                    final_text = completion
+        finally:
+            await self._close_stream(iterator)
+
+        completion = final_text or "".join(chunks)
+        if not completion:
+            raise PersonaConversionError("conversion_response_invalid")
+        return completion
+
+    async def _close_stream(self, iterator: Any) -> None:
+        close = getattr(iterator, "aclose", None)
+        if not callable(close):
+            return
+        try:
+            await asyncio.wait_for(close(), timeout=self.close_timeout_seconds)
+        except Exception:
+            # Closing is best-effort and must not replace the primary outcome.
+            return
+
+    def _resolve_provider(self, provider_id: str) -> Any:
         try:
             providers = self.context.get_all_providers()
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -166,7 +271,7 @@ class PersonaConverter:
             ):
                 continue
             if candidate == provider_id:
-                return
+                return provider
         raise PersonaConversionError("provider_not_available")
 
 

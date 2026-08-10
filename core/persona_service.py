@@ -922,6 +922,8 @@ class QuestPersonaService:
     ) -> None:
         events = {
             "provider_wait": "persona.convert.model.started",
+            "provider_first_chunk": "persona.convert.model.first_chunk",
+            "provider_streaming": "persona.convert.model.streaming",
             "provider_response": "persona.convert.model.completed",
             "response_validation": "persona.convert.validation.started",
             "response_validated": "persona.convert.validation.completed",
@@ -1105,10 +1107,16 @@ def _profile_error(exc: PersonaProfileError) -> QuestPersonaServiceError:
 
 
 def _conversion_error(exc: PersonaConversionError) -> QuestPersonaServiceError:
-    if exc.code == "conversion_timeout":
+    if exc.code in {
+        "conversion_timeout",
+        "conversion_first_chunk_timeout",
+        "conversion_stream_idle_timeout",
+    }:
         return QuestPersonaServiceError(exc.code, 504, "人格转换超时")
     if exc.code in {"provider_catalog_unavailable", "conversion_provider_failed"}:
         return QuestPersonaServiceError(exc.code, 503, "人格转换模型当前不可用")
     if exc.code == "provider_not_available":
         return QuestPersonaServiceError(exc.code, 422, "所选转换模型不存在或不可用")
+    if exc.code == "conversion_stream_unsupported":
+        return QuestPersonaServiceError(exc.code, 422, "所选转换模型不支持流式人格转换")
     return QuestPersonaServiceError(exc.code, 502, "转换模型返回了无效人格数据")

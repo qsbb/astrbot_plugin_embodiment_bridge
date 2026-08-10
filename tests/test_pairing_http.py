@@ -992,11 +992,10 @@ def test_quest_persona_library_conversion_activation_and_live_fallback(
         converted_prompt = "面对面具身人格规则。" * 250
 
         async def convert_persona(**kwargs: Any) -> Any:
-            assert kwargs["chat_provider_id"] == "fake-provider"
-            assert kwargs["tools"] is None
-            assert kwargs["temperature"] == 0.1
+            assert kwargs["func_tool"] is None
+            assert kwargs["request_max_retries"] == 1
             assert "private contract persona prompt" in kwargs["prompt"]
-            return SimpleNamespace(
+            yield SimpleNamespace(
                 completion_text=json.dumps(
                     {
                         "schema_version": "banxia.quest_persona/1.0",
@@ -1011,10 +1010,11 @@ def test_quest_persona_library_conversion_activation_and_live_fallback(
                         },
                     },
                     ensure_ascii=False,
-                )
+                ),
+                is_chunk=False,
             )
 
-        bundle.context.llm_generate = convert_persona
+        bundle.context.providers[0].text_chat_stream = convert_persona
         async with LiveHttpServer(bundle) as server:
             async with ClientSession() as client:
                 denied = await client.get(server.url("/pairing/persona-library"))
