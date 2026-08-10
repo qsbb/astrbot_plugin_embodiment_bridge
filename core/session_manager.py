@@ -9,6 +9,7 @@ from time import monotonic
 from typing import Any, Callable
 
 from .models import AudioChunkRequest, InteractionEvent, SessionStartRequest
+from .server_timing import ServerTimingState
 
 
 CRITICAL_EVENT_TYPES = frozenset(
@@ -144,6 +145,7 @@ class TurnState:
     turn_id: str
     generation: int
     interaction: bool = False
+    server_timing: ServerTimingState = field(default_factory=ServerTimingState)
     audio: bytearray = field(default_factory=bytearray)
     next_audio_sequence: int = 0
     audio_ended: bool = False

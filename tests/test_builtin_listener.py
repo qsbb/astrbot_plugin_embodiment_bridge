@@ -772,6 +772,7 @@ def test_listener_can_stop_release_port_and_start_again() -> None:
 def test_schema_and_requirements_declare_safe_listener_defaults() -> None:
     root = Path(__file__).resolve().parents[1]
     schema = json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
+    assert schema["server_timing_enabled"]["default"] is False
     assert schema["pairing_listener_enabled"]["default"] is False
     assert schema["pairing_listener_host"]["default"] == "0.0.0.0"
     port = schema["pairing_listener_port"]

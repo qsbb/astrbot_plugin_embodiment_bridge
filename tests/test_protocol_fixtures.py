@@ -25,6 +25,24 @@ def load_json(name: str) -> dict[str, Any]:
 def test_protocol_manifest_matches_production_enums_and_errors() -> None:
     manifest = load_json("manifest.json")
     assert manifest["protocol_version"] == "1.0"
+    assert manifest["optional_extensions"] == {
+        "server_timing@1.0": {
+            "enabled_by": "server_timing_enabled",
+            "location": "reply.end.server_timing",
+            "default_present": False,
+            "decision_path": ["astrbot_event_bus", "direct_provider"],
+            "duration_fields": [
+                "stt_ms",
+                "decision_ms",
+                "tts_first_chunk_ms",
+                "tts_total_ms",
+                "turn_total_ms",
+            ],
+            "duration_unit": "milliseconds",
+            "duration_minimum": 0,
+            "duration_maximum": 86_400_000,
+        }
+    }
     assert manifest["enums"] == {
         "emotion": [item.value for item in Emotion],
         "gesture": [item.value for item in Gesture],

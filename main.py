@@ -279,6 +279,9 @@ class QuestAvatarBridgePlugin(Star):
             ),
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
             diagnostic_log=self.diagnostic_log,
+            server_timing_enabled=self._bool_config(
+                "server_timing_enabled", False
+            ),
         )
         self.pairing = PairingManager(
             bridge_api_key=bridge_api_key,

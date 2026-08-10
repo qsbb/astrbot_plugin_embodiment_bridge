@@ -417,6 +417,12 @@
     "hint": "日志仅写入插件自有 data/plugin_data 目录；默认关闭，不接入 AstrBot 总日志。",
     "default": false
   },
+  "server_timing_enabled": {
+    "description": "在既有 reply.end 中附加服务端耗时摘要",
+    "type": "bool",
+    "hint": "默认关闭。启用后只发送 server_timing@1.0 的非负整数耗时和固定决策路径，不发送正文、身份、Provider 或日志。",
+    "default": false
+  },
   "diagnostic_platform_log_enabled": {
     "description": "将脱敏诊断摘要写入“临”的 AstrBot 日志",
     "type": "bool",

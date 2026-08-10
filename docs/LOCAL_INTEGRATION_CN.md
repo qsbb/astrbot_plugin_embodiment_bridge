@@ -103,6 +103,8 @@ allow_private_http_pairing=true
 
 安装“声”时，Bridge 优先消费无消息副作用的 `voice.audio_output@1.0`，只读 provider 管理的 PCM16 WAV，且不删除/移动源文件。未安装或失败时，只有 `enable_astrbot_tts=true` 才会回退 AstrBot Core TTS。Core Provider 必须返回本地、未压缩 PCM16 WAV；MP3、浮点/压缩/截断或超限文件产生 `tts_failed`，文字和 `reply.end(audio_sent=false)` 保留。不得调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
+可选配置 `server_timing_enabled=true` 时，既有 `reply.end` 会带上 `server_timing@1.0` 脱敏摘要；该摘要只包含非负整数耗时和固定决策路径枚举，不增加 SSE 事件，不改变 Protocol 1.0 顺序。默认关闭，旧客户端可继续忽略缺失字段。
+
 STT 输入在 `audio/end` 后一次性写为 16000 Hz 单声道 PCM16 WAV，再调用 Provider。当前没有 `asr.partial`，也不会把原始 PCM 写入插件安装目录；临时文件只在 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/` 中短暂存在。
 
 ## 4. 选择正确地址

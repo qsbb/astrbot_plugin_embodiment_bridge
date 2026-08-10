@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- 增加可选 `server_timing@1.0` 摘要，在既有 `reply.end` 中提供脱敏的 STT、决策路径、TTS 和整轮服务端耗时；默认关闭，不新增 SSE 事件或改变 Protocol 1.0 顺序。
+
 ## 0.4.17 - 2026-08-10
 
 ### Fixed

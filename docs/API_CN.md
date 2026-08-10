@@ -810,6 +810,31 @@ Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降�
 
 `status=completed` 表示正常完成；`status=failed` 表示前序 `error` 已终止该轮，此时 `text_sent=false` 且 `audio_sent=false`。被显式打断的旧轮仍不会收到 `reply.end`。
 
+#### 可选 `server_timing@1.0`
+
+启用插件配置 `server_timing_enabled` 后，`reply.end` 可附加以下服务端摘要；默认不发送，
+因此不会改变既有 Protocol 1.0 客户端或事件顺序：
+
+```json
+{
+  "server_timing": {
+    "contract": "server_timing@1.0",
+    "stt_ms": 123,
+    "decision_ms": 456,
+    "decision_path": "astrbot_event_bus",
+    "tts_first_chunk_ms": 789,
+    "tts_total_ms": 1200,
+    "turn_total_ms": 1800
+  }
+}
+```
+
+耗时字段均为受限非负整数毫秒；`decision_path` 仅允许 `astrbot_event_bus` 和
+`direct_provider`。未执行或不可用的 STT/TTS 阶段使用 `0`。计时只覆盖服务端处理：
+`decision_ms` 从决策阶段开始，`tts_first_chunk_ms` 到首个成功进入服务端事件队列的音频块，
+`tts_total_ms` 到音频块全部入队，`turn_total_ms` 到 `reply.end` 入队；不包含客户端录音、
+网络传输和 SSE 客户端 flush。
+
 ### 15.7 `error`
 
 ```json

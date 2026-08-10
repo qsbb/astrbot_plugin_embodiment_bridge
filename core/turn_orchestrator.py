@@ -106,6 +106,7 @@ class TurnOrchestrator:
         allow_direct_provider_fallback: bool = True,
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
+        server_timing_enabled: bool = False,
     ) -> None:
         self.sessions = sessions
         self.llm = llm
@@ -122,6 +123,7 @@ class TurnOrchestrator:
         self.message_pipeline = message_pipeline
         self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
+        self.server_timing_enabled = bool(server_timing_enabled)
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
     async def authorize_session(
@@ -234,6 +236,7 @@ class TurnOrchestrator:
 
         async def runner() -> None:
             await gate.wait()
+            turn.server_timing.start_processing()
             try:
                 await operation()
             finally:
@@ -255,6 +258,7 @@ class TurnOrchestrator:
         pcm16: bytes,
     ) -> None:
         started = time.perf_counter()
+        turn.server_timing.start_stt()
         try:
             self._diagnostic(
                 "stt.started",
@@ -264,6 +268,7 @@ class TurnOrchestrator:
                 bytes=len(pcm16),
             )
             text = await self.stt.transcribe(pcm16, sample_rate=16_000)
+            turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.completed",
                 component="stt",
@@ -289,6 +294,7 @@ class TurnOrchestrator:
                 return
             await self._decide_and_deliver(session, turn, text, interaction=None)
         except asyncio.CancelledError:
+            turn.server_timing.finish_stt()
             raise
         except MessagePipelineEmpty as exc:
             await self._emit_pipeline_empty_error(session, turn, exc, phase="voice")
@@ -307,6 +313,7 @@ class TurnOrchestrator:
                 self._pipeline_error_message(reason),
             )
         except AdapterUnavailable:
+            turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.error",
                 component="stt",
@@ -321,6 +328,7 @@ class TurnOrchestrator:
                 "PCM16 STT is not configured",
             )
         except Exception as exc:
+            turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.error",
                 component="stt",
@@ -424,6 +432,7 @@ class TurnOrchestrator:
     ) -> None:
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
+        turn.server_timing.start_decision("direct_provider")
         history = await self.sessions.history_snapshot(session)
         use_message_pipeline = bool(
             interaction is None
@@ -452,6 +461,9 @@ class TurnOrchestrator:
                     else "astrbot_event_api_unavailable"
                 ),
             )
+        turn.server_timing.start_decision(
+            "astrbot_event_bus" if use_message_pipeline else "direct_provider"
+        )
         self._diagnostic(
             "message_pipeline.selected",
             component="message_pipeline",
@@ -520,6 +532,7 @@ class TurnOrchestrator:
                     )
                     if not self.allow_direct_provider_fallback:
                         raise
+                    turn.server_timing.start_decision("direct_provider")
                     knowledge, environment = await asyncio.gather(
                         self._read_knowledge(user_text, interaction),
                         self._read_environment(),
@@ -543,6 +556,7 @@ class TurnOrchestrator:
                     knowledge=knowledge,
                     environment=environment,
                 )
+            turn.server_timing.finish_decision()
             self._diagnostic(
                 "llm.completed",
                 component="llm",
@@ -558,8 +572,10 @@ class TurnOrchestrator:
                 result="reply" if decision.should_reply else "silent",
             )
         except (MessagePipelineUnavailable, MessagePipelineEmpty):
+            turn.server_timing.finish_decision()
             raise
         except Exception as exc:
+            turn.server_timing.finish_decision()
             self._diagnostic(
                 "llm.error",
                 component="llm",
@@ -616,6 +632,7 @@ class TurnOrchestrator:
         audio_bytes = 0
         audio_chunks = 0
         if text and self.tts.available:
+            turn.server_timing.start_tts()
             tts_started = time.perf_counter()
             try:
                 async for pcm_chunk in self._tts_pipeline(
@@ -633,6 +650,8 @@ class TurnOrchestrator:
                             "data": base64.b64encode(pcm_chunk).decode("ascii"),
                         },
                     )
+                    if accepted:
+                        turn.server_timing.mark_tts_first_chunk()
                     if not accepted and not self.sessions.is_current(
                         session, turn.turn_id, turn.generation
                     ):
@@ -669,15 +688,21 @@ class TurnOrchestrator:
                 ):
                     return
 
+            finally:
+                turn.server_timing.finish_tts()
+
+        reply_end_payload = {
+            "type": "reply.end",
+            "status": "completed",
+            "text_sent": bool(text),
+            "audio_sent": audio_sent,
+        }
+        if self.server_timing_enabled:
+            reply_end_payload["server_timing"] = turn.server_timing.snapshot()
         await self._emit(
             session,
             turn,
-            {
-                "type": "reply.end",
-                "status": "completed",
-                "text_sent": bool(text),
-                "audio_sent": audio_sent,
-            },
+            reply_end_payload,
         )
         self._diagnostic(
             "reply.completed",
@@ -917,15 +942,18 @@ class TurnOrchestrator:
         )
         if not await self._emit_error(session, turn, code, message):
             return False
+        reply_end_payload = {
+            "type": "reply.end",
+            "status": "failed",
+            "text_sent": False,
+            "audio_sent": False,
+        }
+        if self.server_timing_enabled:
+            reply_end_payload["server_timing"] = turn.server_timing.snapshot()
         return await self._emit(
             session,
             turn,
-            {
-                "type": "reply.end",
-                "status": "failed",
-                "text_sent": False,
-                "audio_sent": False,
-            },
+            reply_end_payload,
         )
 
     async def _normalized_audio_chunks(

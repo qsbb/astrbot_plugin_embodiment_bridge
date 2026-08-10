@@ -119,6 +119,29 @@ Docker 的 `8520:8520` 端口映射本身不会创建监听器；只有插件初
 | `stt_timeout_seconds` | `45` | 单次整轮识别超时 |
 | `tts_timeout_seconds` | `60` | 单次整轮合成超时 |
 | `max_tts_audio_seconds` | `120` | 规范化后输出时长上限 |
+| `server_timing_enabled` | `false` | 是否在既有 `reply.end` 中附加服务端耗时摘要 |
+
+启用 `server_timing_enabled` 后，正常或失败的既有 `reply.end` 事件可附加可选
+`server_timing@1.0` 对象；不会新增 SSE 事件，也不会改变 Protocol 1.0 的事件顺序：
+
+```json
+{
+  "contract": "server_timing@1.0",
+  "stt_ms": 123,
+  "decision_ms": 456,
+  "decision_path": "astrbot_event_bus",
+  "tts_first_chunk_ms": 789,
+  "tts_total_ms": 1200,
+  "turn_total_ms": 1800
+}
+```
+
+所有耗时均为受限非负整数，单位为毫秒。`decision_path` 只允许
+`astrbot_event_bus` 或 `direct_provider`；STT/TTS 未执行或不可用时对应耗时为 `0`。
+`decision_ms` 从服务端决策阶段开始计时，`tts_first_chunk_ms` 从 TTS 开始到首个成功
+进入服务端事件队列的音频块，`tts_total_ms` 到所有音频块入队完成，`turn_total_ms`
+从服务端开始处理该轮到 `reply.end` 入队。它们都不包含客户端录音、网络传输或 SSE
+客户端 flush 时间。
 
 STT adapter 把 Unity 上传的原始 PCM16 封装为 16000 Hz、单声道 WAV，临时文件位于 AstrBot `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/`，完成、失败、取消和插件终止时都会清理。
 

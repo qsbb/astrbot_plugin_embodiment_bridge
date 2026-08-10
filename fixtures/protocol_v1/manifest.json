@@ -1,5 +1,23 @@
 {
   "protocol_version": "1.0",
+  "optional_extensions": {
+    "server_timing@1.0": {
+      "enabled_by": "server_timing_enabled",
+      "location": "reply.end.server_timing",
+      "default_present": false,
+      "decision_path": ["astrbot_event_bus", "direct_provider"],
+      "duration_fields": [
+        "stt_ms",
+        "decision_ms",
+        "tts_first_chunk_ms",
+        "tts_total_ms",
+        "turn_total_ms"
+      ],
+      "duration_unit": "milliseconds",
+      "duration_minimum": 0,
+      "duration_maximum": 86400000
+    }
+  },
   "base_path": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge",
   "authentication_headers": [
     "Authorization",
