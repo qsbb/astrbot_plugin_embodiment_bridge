@@ -6,12 +6,12 @@ from typing import Any
 from aiohttp import web
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.api_principal import (
+from astrbot_plugin_embodiment_bridge.adapters.api_principal import (
     PROOF_PATH,
     ApiPrincipalVerificationError,
     AstrBotApiPrincipalVerifier,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.identity_control_plane import (
+from astrbot_plugin_embodiment_bridge.adapters.identity_control_plane import (
     authenticated_principal_digest,
 )
 

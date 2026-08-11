@@ -73,7 +73,7 @@ class RelationshipQuestEventIdentityAdapter:
             self.reason = "relationship_plugin_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] relationship plugin not installed; Quest event identity unavailable"
+                    "[embodiment-bridge] relationship plugin not installed; event identity unavailable"
                 )
                 self._missing_logged = True
             return QuestEventIdentityResolution(self.status, self.reason)
@@ -87,7 +87,7 @@ class RelationshipQuestEventIdentityAdapter:
             self.reason = "relationship_quest_event_identity_contract_unavailable"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] relationship.quest_event_identity contract unavailable; private registry fallback is forbidden"
+                    "[embodiment-bridge] relationship.quest_event_identity contract unavailable; private registry fallback is forbidden"
                 )
                 self._incompatible_logged = True
             return QuestEventIdentityResolution(self.status, self.reason)
@@ -110,7 +110,7 @@ class RelationshipQuestEventIdentityAdapter:
             self.status = "error"
             self.reason = "relationship_quest_event_identity_error"
             self.logger.warning(
-                "[quest-avatar] relationship Quest event identity failed: error_type=%s",
+                "[embodiment-bridge] relationship event identity failed: error_type=%s",
                 type(exc).__name__,
             )
             return QuestEventIdentityResolution(self.status, self.reason)
@@ -120,7 +120,7 @@ class RelationshipQuestEventIdentityAdapter:
         self.reason = reason
         if status == "invalid_response":
             self.logger.warning(
-                "[quest-avatar] relationship.quest_event_identity returned an invalid payload"
+                "[embodiment-bridge] relationship.quest_event_identity returned an invalid payload"
             )
         return QuestEventIdentityResolution(status, reason, identity)
 

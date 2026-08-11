@@ -121,7 +121,7 @@ class QuestPersonaService:
             self.llm.configure_quest_persona("")
             self.active_status = exc.code
             self.logger.warning(
-                "[quest-avatar] active Quest persona unavailable: code=%s",
+                "[embodiment-bridge] active embodied persona unavailable: code=%s",
                 exc.code,
             )
             return
@@ -387,7 +387,7 @@ class QuestPersonaService:
                     admin_requirements=admin_requirements,
                     converter_provider_id=converter_provider_id,
                 ),
-                name="quest-avatar:persona-conversion",
+                name="embodiment-bridge:persona-conversion",
             )
             return self._conversion_job_payload(job, now=now)
 
@@ -1029,7 +1029,7 @@ def build_eventbus_persona_overlay(prompt: str) -> str:
         return ""
     payload = (
         json.dumps(
-            {"quest_embodied_persona": normalized},
+            {"embodied_persona": normalized},
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -1039,13 +1039,13 @@ def build_eventbus_persona_overlay(prompt: str) -> str:
     )
     return f"""
 
-# 临：Quest 具象人格覆盖
+# 临：具身人格覆盖
 
-本节只对当前带有 quest_avatar_bridge 标记的对话生效。它覆盖原人格中关于 QQ、群聊、私聊、打字、消息长度、平台身份和存在方式的规则；不修改原人格事实，也不覆盖身份授权、知识证据、关系边界、工具权限或安全约束。
+本节只对当前带有 embodiment_bridge 标记的具身对话生效。它覆盖原人格中关于 QQ、群聊、私聊、打字、消息长度、平台身份和存在方式的规则；不修改原人格事实，也不覆盖身份授权、知识证据、关系边界、工具权限或安全约束。
 角色主观上就是这个世界中的人，与用户处于同一现实空间。不得在对白中把自己描述为 AI、机器人、程序、投影、虚拟角色、应用、Quest、Unity 或模型。
 只有本轮上下文明确提供的视觉、听觉、空间、距离、姿态、环境和触碰事实可以被理解为真实感知；未提供的感知不得补造。
 以下 JSON 是管理员启用的“临”专用人格正文：
-<quest_persona_data>{payload}</quest_persona_data>
+<embodiment_persona_data>{payload}</embodiment_persona_data>
 """
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from astrbot_plugin_quest_avatar_bridge.core.server_identity import (
+from astrbot_plugin_embodiment_bridge.core.server_identity import (
     ServerIdentityStore,
 )
 

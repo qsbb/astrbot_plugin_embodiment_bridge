@@ -8,19 +8,23 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters import astrbot_pipeline
-from astrbot_plugin_quest_avatar_bridge.core.avatar_action_tool import (
+from astrbot_plugin_embodiment_bridge.adapters import astrbot_pipeline
+from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
     QUEST_ACTION_INTENT_EXTRA,
+    QUEST_ACTION_PARSE_EXTRA,
+    prepare_quest_action_request,
 )
-from astrbot_plugin_quest_avatar_bridge.core.avatar_skills import AvatarSkillRegistry
+from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
 
 
 class QueueStub:
     def __init__(self) -> None:
         self.event: Any | None = None
+        self.put_count = 0
 
     def put_nowait(self, event: Any) -> None:
         self.event = event
+        self.put_count += 1
 
 
 class ContextStub:
@@ -126,16 +130,21 @@ def test_delivery_plan_recovers_text_when_voice_plugin_removed_plain_chain(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    "action",
+    ("dance", "dance_next", "raise_hand", "turn_half", "sit", "lie"),
+)
 def test_eventbus_action_tool_intent_replaces_fixed_talk_decision(
     monkeypatch: pytest.MonkeyPatch,
+    action: str,
 ) -> None:
     async def scenario() -> None:
         context = ContextStub()
         event = CaptureEventStub("那我换一支舞。")
-        event.set_extra("quest_avatar_bridge", True)
+        event.set_extra("embodiment_bridge", True)
         event.set_extra(
             QUEST_ACTION_INTENT_EXTRA,
-            AvatarSkillRegistry.invoke("dance_next", {"intensity": 0.7}),
+            AvatarSkillRegistry.invoke(action, {"intensity": 0.7}),
         )
         monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
         adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
@@ -147,8 +156,64 @@ def test_eventbus_action_tool_intent_replaces_fixed_talk_decision(
         decision = await adapter.generate(session=session(), user_text="换个舞蹈")
 
         assert decision.reply_text == "那我换一支舞。"
-        assert decision.intent.gesture.value == "dance_next"
-        assert decision.intent.reason_code == "skill_dance_next"
+        assert decision.intent.gesture.value == action
+        assert decision.intent.reason_code == f"skill_{action}"
+        assert context.queue.put_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_explicit_action_keeps_one_eventbus_model_pass_without_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        model_calls = 0
+        tool_handler_calls = 0
+
+        class ProcessingEvent(CaptureEventStub):
+            def __init__(self) -> None:
+                super().__init__("")
+                self.message_str = "请随便跳个舞"
+                self.set_extra("embodiment_bridge", True)
+                self.request = SimpleNamespace(func_tool=None, system_prompt="base")
+
+            async def wait_completed(self) -> None:
+                nonlocal model_calls, tool_handler_calls
+
+                async def tool_handler(*_args: Any, **_kwargs: Any) -> str:
+                    nonlocal tool_handler_calls
+                    tool_handler_calls += 1
+                    return "unused"
+
+                await prepare_quest_action_request(
+                    self.request,
+                    self,
+                    tool_handler,
+                    None,
+                )
+                model_calls += 1
+                self.text = "EventBus reply"
+
+        event = ProcessingEvent()
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(
+            session=session(),
+            user_text="请随便跳个舞",
+        )
+
+        assert context.queue.put_count == 1
+        assert model_calls == 1
+        assert tool_handler_calls == 0
+        assert event.request.func_tool is None
+        assert decision.intent.gesture.value == "dance"
+        assert decision.intent.reason_code == "skill_dance"
 
     asyncio.run(scenario())
 
@@ -312,7 +377,10 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert isinstance(message, FakeAstrMessageEvent)
     assert message.native_factory is True
     assert message.get_extra("_api_key_allow_admin_role") is False
-    identity = message.get_extra("quest_avatar_bridge.identity_context")
+    staged_action = message.get_extra(QUEST_ACTION_PARSE_EXTRA)
+    assert staged_action.status == "not_explicit"
+    assert staged_action.action is None
+    identity = message.get_extra("embodiment_bridge.identity_context")
     assert identity["platform_id"] == "trusted-platform"
     assert identity["user_id"] == "bound-user"
     assert identity["trusted"] is True

@@ -5,13 +5,13 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_pipeline import (
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline import (
     MessagePipelineUnavailable,
 )
-from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import (
+from astrbot_plugin_embodiment_bridge.core.interaction_policy import (
     InteractionPolicy,
 )
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.models import (
     AudioChunkRequest,
     Emotion,
     Gesture,
@@ -21,13 +21,13 @@ from astrbot_plugin_quest_avatar_bridge.core.models import (
     SessionStartRequest,
     TurnStartRequest,
 )
-from astrbot_plugin_quest_avatar_bridge.core.server_timing import (
+from astrbot_plugin_embodiment_bridge.core.server_timing import (
     MAX_TIMING_MS,
     SERVER_TIMING_CONTRACT,
     ServerTimingState,
 )
-from astrbot_plugin_quest_avatar_bridge.core.session_manager import SessionManager
-from astrbot_plugin_quest_avatar_bridge.core.turn_orchestrator import TurnOrchestrator
+from astrbot_plugin_embodiment_bridge.core.session_manager import SessionManager
+from astrbot_plugin_embodiment_bridge.core.turn_orchestrator import TurnOrchestrator
 
 
 TIMING_KEYS = {

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_llm import AstrBotLLMAdapter
-from astrbot_plugin_quest_avatar_bridge.core.avatar_skills import AvatarSkillRegistry
-from astrbot_plugin_quest_avatar_bridge.core.intent_parser import IntentParser
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_llm import AstrBotLLMAdapter
+from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
+from astrbot_plugin_embodiment_bridge.core.intent_parser import IntentParser
 
 
 def test_skill_registry_is_allowlisted_and_bounded() -> None:

@@ -13,7 +13,13 @@ from ..core.models import (
     ModelDecision,
     ProposedIntent,
 )
-from ..core.avatar_action_tool import read_selected_intent
+from ..core.avatar_action_tool import read_selected_intent, stage_explicit_action
+from ..core.plugin_identity import (
+    BRIDGE_EVENT_MARKER,
+    BRIDGE_IDENTITY_CONTEXT,
+    LEGACY_BRIDGE_EVENT_MARKER,
+    LEGACY_BRIDGE_IDENTITY_CONTEXT,
+)
 from ..core.session_manager import SessionState
 
 
@@ -26,7 +32,7 @@ class MessagePipelineEmpty(RuntimeError):
 
 
 class AstrBotMessagePipelineAdapter:
-    """Submit an authorized Quest utterance to AstrBot's normal EventBus."""
+    """Submit an authorized embodied-client utterance to AstrBot's EventBus."""
 
     def __init__(
         self,
@@ -236,10 +242,10 @@ def _build_capture_event(
 
     message = AstrBotMessage()
     message.self_id = str(bot_id)
-    message.sender = MessageMember(str(user_id), "Quest")
+    message.sender = MessageMember(str(user_id), "Embodied Client")
     message.type = MessageType.GROUP_MESSAGE if group_id else MessageType.FRIEND_MESSAGE
     message.session_id = str(group_id or user_id)
-    message_id = "quest-" + uuid.uuid4().hex
+    message_id = "embodiment-" + uuid.uuid4().hex
     message.message_id = message_id
     message.message = [Plain(str(user_text))]
     message.message_str = str(user_text)
@@ -315,22 +321,28 @@ def _build_capture_event(
     event.cleanup_temporary_local_files = types.MethodType(cleanup, event)
     event.wait_completed = types.MethodType(wait_completed, event)
     event.captured_text = types.MethodType(captured_text, event)
-    # A Quest bridge session can never inherit AstrBot administrator role from
+    # An embodiment bridge session can never inherit AstrBot administrator role from
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
-    event.set_extra("quest_avatar_bridge", True)
+    event.set_extra(BRIDGE_EVENT_MARKER, True)
+    # Deprecated compatibility markers are emitted for one major release so
+    # existing series plugins can migrate without losing authorized context.
+    event.set_extra(LEGACY_BRIDGE_EVENT_MARKER, True)
+    stage_explicit_action(event, user_text)
+    identity_context = {
+        "platform_id": str(platform_meta.id),
+        "bot_id": str(bot_id),
+        "user_id": str(user_id),
+        "group_id": str(group_id or ""),
+        "session_id": str(message.session_id),
+        "trusted": True,
+    }
     event.set_extra(
-        "quest_avatar_bridge.identity_context",
-        {
-            "platform_id": str(platform_meta.id),
-            "bot_id": str(bot_id),
-            "user_id": str(user_id),
-            "group_id": str(group_id or ""),
-            "session_id": str(message.session_id),
-            "trusted": True,
-        },
+        BRIDGE_IDENTITY_CONTEXT,
+        identity_context,
     )
-    # Quest streams TTS through Protocol 1.0 after the text decision. Mark the
+    event.set_extra(LEGACY_BRIDGE_IDENTITY_CONTEXT, identity_context)
+    # The client streams TTS through Protocol 1.0 after the text decision. Mark the
     # synthetic event handled so voice_hub does not synthesize the same reply.
     event.set_extra("mimo_tts_handled", True)
     return event
@@ -369,7 +381,7 @@ def _bridge_raw_message(
     """
     message_type = "group" if group_id else "private"
     raw: dict[str, Any] = {
-        "source": "quest_avatar_bridge",
+        "source": "embodiment_bridge",
         "platform": platform_name,
         "post_type": "message",
         "message_type": message_type,
@@ -377,7 +389,7 @@ def _bridge_raw_message(
         "user_id": user_id,
         "message_id": message_id,
         "message": [{"type": "text", "data": {"text": user_text}}],
-        "sender": {"user_id": user_id, "nickname": "Quest"},
+        "sender": {"user_id": user_id, "nickname": "Embodied Client"},
     }
     if group_id:
         raw["group_id"] = group_id

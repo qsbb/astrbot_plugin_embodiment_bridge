@@ -199,6 +199,7 @@ class SessionManager:
         self.max_concurrent_interactions = max(1, min(max_concurrent_interactions, 8))
         self._sessions: dict[str, SessionState] = {}
         self._lock = asyncio.Lock()
+        self._accepting = True
         self._terminated = False
 
     async def start_session(
@@ -212,6 +213,8 @@ class SessionManager:
         async with self._lock:
             if self._terminated:
                 raise SessionConflict("bridge is terminating")
+            if not self._accepting:
+                raise SessionConflict("bridge is not accepting new sessions")
             existing = self._sessions.get(request.session_id)
             if existing is not None:
                 if not self._same_session_identity(existing, request, owner):
@@ -244,6 +247,11 @@ class SessionManager:
             )
             self._sessions[request.session_id] = session
             return session
+
+    async def set_accepting(self, accepting: bool) -> None:
+        """Atomically gate session creation during service lifecycle changes."""
+        async with self._lock:
+            self._accepting = bool(accepting) and not self._terminated
 
     @staticmethod
     def _same_session_identity(
@@ -506,6 +514,7 @@ class SessionManager:
 
     async def terminate(self) -> None:
         async with self._lock:
+            self._accepting = False
             self._terminated = True
             sessions = list(self._sessions.values())
             self._sessions.clear()

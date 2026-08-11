@@ -3,11 +3,12 @@ from __future__ import annotations
 import ast
 import json
 import re
+import struct
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.4.22"
+EXPECTED_VERSION = "1.0.0"
 
 
 def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
@@ -67,3 +68,11 @@ def test_main_uses_public_astrbot_filter_import_path() -> None:
         and any(alias.name == "filter" for alias in node.names)
         for node in imports
     )
+
+
+def test_plugin_logo_is_a_valid_square_png() -> None:
+    logo = (ROOT / "logo.png").read_bytes()
+    assert logo.startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(logo) <= 512 * 1024
+    width, height = struct.unpack(">II", logo[16:24])
+    assert (width, height) == (256, 256)

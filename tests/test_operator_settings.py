@@ -6,14 +6,14 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_persona import (
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_persona import (
     AstrBotPersonaAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.core.operator_settings import (
+from astrbot_plugin_embodiment_bridge.core.operator_settings import (
     OperatorSettings,
     OperatorSettingsError,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.identity_control_plane import (
+from astrbot_plugin_embodiment_bridge.adapters.identity_control_plane import (
     IdentityControlPlaneError,
 )
 

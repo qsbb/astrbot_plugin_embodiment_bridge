@@ -1,6 +1,6 @@
-# Quest Avatar Bridge 前端接口文档
+# AstrBot Embodiment Bridge 客户端接口文档
 
-本文档面向 Meta Quest 3 上的 Unity MMD/VRM 前端。插件作者为 `qsbb`，中文名凌溪。
+本文档面向实现 Protocol 1.0 的具身客户端；当前官方客户端“伴夏”运行于 Meta Quest 3，并实现 PMX/VMD。插件作者为 `qsbb`，展示名为“凝心溯溪-临”。
 
 本机 AstrBot/Unity 部署步骤、安全配置和 curl 联调命令见 [LOCAL_INTEGRATION_CN.md](LOCAL_INTEGRATION_CN.md)。可执行协议样本位于 [`fixtures/protocol_v1/`](../fixtures/protocol_v1/)。
 
@@ -18,11 +18,11 @@ Unity 只上报事实、播放音频并执行模型无关的语义意图。角�
 
 ### 1.1 语音适配器可用性
 
-STT 与 AstrBot Core TTS 默认关闭。管理员在「Quest 角色设置」Page 中把 `astrbot_stt_provider_id` 显式设置为一个已实例化的正式 `STTProvider` 后，Bridge 才调用其 `get_text(audio_url)`；所选实例缺失时失败关闭，不自动切换其他 Provider。目录和状态只包含 `id`、`model`、`adapter_type`、`provider_type`，不读取或返回 Provider 原始配置、API 地址、API Key 或 headers。AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract；第三方能力必须通过 AstrBot 正式 Provider 机制注册为 `STTProvider` 才能被选择。
+STT 与 AstrBot Core TTS 默认关闭。管理员在具身服务控制台中把 `astrbot_stt_provider_id` 显式设置为一个已实例化的正式 `STTProvider` 后，Bridge 才调用其 `get_text(audio_url)`；所选实例缺失时失败关闭，不自动切换其他 Provider。目录和状态只包含 `id`、`model`、`adapter_type`、`provider_type`，不读取或返回 Provider 原始配置、API 地址、API Key 或 headers。AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract；第三方能力必须通过 AstrBot 正式 Provider 机制注册为 `STTProvider` 才能被选择。
 
 旧版 Bridge 私有 MiMo URL、Key、model 不再作为推荐或可见配置入口；迁移到正式 Provider 时会清理旧字段，但管理响应、日志和 Page 都不会回显旧密钥。旧 `enable_astrbot_stt=true` 且新 Provider ID 为空的安装仅保留临时默认 Provider 兼容路径。TTS 边界没有改变：“声”的 `voice.audio_output@1.0` 仍默认作为首选 TTS，缺插件或契约不兼容时安全降级；显式启用的 Core fallback 仍读取 AstrBot 当前默认 TTS Provider。本插件不通过 `hasattr()`/`getattr()` 猜测跨插件接口，也不调用 `voice.delivery@1.0` 或内部 `synthesize_text()`。
 
-STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS 同样整轮生成：Bridge 优先调用“声”的 `render_pcm_wav()`，严格校验 provider 管理的 PCM16 WAV；必要时回退 `TTSProvider.get_audio(text)`。最终都转换为 24000 Hz 单声道 PCM16 SSE 块。
+STT 是文件式整轮调用：`audio/end` 后才把输入封装成 16000 Hz 单声道 PCM16 WAV 交给 `STTProvider.get_text(audio_url)`，因此当前不会产生 `asr.partial`。TTS Provider 单次调用仍返回文件：Bridge 优先调用“声”的 `render_pcm_wav()`，严格校验 provider 管理的 PCM16 WAV；必要时回退 `TTSProvider.get_audio(text)`。Bridge 会按有界句段顺序调用 Provider，并通过容量为 2 的异步队列尽早发送已完成句段；最终都转换为 24000 Hz 单声道 PCM16 SSE 块。
 
 AstrBot 的 TTS Provider 基类只承诺“返回音频文件路径”，不承诺采样率、声道或编码。本插件接受未压缩 PCM16 WAV（单声道或立体声、8000-192000 Hz），立体声会下混，采样率会转换到 24000 Hz；MP3、压缩/浮点 WAV、截断或超限文件产生 `tts_failed`，文字仍会保留。`emotion` 只参与角色意图决策，不会被猜测性地传给没有该参数的 Provider。
 
@@ -37,13 +37,13 @@ http://192.168.1.10:6185
 接口基地址为：
 
 ```text
-http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://192.168.1.10:6185/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge
 ```
 
 启用内置 listener 后，Quest 私网统一入口可改为：
 
 ```text
-http://192.168.50.10:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://192.168.50.10:8520/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge
 ```
 
 两者的 Protocol 1.0 请求和 SSE 字段完全一致。8520 只是严格白名单入口，不是 Dashboard 或通用反向代理。
@@ -51,8 +51,8 @@ http://192.168.50.10:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_
 配对完成后的所有正常请求，包括 SSE 和 health，都必须携带：
 
 ```http
-Authorization: Bearer <ASTRBOT_API_KEY_WITH_PLUGIN_SCOPE>
-X-Quest-Avatar-Key: <bridge_api_key>
+Authorization: ApiKey <ASTRBOT_API_KEY_WITH_PLUGIN_SCOPE>
+X-Embodiment-Bridge-Key: <bridge_api_key>
 ```
 
 所有 POST 请求还必须携带：
@@ -66,16 +66,16 @@ Content-Type: application/json
 - AstrBot API Key 必须具有 `plugin` scope。
 - `bridge_api_key` 必须与插件配置一致，且配置值至少 32 字符。
 - 创建会话和后续访问必须使用同一个 AstrBot API Key 身份。
-- 内置 listener 上只有精确 `POST .../pairing/exchange` 不要求 `Authorization` 或 `X-Quest-Avatar-Key`；它只接受一次性 token/6 位短码，成功后下发两把长期密钥。
+- 内置 listener 上只有新插件 ID 下的精确 `POST .../pairing/exchange` 不要求 `Authorization` 或 `X-Embodiment-Bridge-Key`；它只接受一次性 token/6 位短码，成功后下发两把长期密钥。旧 Header 仅作已绑定客户端兼容。
 - 8520 上的 health/session/events/turn/audio/interaction/interrupt/close 不属于匿名能力，listener 不自动添加或替换任何认证头。
 - 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing`、Page 本次 `allow_insecure_http`，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
-- 公网必须使用 Quest 信任的 HTTPS；内置 listener 不提供公网 TLS 终止。不要把 Dashboard 暴露到公网。
+- 公网必须使用客户端信任的 HTTPS；内置 listener 不提供公网 TLS 终止。不要把 Dashboard 暴露到公网。
 - `pairing_listener_public_url` 可填写主机 base URL、插件 base URL 或精确 exchange URL，服务端会规范化到精确路径；不会猜测宿主机 IP。
 - 内置 listener 不读取 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 或 `X-Quest-Pairing-Source`，exchange 来源只使用直接 TCP peer IP。
 
 ### 2.1 管理员服务控制
 
-「Quest 角色设置」Page 通过 AstrBot Dashboard 身份调用以下管理端点；它们不属于 Quest Protocol 1.0，也不会由 8520 listener 代理：
+具身服务控制台通过 AstrBot Dashboard 身份调用以下管理端点；它们不属于运行时 Protocol 1.0，也不会由 8520 listener 代理：
 
 ```http
 GET /pairing/service-status
@@ -89,7 +89,7 @@ Content-Type: application/json
 {"enabled": false}
 ```
 
-关闭服务会持久化 `bridge_service_enabled=false`、关闭全部 Quest 会话并停止内置 listener。正常 Quest 业务接口随后返回 `503 bridge_service_disabled`；认证 `GET /health`、本节两个管理端点和管理 Page 继续可用。重新开启后 listener 会直接恢复，不要求热重载插件。
+关闭服务会持久化 `bridge_service_enabled=false`、关闭全部具身会话并停止内置 listener。正常业务接口随后返回 `503 bridge_service_disabled`；认证 `GET /health`、本节两个管理端点和管理 Page 继续可用。重新开启后 listener 会直接恢复，不要求热重载插件。
 
 ## 3. 推荐调用顺序
 
@@ -182,7 +182,7 @@ sequenceDiagram
 
 | 方法 | 完整路径 | 认证 | 用途 |
 |---|---|---|---|
-| POST | `/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/exchange` | 一次性 token 或 6 位短码 | 首次匿名兑换 |
+| POST | `/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/pairing/exchange` | 一次性 token 或 6 位短码 | 首次匿名兑换 |
 
 以下路径在 8520 上一律拒绝，不能作为 Unity API：
 
@@ -205,7 +205,7 @@ sequenceDiagram
 
 | 方法 | 路径 | 成功状态 | 用途 |
 |---|---|---:|---|
-| POST | `/pairing/listener-port` | 200 | 保存并立即应用内置 listener 端口；默认 8520，修改会断开旧端口上的 Quest 会话 |
+| POST | `/pairing/listener-port` | 200 | 保存并立即应用内置 listener 端口；默认 8520，修改会断开旧端口上的具身会话 |
 | GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
 | GET | `/pairing/stt-settings` | 200 | 枚举已实例化正式 STT Provider 的安全摘要并读取当前选择/降级状态 |
@@ -224,7 +224,7 @@ sequenceDiagram
 | POST | `/pairing/persona-profile-save` | 200 | 保存已审阅的转换草稿或手动人格；保存不自动启用 |
 | POST | `/pairing/persona-profile-activate` | 200 | 验证并启用临人格；空 `profile_id` 表示停用并实时继承 AstrBot |
 | POST | `/pairing/persona-profile-delete` | 200 | 删除未启用的临人格；当前启用项返回 409 |
-| GET | `/pairing/quest-identity-settings` | 200 | 读取脱敏的 Quest 客户端、平台、Bot、主人和统一身份控制面状态 |
+| GET | `/pairing/quest-identity-settings` | 200 | 读取脱敏的具身客户端、平台、Bot、主人和统一身份控制面状态；路径名为 1.0 兼容字段 |
 | POST | `/pairing/quest-identity-settings` | 200 | 保存 Quest 身份；有“序”时原子写入主人和摘要白名单，缺失时启用“临”本地精确绑定 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
@@ -269,7 +269,7 @@ STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；
 
 `persona_source_mode=astrbot` 时，非空 `astrbot_persona_id` 必须由管理员 Page 从 AstrBot 公开人格目录选择并由后端重新校验；空值继承 AstrBot 明确默认人格。删除或失效的显式人格失败关闭到通用 MR 身份，不会自动切换默认或其他人格。`manual_override` 才会启用后四个兼容字段。
 
-Unity 的任何 Protocol 1.0 请求都不接受 persona 内容或 persona ID。Quest 当前没有可信 AstrBot UMO/Conversation ID 映射，故服务端保存的 `astrbot_persona_id` 是 Quest 会话人格选择；不得信任客户端自报。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。
+具身客户端的任何 Protocol 1.0 请求都不接受 persona 内容或 persona ID。当前客户端没有可信 AstrBot UMO/Conversation ID 映射，故服务端保存的 `astrbot_persona_id` 是具身会话人格选择；不得信任客户端自报。`relationship_person_id` 只选择授权后的关系快照，绝不能推断或覆盖姓名、自称、经历和角色身份。
 
 诊断端点只返回 `event/component/code/error_type/duration_ms/status`，不返回时间戳、路径、正文、音频、Provider ID、会话或身份标识、配置值和密钥。它只存在于 AstrBot 认证后的 Dashboard/plugin-scope 路由，内置 8520 listener 不代理。
 
@@ -323,7 +323,7 @@ POST /session/start
   "data": {
     "protocol_version": "1.0",
     "session_id": "s1",
-    "events_url": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/events/s1",
+    "events_url": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/events/s1",
     "protected_context": {
       "authorized": false,
       "reason": "trusted_client_id_missing"
@@ -809,6 +809,8 @@ look_at: user | hand | away | none
 
 `in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。
 
+Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求只允许预选 `dance`、`dance_next`、`raise_hand`、`turn_half`、`wave`、`bow`、`sit`、`lie`，并通过与模型工具相同的 `AvatarSkillRegistry` 和严格 handler 生成 intent；该轮继续经过原有 EventBus 且只调用原有一次模型。预选成功后不再暴露动作工具，避免重复动作。否定、假设、引用、转述和讨论语境不会产生动作或暴露工具；多动作歧义及不完整表达仍可交给请求级 `embodiment_avatar_action`，未调用时维持 `talk`。客户端不参与文本解析，普通 QQ/非具身事件看不到解析器、工具或提示约束。
+
 Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降级到 `idle`；未知 `emotion` 降级到 `neutral`，未知 `look_at` 降级到 `none`。
 
 ### 15.6 `reply.end`
@@ -884,7 +886,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | `tts_failed` | 文本可用但语音合成失败 | 保留文字，停止等待音频 |
 | `owner_not_configured` | “序”尚未配置主人 | 使用真实原始账号重新配对并在“序”中完成绑定 |
 | `quest_identity_not_allowlisted` | Quest 五段身份未命中“序”的白名单 | 检查平台、Bot、用户、客户端与 API principal 绑定 |
-| `trusted_platform_not_configured` | Bridge 尚未选择可信 AstrBot 平台 | 在「Quest 角色设置」Page 选择已加载的平台实例 |
+| `trusted_platform_not_configured` | Bridge 尚未选择可信 AstrBot 平台 | 在具身服务控制台选择已加载的平台实例 |
 
 收到 interrupt 成功响应后，旧轮的 `asr.partial`、`asr.final`、`reply.text.delta`、`reply.audio.chunk`、`avatar.intent`、`error` 和 `reply.end` 均禁止继续生效。响应到达前已由网络发送的数据可能仍在客户端缓冲区，Unity 仍必须按当前 `(session_id, turn_id)` 丢弃旧轮数据。
 
@@ -896,7 +898,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | 400 | `empty_body` | 提交 JSON 请求体 |
 | 400 | `invalid_audio` | 检查 Base64、PCM16 偶数字节和 sequence |
 | 401 | `astrbot_auth_required` | 检查 AstrBot API Key |
-| 401 | `bridge_auth_failed` | 检查 `X-Quest-Avatar-Key` |
+| 401 | `bridge_auth_failed` | 检查 `X-Embodiment-Bridge-Key`；旧客户端可暂用 `X-Quest-Avatar-Key` |
 | 403 | `session_ownership_mismatch` | 使用创建会话时的 API Key |
 | 404 | `session_not_found` | 重新创建会话 |
 | 409 | `session_conflict` | 检查重复会话、活动轮次或重复 SSE |
@@ -905,7 +907,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | 422 | `schema_validation_failed` | 按本文档修正字段、枚举和范围 |
 | 500 | `internal_error` | 记录请求 ID/状态并查看 AstrBot 日志，不要无限重试 |
 | 503 | `bridge_not_configured` | 配置至少 32 字符的 bridge key |
-| 503 | `bridge_service_disabled` | 在「Quest 角色设置」Page 重新启动服务 |
+| 503 | `bridge_service_disabled` | 在具身服务控制台重新启动服务 |
 
 ## 17. Unity 实现检查表
 

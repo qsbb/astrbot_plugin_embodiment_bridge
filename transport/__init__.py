@@ -1,1 +1,1 @@
-"""Transport implementations for the Quest avatar bridge."""
+"""Transport implementations for the embodiment bridge."""

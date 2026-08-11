@@ -244,7 +244,7 @@ class TurnOrchestrator:
 
         task = asyncio.create_task(
             runner(),
-            name=f"quest-avatar:{session.session_id}:{turn.turn_id}",
+            name=f"embodiment-bridge:{session.session_id}:{turn.turn_id}",
         )
         assigned = await self.sessions.assign_task(session, turn, task)
         gate.set()
@@ -337,7 +337,8 @@ class TurnOrchestrator:
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             self.logger.warning(
-                "[quest-avatar] STT turn failed: error_type=%s", type(exc).__name__
+                "[embodiment-bridge] STT turn failed: error_type=%s",
+                type(exc).__name__,
             )
             await self._emit_terminal_error(
                 session, turn, "stt_failed", "Speech recognition failed"
@@ -365,7 +366,7 @@ class TurnOrchestrator:
                 reason_code=reason,
             )
             self.logger.warning(
-                "[quest-avatar] AstrBot message pipeline unavailable: reason=%s",
+                "[embodiment-bridge] AstrBot message pipeline unavailable: reason=%s",
                 reason,
             )
             await self._emit_terminal_error(
@@ -384,7 +385,8 @@ class TurnOrchestrator:
                 error_type=type(exc).__name__,
             )
             self.logger.warning(
-                "[quest-avatar] text turn failed: error_type=%s", type(exc).__name__
+                "[embodiment-bridge] text turn failed: error_type=%s",
+                type(exc).__name__,
             )
             await self._emit_terminal_error(
                 session, turn, "turn_failed", "Turn generation failed"
@@ -412,7 +414,7 @@ class TurnOrchestrator:
             raise
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] interaction turn failed: error_type=%s",
+                "[embodiment-bridge] interaction turn failed: error_type=%s",
                 type(exc).__name__,
             )
             await self._emit_terminal_error(
@@ -611,7 +613,20 @@ class TurnOrchestrator:
             interaction=interaction,
             relationship=relationship,
         )
-        if not await self._emit(session, turn, intent.model_dump(mode="json")):
+        intent_emitted = await self._emit(session, turn, intent.model_dump(mode="json"))
+        self._diagnostic(
+            "avatar.intent.emitted" if intent_emitted else "avatar.intent.dropped",
+            component="action",
+            operation=intent.gesture.value,
+            status="completed" if intent_emitted else "cancelled",
+            reason_code=(intent.reason_code if intent_emitted else "turn_not_current"),
+            emotion=intent.emotion.value,
+            gesture=intent.gesture.value,
+            look_at=intent.look_at.value,
+            intensity=intent.intensity,
+            duration_ms=intent.duration_ms,
+        )
+        if not intent_emitted:
             return
 
         text = decision.reply_text.strip() if decision.should_reply else ""
@@ -678,7 +693,8 @@ class TurnOrchestrator:
                     duration_ms=(time.perf_counter() - tts_started) * 1000,
                 )
                 self.logger.warning(
-                    "[quest-avatar] TTS failed: error_type=%s", type(exc).__name__
+                    "[embodiment-bridge] TTS failed: error_type=%s",
+                    type(exc).__name__,
                 )
                 if not await self._emit_error(
                     session,
@@ -753,7 +769,7 @@ class TurnOrchestrator:
             "missing_client_id",
             "trusted_client_id_missing",
         }:
-            return "Quest 客户端 ID 与服务端可信配置不匹配"
+            return "具身客户端 ID 与服务端可信配置不匹配"
         if reason in {
             "missing_platform_id",
             "trusted_platform_id_missing",
@@ -800,7 +816,7 @@ class TurnOrchestrator:
             send_observed=snapshot.get("last_send_observed"),
         )
         self.logger.warning(
-            "[quest-avatar] AstrBot message pipeline returned no reply: reason=%s",
+            "[embodiment-bridge] AstrBot message pipeline returned no reply: reason=%s",
             reason,
         )
         await self._emit_terminal_error(
@@ -827,7 +843,7 @@ class TurnOrchestrator:
             raise
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] relationship snapshot failed: error_type=%s",
+                "[embodiment-bridge] relationship snapshot failed: error_type=%s",
                 type(exc).__name__,
             )
             return None
@@ -1001,7 +1017,9 @@ class TurnOrchestrator:
                 if send_sentinel:
                     await queue.put(None)
 
-        producer = asyncio.create_task(produce(), name="quest-avatar:tts-producer")
+        producer = asyncio.create_task(
+            produce(), name="embodiment-bridge:tts-producer"
+        )
         try:
             while True:
                 chunk = await queue.get()

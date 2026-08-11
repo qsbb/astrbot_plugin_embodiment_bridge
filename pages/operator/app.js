@@ -100,7 +100,7 @@ function serviceReasonLabel(reason) {
     invalid_port: "监听端口配置无效",
     invalid_upstream_url: "AstrBot 回环上游配置无效",
     listener_unavailable: "内置监听器不可用",
-    pairing_listener_public_url_missing: "服务已运行，但尚未配置 Quest 可达地址"
+    pairing_listener_public_url_missing: "服务已运行，但尚未配置客户端可达地址"
   };
   return labels[String(reason || "")] || "服务状态需要检查";
 }
@@ -201,14 +201,14 @@ async function loadServiceStatus({ silent = false } = {}) {
 async function toggleService() {
   const button = document.getElementById("service-control-button");
   const enabled = button.dataset.nextEnabled === "true";
-  if (!enabled && !window.confirm("关闭服务会断开当前 Quest 会话，确定继续吗？")) {
+  if (!enabled && !window.confirm("关闭服务会断开当前具身会话，确定继续吗？")) {
     return;
   }
   if (!setButtonBusy(button, true, enabled ? "启动中…" : "关闭中…")) return;
   try {
     const response = await apiPost("pairing/service-control", { enabled });
     renderServiceStatus(response.service);
-    toast(enabled ? "Quest Bridge 服务已启动" : "Quest Bridge 服务已关闭");
+    toast(enabled ? "具身桥接服务已启动" : "具身桥接服务已关闭");
   } catch (error) {
     toast((enabled ? "启动" : "关闭") + "服务失败：" + error.message, true);
   } finally {
@@ -226,7 +226,7 @@ async function saveListenerPort() {
     return;
   }
   const active = Number(serviceState?.sessions?.active_sessions || 0);
-  if (active > 0 && !window.confirm("修改端口会断开当前 Quest 会话，确定继续吗？")) {
+  if (active > 0 && !window.confirm("修改端口会断开当前具身会话，确定继续吗？")) {
     return;
   }
   if (!setButtonBusy(button, true, "应用中…")) return;
@@ -1348,7 +1348,7 @@ function renderQuestIdentitySettings(identity) {
   document.getElementById("quest-api-key").placeholder =
     questIdentitySettings.astrbot_auth_configured
       ? "已配置，可留空并重新验证"
-      : "请填写 Quest 专用 API Key";
+      : "请填写具身客户端专用 API Key";
   ["quest-client-id", "quest-bot-id", "quest-user-id", "quest-api-key"]
     .forEach((id) => { document.getElementById(id).disabled = !writable; });
 
@@ -1608,12 +1608,12 @@ function diagnosticReasonLabel(code) {
     quest_identity_not_allowlisted: "Quest 原始身份不在“序”的允许列表",
     local_identity_not_configured: "“临”的本地 Quest 身份尚未配置完整",
     local_api_principal_mismatch: "Quest 使用的 AstrBot API Key 与本地绑定不一致",
-    local_quest_identity_mismatch: "Quest 客户端、平台、Bot 或主人用户与本地绑定不一致",
+    local_quest_identity_mismatch: "具身客户端、平台、Bot 或主人用户与本地绑定不一致",
     invalid_user_id: "Quest 用户 ID 无效或仍是占位值",
     missing_user_id: "Quest 用户 ID 缺失",
     invalid_bot_id: "Quest Bot ID 无效",
     missing_bot_id: "Quest Bot ID 缺失",
-    client_id_mismatch: "Quest 客户端 ID 与服务端配置不一致",
+    client_id_mismatch: "具身客户端 ID 与服务端配置不一致",
     trusted_platform_not_configured: "尚未配置可进入 EventBus 的 AstrBot 平台",
     trusted_platform_unavailable: "已配置的 AstrBot 平台当前不可用",
     astrbot_event_api_unavailable: "当前 AstrBot 不提供消息事件接口",

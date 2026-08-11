@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from astrbot_plugin_quest_avatar_bridge.core.models import SessionStartRequest
+from astrbot_plugin_embodiment_bridge.core.models import SessionStartRequest
 
 
 class LoggerStub:
@@ -160,8 +160,8 @@ def install_astrbot_stubs(monkeypatch: Any, tmp_path: Path) -> RequestStub:
         sys.modules, "astrbot.core.agent", types.ModuleType("astrbot.core.agent")
     )
     monkeypatch.setitem(sys.modules, "astrbot.core.agent.tool", agent_tool)
-    sys.modules.pop("astrbot_plugin_quest_avatar_bridge.transport.http_sse", None)
-    sys.modules.pop("astrbot_plugin_quest_avatar_bridge.main", None)
+    sys.modules.pop("astrbot_plugin_embodiment_bridge.transport.http_sse", None)
+    sys.modules.pop("astrbot_plugin_embodiment_bridge.main", None)
     return request_stub
 
 
@@ -171,7 +171,7 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
 ) -> None:
     async def scenario() -> None:
         install_astrbot_stubs(monkeypatch, tmp_path)
-        module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
         context = ContextStub()
         plugin = module.QuestAvatarBridgePlugin(
             context,
@@ -191,7 +191,7 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
             "name": "series.diagnostics",
             "version": "1.0",
             "series_id": "ningxin_suxi",
-            "plugin_id": "astrbot_plugin_quest_avatar_bridge",
+            "plugin_id": "astrbot_plugin_embodiment_bridge",
             "plugin_name": "临",
             "capabilities": ("read", "clear", "read_events", "clear_events"),
             "storage": "memory_only",
@@ -202,71 +202,71 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         assert series_diagnostics["status"] == "ready"
         assert series_diagnostics["reason"] == "READY"
         bridge_diagnostics = plugin.diagnostic_log.diagnostic_events()
-        assert bridge_diagnostics["contract"] == ("quest_avatar_bridge.diagnostics@1.0")
+        assert bridge_diagnostics["contract"] == ("embodiment_bridge.diagnostics@1.0")
         assert bridge_diagnostics["status"] == "memory_only"
         assert bridge_diagnostics["reason"] == "FILE_LOG_DISABLED"
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 41
+        assert len(registered) == 50
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/service-status",
+            "/astrbot_plugin_embodiment_bridge/pairing/service-status",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/service-control",
+            "/astrbot_plugin_embodiment_bridge/pairing/service-control",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/listener-port",
+            "/astrbot_plugin_embodiment_bridge/pairing/listener-port",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/events/<session_id>",
+            "/astrbot_plugin_embodiment_bridge/events/<session_id>",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/interaction",
+            "/astrbot_plugin_embodiment_bridge/interaction",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/create",
+            "/astrbot_plugin_embodiment_bridge/pairing/create",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/exchange",
+            "/astrbot_plugin_embodiment_bridge/pairing/exchange",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/operator-settings",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/operator-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/operator-settings",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/stt-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/stt-settings",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/stt-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/stt-settings",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/platform-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/platform-settings",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/platform-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/platform-settings",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/persona-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/persona-settings",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/persona-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/persona-settings",
             ("POST",),
         ) in registered
         for suffix, methods in {
@@ -282,31 +282,31 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
             "persona-profile-delete": ("POST",),
         }.items():
             assert (
-                f"/astrbot_plugin_quest_avatar_bridge/pairing/{suffix}",
+                f"/astrbot_plugin_embodiment_bridge/pairing/{suffix}",
                 methods,
             ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/quest-identity-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/quest-identity-settings",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/quest-identity-settings",
+            "/astrbot_plugin_embodiment_bridge/pairing/quest-identity-settings",
             ("POST",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/api-principal-proof",
+            "/astrbot_plugin_embodiment_bridge/pairing/api-principal-proof",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/diagnostics",
+            "/astrbot_plugin_embodiment_bridge/pairing/diagnostics",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/identity-candidates",
+            "/astrbot_plugin_embodiment_bridge/pairing/identity-candidates",
             ("GET",),
         ) in registered
         assert (
-            "/astrbot_plugin_quest_avatar_bridge/pairing/identity-selection",
+            "/astrbot_plugin_embodiment_bridge/pairing/identity-selection",
             ("POST",),
         ) in registered
 
@@ -342,7 +342,7 @@ def test_component_construction_failure_does_not_leave_registered_routes(
     tmp_path: Path,
 ) -> None:
     install_astrbot_stubs(monkeypatch, tmp_path)
-    module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+    module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
     context = ContextStub()
 
     class FailingPairingHttpApi:
@@ -363,7 +363,7 @@ def test_persona_api_schema_rejects_extra_or_secret_fields(
 ) -> None:
     install_astrbot_stubs(monkeypatch, tmp_path)
     pairing = importlib.import_module(
-        "astrbot_plugin_quest_avatar_bridge.transport.pairing"
+        "astrbot_plugin_embodiment_bridge.transport.pairing"
     )
 
     with pytest.raises(ValidationError):
@@ -393,7 +393,7 @@ def test_http_layer_requires_both_astrbot_and_bridge_auth(
 ) -> None:
     async def scenario() -> None:
         request_stub = install_astrbot_stubs(monkeypatch, tmp_path)
-        module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
         plugin = module.QuestAvatarBridgePlugin(
             ContextStub(),
             {
@@ -419,6 +419,9 @@ def test_http_layer_requires_both_astrbot_and_bridge_auth(
         request_stub.username = "api_key:test"
         allowed = await plugin.transport.health()
         assert allowed.status_code == 200
+        request_stub.headers = {"x-embodiment-bridge-key": "s" * 32}
+        preferred = await plugin.transport.health()
+        assert preferred.status_code == 200
         await plugin.terminate()
 
     asyncio.run(scenario())
@@ -430,7 +433,7 @@ def test_http_session_schema_and_owner_are_enforced(
 ) -> None:
     async def scenario() -> None:
         request_stub = install_astrbot_stubs(monkeypatch, tmp_path)
-        module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
         plugin = module.QuestAvatarBridgePlugin(
             ContextStub(),
             {
@@ -492,7 +495,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
 ) -> None:
     async def scenario() -> None:
         install_astrbot_stubs(monkeypatch, tmp_path)
-        module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
 
         probe = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", 0)
         port = int(probe.sockets[0].getsockname()[1])
@@ -512,12 +515,12 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
                 "pairing_listener_public_url": (
                     "https://pair.example.com"
                     "/api/v1/plugins/extensions/"
-                    "astrbot_plugin_quest_avatar_bridge/pairing/exchange"
+                    "astrbot_plugin_embodiment_bridge/pairing/exchange"
                 ),
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 41
+        assert len(context.routes) == 50
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

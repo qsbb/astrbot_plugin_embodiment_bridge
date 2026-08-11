@@ -15,12 +15,13 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 
 from .models import OptionalScope, StrictModel
+from .plugin_identity import PLUGIN_ID, PUBLIC_API_PREFIX
 
 
 PAIRING_PROTOCOL_VERSION = "1.0"
 PAIRING_PAYLOAD_TYPE = "astrbot.quest.pair"
-PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
-PUBLIC_API_PATH = f"/api/v1/plugins/extensions/{PLUGIN_NAME}"
+PLUGIN_NAME = PLUGIN_ID
+PUBLIC_API_PATH = PUBLIC_API_PREFIX
 MIN_TTL_SECONDS = 60
 MAX_TTL_SECONDS = 300
 DEFAULT_TTL_SECONDS = 120

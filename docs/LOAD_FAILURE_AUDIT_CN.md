@@ -1,10 +1,10 @@
 # AstrBot 本地加载失败审计
 
-审计日期：2026-08-04。范围只包括本地 `astrbot_plugin_quest_avatar_bridge`；没有连接、上传、重载或重装远端 AstrBot。
+审计日期：2026-08-04。该历史审计范围只包括当时名为 `astrbot_plugin_quest_avatar_bridge` 的本地版本；没有连接、上传、重载或重装远端 AstrBot。插件自 1.0.0 起改名为 `astrbot_plugin_embodiment_bridge`。
 
 ## 已验证事实
 
-- `metadata.yaml` 是无 BOM 的 UTF-8，插件名为 `astrbot_plugin_quest_avatar_bridge`，作者为 `qsbb`；发布版本由版本一致性测试固定，必须与 `main.py` 的 `__version__` 和 CHANGELOG 一致。
+- `metadata.yaml` 是无 BOM 的 UTF-8；当前插件名为 `astrbot_plugin_embodiment_bridge`，作者为 `qsbb`。发布版本由版本一致性测试固定，必须与 `main.py` 的 `__version__` 和 CHANGELOG 一致。
 - 主类 `QuestAvatarBridgePlugin` 继承 `Star`，构造参数是 `Context` 与 `AstrBotConfig`，类名符合 AstrBot 4.26.8 的插件发现规则。
 - 所有 21 个 HTTP/SSE、配对与 Dashboard 管理接口均只使用 `Context.register_web_api(route, handler, methods, desc)` 四参数公开签名；人格接入直接使用 AstrBot 4.27.1 正式 `context.persona_manager`，没有读取 Core 私有配置、`register_websocket`、匿名路由参数或旧装饰器。
 - Page 位于 `pages/pairing/` 和 `pages/operator/`，标题资源位于 `.astrbot-plugin/i18n/zh-CN.json`。AstrBot Pages 按该目录结构自动发现，不需要 `page.json` 或额外注册方法。
@@ -14,7 +14,7 @@
 
 ## 已复现并修复的公开 API 不兼容
 
-AstrBot 4.26.8 的 `astrbot.api.web.request` 公开直接来源字段是 `request.client_host`，没有 `request.remote_addr`。旧代码访问后者时会得到属性错误并降级为 `invalid`，使可信代理来源与 Quest IP 绑定永远无法通过。
+AstrBot 4.26.8 的 `astrbot.api.web.request` 公开直接来源字段是 `request.client_host`，没有 `request.remote_addr`。旧代码访问后者时会得到属性错误并降级为 `invalid`，使可信代理来源与客户端 IP 绑定永远无法通过。
 
 Bridge 已改为只读取 `request.client_host`，HTTP harness 也只暴露该公开字段，并用真实本机 HTTP 路由覆盖配对 create/exchange/replay。这个问题会破坏首次配对，但它发生在插件 handler 已加载之后，不能单独解释“模块导入或热加载立即失败”。
 

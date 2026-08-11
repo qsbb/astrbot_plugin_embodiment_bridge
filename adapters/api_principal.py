@@ -8,10 +8,11 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 
 from .identity_control_plane import validate_principal_digest
+from ..core.plugin_identity import PLUGIN_ID, PUBLIC_API_PREFIX
 
 
-PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
-PROOF_PATH = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/pairing/api-principal-proof"
+PLUGIN_NAME = PLUGIN_ID
+PROOF_PATH = f"{PUBLIC_API_PREFIX}/pairing/api-principal-proof"
 MAX_PROOF_RESPONSE_BYTES = 4_096
 
 

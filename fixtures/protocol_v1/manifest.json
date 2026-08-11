@@ -18,11 +18,12 @@
       "duration_maximum": 86400000
     }
   },
-  "base_path": "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge",
+  "base_path": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge",
   "authentication_headers": [
     "Authorization",
-    "X-Quest-Avatar-Key"
+    "X-Embodiment-Bridge-Key"
   ],
+  "legacy_authentication_headers": ["X-Quest-Avatar-Key"],
   "audio": {
     "input": {
       "format": "pcm16",
@@ -75,7 +76,7 @@
     {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/status", "success_status": 200, "authentication": "astrbot_dashboard"},
     {"method": "POST", "path": "/pairing/revoke", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "reverse_proxy_plugin_scope+one_time_pairing_credential"},
+    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "builtin_listener_one_time_credential_or_astrbot_outer_auth+one_time_credential"},
     {"method": "POST", "path": "/session/start", "success_status": 201},
     {"method": "GET", "path": "/events/<session_id>", "success_status": 200},
     {"method": "POST", "path": "/turn/start", "success_status": 202},
@@ -229,7 +230,9 @@
   "pairing_bootstrap_semantics": {
     "register_web_api_anonymous_supported": false,
     "page_create_authentication": "astrbot_dashboard",
-    "exchange_core_authentication": "reverse_proxy_plugin_scope",
+    "builtin_listener_anonymous_exact_path_only": true,
+    "astrbot_extensions_exchange_requires_outer_auth": true,
+    "legacy_reverse_proxy_supported": true,
     "exchange_credential": "single_use_token_or_six_digit_code",
     "expected_remote_ip_bound_per_session": true,
     "per_source_rate_limit": true,

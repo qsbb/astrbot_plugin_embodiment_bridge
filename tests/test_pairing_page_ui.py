@@ -14,9 +14,9 @@ def test_pairing_page_is_discoverable_and_uses_page_bridge() -> None:
             encoding="utf-8"
         )
     )
-    assert metadata["pages"]["pairing"]["title"] == "Quest 快速绑定"
+    assert metadata["pages"]["pairing"]["title"] == "具身客户端快速绑定"
     assert metadata["pages"]["pairing"]["description"] == (
-        "生成一次性二维码或 6 位配对码，在 Quest 中完成绑定"
+        "生成一次性二维码或 6 位配对码，在具身客户端中完成绑定"
     )
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -24,7 +24,7 @@ def test_pairing_page_is_discoverable_and_uses_page_bridge() -> None:
     assert '<script type="module" src="./app.js"></script>' in html
     assert html.index("bridge-sdk.js") < html.index("./app.js")
     assert 'name="viewport"' in html
-    assert "凝心溯溪-临｜Quest 快速绑定" in html
+    assert "凝心溯溪-临｜具身客户端快速绑定" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
 

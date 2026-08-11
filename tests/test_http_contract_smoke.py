@@ -32,8 +32,9 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
         registered_routes = {
-            (method, route.removeprefix("/astrbot_plugin_quest_avatar_bridge"))
+            (method, route.removeprefix("/astrbot_plugin_embodiment_bridge"))
             for route, _handler, methods, _description in bundle.context.routes
+            if route.startswith("/astrbot_plugin_embodiment_bridge/")
             for method in methods
         }
         fixture_routes = {
@@ -445,7 +446,7 @@ def test_real_http_stt_unavailable_and_tts_failure_orders(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    from astrbot_plugin_quest_avatar_bridge.adapters.stt import DisabledSTTAdapter
+    from astrbot_plugin_embodiment_bridge.adapters.stt import DisabledSTTAdapter
 
     async def stt_scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path / "stt")

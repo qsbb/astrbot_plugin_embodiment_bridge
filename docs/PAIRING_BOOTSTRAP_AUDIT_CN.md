@@ -24,7 +24,7 @@ AstrBot Dashboard 对 `/api/v1/plugins/extensions/{plugin_path}` 的 GET/POST/PU
 2. Page 只展示短码和包含高熵单次 token 的 QR；不包含长期 API Key 或 Bridge Key。
 3. Quest POST 到规范化后的 `pairing_listener_public_url` 精确 exchange 路径。
 4. listener 使用直接 TCP peer IP 调用共享 `PairingExchangeService`；不经过 AstrBot 外层认证，但也不持有或注入 Dashboard JWT、代理 Key 或长期身份。
-5. Bridge 同时验证代理身份、请求 schema、TTL、单次 token/短码、可选的 Quest IP 绑定、每来源限速与全局限速，成功后立即消费并擦除内存长期密钥。
+5. Bridge 同时验证代理身份、请求 schema、TTL、单次 token/短码、可选的客户端 IP 绑定、每来源限速与全局限速，成功后立即消费并擦除内存长期密钥。
 
 旧 `pairing_exchange_proxy_url` 与 [nginx_8520_pairing.example.conf](nginx_8520_pairing.example.conf) 继续作为兼容 fallback。优先级是：已启用、已绑定且 public URL 合法的内置 listener；否则合法旧代理；两者都不可用时 `bootstrap_ready=false`，Page 禁用生成。
 
@@ -35,20 +35,20 @@ AstrBot Dashboard 对 `/api/v1/plugins/extensions/{plugin_path}` 的 GET/POST/PU
 - 服务端 `allow_private_http_pairing=true`。
 - Bridge 和 exchange URL 的主机是 RFC1918 IPv4 或 IPv6 ULA 字面量。
 
-快速绑定 Page 不读取或提交 HTTP 开关与 Quest IP。成功 configuration 才返回 `allow_insecure_http=true`；高熵 QR token 依靠短 TTL 和单次消费保护，6 位短码继续受每来源及全局限速。兼容创建请求仍可显式设置 `expected_remote_ip`，设置后 exchange 的直接来源必须精确匹配。任一条件不满足时失败关闭；公网地址和域名仍强制 HTTPS。
+快速绑定 Page 不读取或提交 HTTP 开关与客户端 IP。成功 configuration 才返回 `allow_insecure_http=true`；高熵 QR token 依靠短 TTL 和单次消费保护，6 位短码继续受每来源及全局限速。兼容创建请求仍可显式设置 `expected_remote_ip`，设置后 exchange 的直接来源必须精确匹配。任一条件不满足时失败关闭；公网地址和域名仍强制 HTTPS。
 
 ## 内置 listener 威胁边界
 
 - listener 在插件 `initialize()` 中通过 `aiohttp.web.AppRunner/TCPSite` 启动，不在构造函数绑定；`terminate()` 幂等关闭 site、runner、单一 `ClientSession`、活动流和端口。
-- 匿名能力只限精确 `POST /api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/exchange`。
+- 匿名能力只限精确 `POST /api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/pairing/exchange`；旧 ID 不设匿名别名。
 - 正常代理只限 health/session/events/turn/audio/interaction/interrupt/close 的固定 method+path allowlist，且继续保留 Quest 自己的双层认证。
 - 上游只接受无路径、无认证信息的 loopback HTTP IP 字面量；Dashboard、全局 API、其他插件、配对管理和任意 URL 无法代理。
 - query、编码路径穿越、反斜杠、点段与 URL 形路径全部拒绝。
-- 只转发 `Authorization`、`X-Quest-Avatar-Key`、`Content-Type`、`Accept`、`Last-Event-ID`；客户端 Host、hop-by-hop 和来源伪造头被剥离。
+- 只转发 `Authorization`、`X-Embodiment-Bridge-Key`、兼容期旧 `X-Quest-Avatar-Key`、`Content-Type`、`Accept`、`Last-Event-ID`；客户端 Host、hop-by-hop 和来源伪造头被剥离。
 - exchange 只使用直接 peer IP，不信任 `Forwarded`、`X-Forwarded-*`、`X-Real-IP` 或 `X-Quest-Pairing-Source`。
 - exchange 要求 `application/json`、唯一合法 `Content-Length`、不超过 16 KiB；空体、额外字段和 chunked 失败关闭。
 - SSE 逐块转发，不预读完整响应或缓冲音频；客户端断开会关闭上游响应。
 - 端口占用、配置错误和上游不可达只产生脱敏 degraded/disabled 状态，不阻止插件其余官方路由加载。
 - 日志不记录 Authorization、Bridge Key、token、短码、请求体或完整 query。
 
-Docker `host 8520 -> container 8520` 映射本身不会启动服务。只有 `pairing_listener_enabled=true` 且插件初始化绑定成功后，容器内才真实监听。内置 listener 不提供公网 TLS；公网仍必须在外层部署 Quest 信任的 HTTPS。
+Docker `host 8520 -> container 8520` 映射本身不会启动服务。只有 `pairing_listener_enabled=true` 且插件初始化绑定成功后，容器内才真实监听。内置 listener 不提供公网 TLS；公网仍必须在外层部署客户端信任的 HTTPS。

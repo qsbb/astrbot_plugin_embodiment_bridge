@@ -10,7 +10,7 @@
 - `await get_all_personas()`：为 Dashboard 管理 Page 生成安全 ID 列表。Bridge 丢弃 `system_prompt`、`begin_dialogs`、`tools`、`skills`、`custom_error_message` 和数据库字段。
 - `await get_default_persona_v3(None)`：没有显式 Quest 人格时读取 AstrBot 明确默认人格。参数固定为 `None`，不会制造 Quest 的消息平台 UMO。
 
-AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，但 Quest HTTP session 当前没有合法的 AstrBot Conversation ID 或统一消息来源映射。Bridge 因此不枚举其他用户对话、不根据 Unity 的 user/bot/client 字段拼接 UMO，也不接受 Unity 提交 persona ID。管理员保存的 `astrbot_persona_id` 是当前唯一受信任的 Quest 会话人格选择。
+AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，但具身客户端 HTTP session 当前没有合法的 AstrBot Conversation ID 或统一消息来源映射。Bridge 因此不枚举其他用户对话、不根据客户端的 user/bot/client 字段拼接 UMO，也不接受客户端提交 persona ID。管理员保存的 `astrbot_persona_id` 是当前唯一受信任的具身会话人格选择。
 
 ## 运行时选择顺序
 
@@ -18,7 +18,7 @@ AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，
 2. 没有启用独立人格，且 `persona_source_mode=manual_override`：使用“临”原有四个手动兼容字段。
 3. 没有启用独立人格，且 `persona_source_mode=astrbot`、`astrbot_persona_id` 非空：精确读取该 AstrBot 人格。
 4. 没有启用独立人格，且 AstrBot 人格 ID 为空：调用 `get_default_persona_v3(None)`。
-5. 已启用文件缺失、损坏或来源哈希不符：清空运行时独立人格并失败关闭，不自动换到另一个独立人格。AstrBot 实时人格读取失败时仍使用无姓名、无虚构经历的通用 Quest MR 身份。
+5. 已启用文件缺失、损坏或来源哈希不符：清空运行时独立人格并失败关闭，不自动换到另一个独立人格。AstrBot 实时人格读取失败时仍使用无姓名、无虚构经历的通用具身身份。
 
 显式人格失效时不会自动改用默认人格或列表中第一个人格。默认读取只采用官方 `get_default_persona_v3(None)` 的结果，不使用可能在缺失配置时选中列表第一项的内部缓存字段。
 
@@ -38,7 +38,7 @@ AstrBot 的 `conversation_manager` 虽可读取 Conversation 的 `persona_id`，
 
 任务运行期间 Page 会锁定来源切换、人格列表与编辑字段，只保留取消入口；终态后按开始前状态恢复控件，避免转换结果写入另一份已切换的人格草稿。
 
-保存和启用是两个动作。启用只写 `active_quest_persona_id`，验证成功后才更新运行时；配置保存失败保持旧人格。保存“实时人格来源”会在同一次配置提交中清空该 ID。QQ 和其他平台事件没有服务端 `quest_avatar_bridge=true` 标记，因此不会收到独立人格覆盖。
+保存和启用是两个动作。启用只写兼容字段 `active_quest_persona_id`，验证成功后才更新运行时；配置保存失败保持旧人格。保存“实时人格来源”会在同一次配置提交中清空该 ID。QQ 和其他平台事件没有服务端 `embodiment_bridge=true` 标记，因此不会收到独立人格覆盖；旧标记仅作迁移兼容。
 
 ## 安全边界
 

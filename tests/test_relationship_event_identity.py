@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.relationship_event_identity import (
+from astrbot_plugin_embodiment_bridge.adapters.relationship_event_identity import (
     RelationshipQuestEventIdentityAdapter,
 )
 

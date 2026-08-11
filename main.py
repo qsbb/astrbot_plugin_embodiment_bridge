@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig
@@ -26,12 +25,14 @@ from .adapters.runtime import SeriesRuntimeAdapter
 from .adapters.stt import AstrBotSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
-from .core.avatar_action_tool import execute_quest_action, inject_quest_action_tool
+from .core.avatar_action_tool import execute_quest_action, prepare_quest_action_request
 from .core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
 )
+from .core.data_migration import prepare_plugin_data_dir
 from .core.config_persistence import config_is_writable, save_config_changes
+from .core.config_migration import load_legacy_config_changes
 from .core.interaction_policy import InteractionPolicy
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
@@ -39,6 +40,11 @@ from .core.persona_profiles import PersonaProfileStore
 from .core.persona_service import (
     QuestPersonaService,
     build_eventbus_persona_overlay,
+)
+from .core.plugin_identity import (
+    BRIDGE_EVENT_MARKER,
+    LEGACY_BRIDGE_EVENT_MARKER,
+    PLUGIN_ID,
 )
 from .core.session_manager import SessionManager
 from .core.service_control import BridgeServiceControl
@@ -48,15 +54,15 @@ from .transport.builtin_listener import (
     BuiltinListenerConfig,
     BuiltinQuestListener,
 )
-from .transport.http_sse import HttpSseTransport, PLUGIN_NAME, TransportConfig
+from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "0.4.22"
+__version__ = "1.0.0"
 
 
-class QuestAvatarBridgePlugin(Star):
-    """HTTP/SSE decision bridge for a model-independent Quest avatar client."""
+class EmbodimentBridgePlugin(Star):
+    """HTTP/SSE decision bridge for model-independent embodied clients."""
 
     PLUGIN_HEALTH_CONTRACT = "plugin.health@1.0"
 
@@ -65,9 +71,11 @@ class QuestAvatarBridgePlugin(Star):
         self.context = context
         self.config = config
         self._terminated = False
+        self._legacy_plugin_config_changes = load_legacy_config_changes(config)
+        if self._legacy_plugin_config_changes:
+            config.update(self._legacy_plugin_config_changes)
 
-        self.data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir = prepare_plugin_data_dir(StarTools.get_data_dir)
         self.persona_profiles = PersonaProfileStore(self.data_dir)
         self.persona_converter = PersonaConverter(context)
         self.server_identity_store = ServerIdentityStore(
@@ -412,6 +420,16 @@ class QuestAvatarBridgePlugin(Star):
 
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
+        if self._legacy_plugin_config_changes:
+            if not config_is_writable(self.config):
+                raise RuntimeError("legacy_plugin_config_persistence_unavailable")
+            await save_config_changes(self.config, self._legacy_plugin_config_changes)
+            self.diagnostic_log.record(
+                "plugin.config_migrated",
+                component="plugin",
+                status="completed",
+                event_count=len(self._legacy_plugin_config_changes),
+            )
         await self.server_identity_store.flush()
         await self.persona_service.initialize()
         if self._legacy_identity_migrated:
@@ -452,13 +470,13 @@ class QuestAvatarBridgePlugin(Star):
             )
         if not self.pairing.bootstrap_ready:
             self._component_logger.warning(
-                "[quest-avatar] pairing bootstrap disabled: reason=%s",
+                "[embodiment-bridge] pairing bootstrap disabled: reason=%s",
                 self.pairing.bootstrap_reason,
             )
         runtime = await self.runtime.refresh()
         persona = await self.persona.resolve()
         self._component_logger.info(
-            "[quest-avatar] bridge initialized: version=%s transport=http+sse listener=%s llm=%s stt=%s tts=%s runtime=%s",
+            "[embodiment-bridge] bridge initialized: version=%s transport=http+sse listener=%s llm=%s stt=%s tts=%s runtime=%s",
             __version__,
             listener_status.get("reason"),
             self.llm.available,
@@ -509,12 +527,18 @@ class QuestAvatarBridgePlugin(Star):
     async def inject_quest_persona(self, event: Any, req: Any) -> None:
         """Append the active embodied persona only to Bridge-created EventBus turns."""
         try:
-            is_bridge_turn = event.get_extra("quest_avatar_bridge") is True
+            formal_marker = event.get_extra(BRIDGE_EVENT_MARKER) is True
+            legacy_marker = event.get_extra(LEGACY_BRIDGE_EVENT_MARKER) is True
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
-        if not is_bridge_turn:
+        if not formal_marker and not legacy_marker:
             return
-        inject_quest_action_tool(
+        if not formal_marker and legacy_marker:
+            try:
+                event.set_extra(BRIDGE_EVENT_MARKER, True)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                return
+        await prepare_quest_action_request(
             req,
             event,
             self._execute_quest_avatar_action,
@@ -533,7 +557,7 @@ class QuestAvatarBridgePlugin(Star):
                 )
             return
         current = str(getattr(req, "system_prompt", "") or "")
-        if "# 临：Quest 具象人格覆盖" in current:
+        if "# 临：具身人格覆盖" in current:
             return
         req.system_prompt = current + overlay
         diagnostic = getattr(self, "diagnostic_log", None)
@@ -606,7 +630,7 @@ class QuestAvatarBridgePlugin(Star):
             "name": "series.diagnostics",
             "version": "1.0",
             "series_id": "ningxin_suxi",
-            "plugin_id": "astrbot_plugin_quest_avatar_bridge",
+            "plugin_id": PLUGIN_ID,
             "plugin_name": "临",
             "capabilities": ("read", "clear", "read_events", "clear_events"),
             "storage": "memory_only",
@@ -645,7 +669,7 @@ class QuestAvatarBridgePlugin(Star):
             await self.orchestrator.close()
             await self.relationship_candidates.close()
             await self.relationship_event_identity.close()
-            self._component_logger.info("[quest-avatar] bridge terminated")
+            self._component_logger.info("[embodiment-bridge] bridge terminated")
             terminated_ok = True
         except Exception as exc:
             self.diagnostic_log.record(
@@ -695,3 +719,8 @@ class QuestAvatarBridgePlugin(Star):
         except (TypeError, ValueError):
             parsed = float(default)
         return max(minimum, min(maximum, parsed))
+
+
+# Source-level compatibility for integrations that imported the old class name.
+# AstrBot registers the subclass above; this alias does not register another plugin.
+QuestAvatarBridgePlugin = EmbodimentBridgePlugin

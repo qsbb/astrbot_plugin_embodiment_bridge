@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.models import (
     Emotion,
     Gesture,
     Hand,
@@ -104,7 +104,9 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
     assert manifest["pairing_bootstrap_semantics"] == {
         "register_web_api_anonymous_supported": False,
         "page_create_authentication": "astrbot_dashboard",
-        "exchange_core_authentication": "reverse_proxy_plugin_scope",
+        "builtin_listener_anonymous_exact_path_only": True,
+        "astrbot_extensions_exchange_requires_outer_auth": True,
+        "legacy_reverse_proxy_supported": True,
         "exchange_credential": "single_use_token_or_six_digit_code",
         "expected_remote_ip_bound_per_session": True,
         "per_source_rate_limit": True,

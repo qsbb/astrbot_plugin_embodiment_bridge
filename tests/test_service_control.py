@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.core.models import SessionStartRequest
-from astrbot_plugin_quest_avatar_bridge.core.service_control import (
+from astrbot_plugin_embodiment_bridge.core.models import SessionStartRequest
+from astrbot_plugin_embodiment_bridge.core.service_control import (
     BridgeServiceControl,
     BridgeServiceControlError,
     BridgeServiceUnavailable,
 )
-from astrbot_plugin_quest_avatar_bridge.core.session_manager import SessionManager
+from astrbot_plugin_embodiment_bridge.core.session_manager import SessionManager
 
 
 class ConfigStub(dict[str, Any]):
@@ -42,14 +42,20 @@ class LegacySyncConfigStub(dict[str, Any]):
 class ListenerStub:
     def __init__(self) -> None:
         self.config = SimpleNamespace(port=8520)
+        self.configured = True
         self.ready = False
         self.reason = "not_started"
         self.starts = 0
         self.stops = 0
         self.closes = 0
+        self.fail_start_ports: set[int] = set()
 
     async def start(self) -> None:
         self.starts += 1
+        if self.config.port in self.fail_start_ports:
+            self.ready = False
+            self.reason = "start_failed"
+            raise OSError("listener start failed")
         self.ready = True
         self.reason = "ready"
 
@@ -70,7 +76,7 @@ class ListenerStub:
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
-            "enabled": True,
+            "enabled": self.configured,
             "ready": self.ready,
             "reason": self.reason,
             "bind_host": "0.0.0.0",
@@ -165,6 +171,43 @@ def test_service_can_stop_close_sessions_and_start_again() -> None:
     asyncio.run(scenario())
 
 
+def test_stop_closes_session_creation_gate_before_cleanup_snapshot() -> None:
+    async def scenario() -> None:
+        control, _, _, sessions = build_control()
+        await control.initialize()
+        cleanup_entered = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        original_close_all = sessions.close_all_sessions
+
+        async def delayed_close_all() -> None:
+            cleanup_entered.set()
+            await release_cleanup.wait()
+            await original_close_all()
+
+        sessions.close_all_sessions = delayed_close_all  # type: ignore[method-assign]
+        stopping = asyncio.create_task(control.set_enabled(False))
+        await asyncio.wait_for(cleanup_entered.wait(), timeout=1)
+
+        with pytest.raises(BridgeServiceUnavailable):
+            control.require_enabled()
+        with pytest.raises(Exception, match="not accepting new sessions"):
+            await sessions.start_session(
+                SessionStartRequest(
+                    session_id="late-session",
+                    client_id="quest",
+                    user_id="user",
+                    bot_id="bot",
+                ),
+                "owner",
+            )
+
+        release_cleanup.set()
+        stopped = await asyncio.wait_for(stopping, timeout=1)
+        assert stopped["sessions"]["active_sessions"] == 0
+
+    asyncio.run(scenario())
+
+
 def test_astrbot_4265_sync_config_enables_service_control() -> None:
     async def scenario() -> None:
         config = LegacySyncConfigStub()
@@ -238,5 +281,124 @@ def test_listener_port_persists_rewrites_urls_and_restarts() -> None:
         with pytest.raises(BridgeServiceControlError) as invalid:
             await control.set_listener_port(80)
         assert invalid.value.code == "invalid_listener_port"
+
+    asyncio.run(scenario())
+
+
+def test_service_start_failure_rolls_back_switch_and_keeps_gate_closed() -> None:
+    async def scenario() -> None:
+        control, config, listener, sessions = build_control()
+        control.enabled = False
+        await control.initialize()
+        listener.fail_start_ports.add(8520)
+
+        with pytest.raises(BridgeServiceControlError) as failed:
+            await control.set_enabled(True)
+
+        assert failed.value.code == "service_start_failed"
+        assert control.enabled is False
+        assert listener.ready is False
+        assert config.saves == [
+            {"bridge_service_enabled": True},
+            {"bridge_service_enabled": False},
+        ]
+        with pytest.raises(Exception, match="not accepting new sessions"):
+            await sessions.start_session(
+                SessionStartRequest(
+                    session_id="must-not-start",
+                    client_id="quest",
+                    user_id="user",
+                    bot_id="bot",
+                ),
+                "owner",
+            )
+
+    asyncio.run(scenario())
+
+
+def test_initialize_start_failure_closes_session_gate() -> None:
+    async def scenario() -> None:
+        control, _, listener, sessions = build_control()
+        listener.fail_start_ports.add(8520)
+
+        with pytest.raises(OSError, match="listener start failed"):
+            await control.initialize()
+
+        with pytest.raises(Exception, match="not accepting new sessions"):
+            await sessions.start_session(
+                SessionStartRequest(
+                    session_id="initialize-failed",
+                    client_id="quest",
+                    user_id="user",
+                    bot_id="bot",
+                ),
+                "owner",
+            )
+
+    asyncio.run(scenario())
+
+
+def test_disabled_standalone_listener_keeps_astrbot_routes_accepting() -> None:
+    async def scenario() -> None:
+        control, _, listener, sessions = build_control()
+        listener.configured = False
+        await control.initialize()
+
+        session = await sessions.start_session(
+            SessionStartRequest(
+                session_id="astrbot-routed",
+                client_id="quest",
+                user_id="user",
+                bot_id="bot",
+            ),
+            "owner",
+        )
+        assert session.session_id == "astrbot-routed"
+
+        updated = await control.set_listener_port(9020)
+        assert updated["listener"]["configured"] is False
+        another = await sessions.start_session(
+            SessionStartRequest(
+                session_id="astrbot-routed-after-port",
+                client_id="quest",
+                user_id="user",
+                bot_id="bot",
+            ),
+            "owner",
+        )
+        assert another.session_id == "astrbot-routed-after-port"
+
+    asyncio.run(scenario())
+
+
+def test_port_start_failure_restores_previous_listener_and_config() -> None:
+    async def scenario() -> None:
+        control, config, listener, sessions = build_control()
+        config.update(
+            pairing_listener_public_url="http://192.168.50.10:8520",
+            pairing_public_url="http://192.168.50.10:8520",
+        )
+        await control.initialize()
+        listener.fail_start_ports.add(9020)
+
+        with pytest.raises(BridgeServiceControlError) as failed:
+            await control.set_listener_port(9020)
+
+        assert failed.value.code == "listener_port_update_failed"
+        assert listener.config.port == 8520
+        assert listener.ready is True
+        assert config["pairing_listener_port"] == 8520
+        assert config["pairing_listener_public_url"] == "http://192.168.50.10:8520"
+        assert config["pairing_public_url"] == "http://192.168.50.10:8520"
+        session = await sessions.start_session(
+            SessionStartRequest(
+                session_id="restored-listener",
+                client_id="quest",
+                user_id="user",
+                bot_id="bot",
+            ),
+            "owner",
+        )
+        assert session.session_id == "restored-listener"
 
     asyncio.run(scenario())

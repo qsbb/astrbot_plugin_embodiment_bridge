@@ -4,13 +4,13 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.stt import DisabledSTTAdapter
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_pipeline import (
+from astrbot_plugin_embodiment_bridge.adapters.stt import DisabledSTTAdapter
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline import (
     MessagePipelineEmpty,
     MessagePipelineUnavailable,
 )
-from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import InteractionPolicy
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.interaction_policy import InteractionPolicy
+from astrbot_plugin_embodiment_bridge.core.models import (
     Emotion,
     Gesture,
     InteractionEvent,
@@ -21,8 +21,8 @@ from astrbot_plugin_quest_avatar_bridge.core.models import (
     TurnStartRequest,
     safe_neutral_decision,
 )
-from astrbot_plugin_quest_avatar_bridge.core.session_manager import SessionManager
-from astrbot_plugin_quest_avatar_bridge.core.turn_orchestrator import TurnOrchestrator
+from astrbot_plugin_embodiment_bridge.core.session_manager import SessionManager
+from astrbot_plugin_embodiment_bridge.core.turn_orchestrator import TurnOrchestrator
 
 
 class LoggerStub:
@@ -34,6 +34,14 @@ class LoggerStub:
 
     def error(self, *args: Any, **kwargs: Any) -> None:
         pass
+
+
+class DiagnosticStub:
+    def __init__(self) -> None:
+        self.records: list[tuple[str, dict[str, Any]]] = []
+
+    def record(self, event: str, **fields: Any) -> None:
+        self.records.append((event, fields))
 
 
 class RelationshipStub:
@@ -194,6 +202,7 @@ async def build_orchestrator(
     *,
     queue_size: int = 64,
     tts: Any | None = None,
+    diagnostic: Any | None = None,
 ):
     sessions = SessionManager(event_queue_size=queue_size, interaction_debounce_ms=0)
     session = await sessions.start_session(
@@ -213,6 +222,7 @@ async def build_orchestrator(
         relationship=RelationshipStub(),
         policy=InteractionPolicy(gesture_cooldown_seconds=0),
         logger=LoggerStub(),
+        diagnostic_log=diagnostic,
     )
     return sessions, session, orchestrator
 
@@ -591,6 +601,7 @@ def test_tts_pipeline_prefetch_is_bounded() -> None:
 
 def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
     async def scenario() -> None:
+        diagnostic = DiagnosticStub()
         result = decision(
             Emotion.SHY,
             Gesture.STEP_BACK,
@@ -598,7 +609,9 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
             "boundary_soft_refusal",
             "请轻一点。",
         )
-        sessions, session, orchestrator = await build_orchestrator(DecisionStub(result))
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(result), diagnostic=diagnostic
+        )
         await orchestrator.start_turn(
             session,
             TurnStartRequest(session_id="s1", turn_id="t3", text="你好"),
@@ -615,6 +628,22 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
         assert audio["format"] == "pcm16"
         assert audio["sample_rate"] == 24000
         assert audio["channels"] == 1
+        intent_record = next(
+            fields
+            for event, fields in diagnostic.records
+            if event == "avatar.intent.emitted"
+        )
+        assert intent_record == {
+            "component": "action",
+            "operation": "step_back",
+            "status": "completed",
+            "reason_code": "boundary_soft_refusal",
+            "emotion": "shy",
+            "gesture": "step_back",
+            "look_at": "away",
+            "intensity": 0.6,
+            "duration_ms": 1200,
+        }
         await orchestrator.close()
 
     asyncio.run(scenario())

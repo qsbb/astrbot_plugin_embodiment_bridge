@@ -4,13 +4,13 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.relationship import (
+from astrbot_plugin_embodiment_bridge.adapters.relationship import (
     RelationshipSnapshotAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import (
+from astrbot_plugin_embodiment_bridge.core.interaction_policy import (
     InteractionPolicy,
 )
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.models import (
     InteractionEvent,
     ModelDecision,
     ProposedIntent,

@@ -5,8 +5,8 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_llm import AstrBotLLMAdapter
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_persona import (
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_llm import AstrBotLLMAdapter
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_persona import (
     AstrBotPersonaAdapter,
     PersonaSnapshot,
 )
@@ -42,7 +42,7 @@ def test_configured_persona_is_structured_in_system_prompt() -> None:
     assert "角色自称：小溪" in prompt
     assert "角色自我描述：安静、坦诚的虚拟伙伴" in prompt
     assert "与用户的关系定位：与用户平等相处的朋友" in prompt
-    assert "Meta Quest 3 混合现实空间" in prompt
+    assert "通过具身终端与用户处在同一个现实空间中互动" in prompt
     assert "不得为了显得真实而编造" in prompt
     assert adapter.persona_configured is True
     assert adapter.character_name_configured is True

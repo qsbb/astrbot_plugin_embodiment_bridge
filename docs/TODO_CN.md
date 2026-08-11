@@ -1,4 +1,4 @@
-# Quest Avatar Bridge 后续待办
+# AstrBot Embodiment Bridge 后续待办
 
 当前 HTTP POST + SSE 对话链路已经可以由 Unity `ConversationController` 使用：文本轮、PCM16 语音轮、SSE 音频、打断和会话关闭均走公开协议。后端决策仍可能产生 `avatar.intent`，但文字/语音交付不依赖 Unity 是否成功执行动作。
 

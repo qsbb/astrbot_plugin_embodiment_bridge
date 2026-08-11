@@ -87,7 +87,7 @@ class VoiceHubTTSAdapter:
             self.status = "provider_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] voice hub not installed; voice.audio_output unavailable"
+                    "[embodiment-bridge] voice hub not installed; voice.audio_output unavailable"
                 )
                 self._missing_logged = True
             raise AdapterUnavailable("voice hub is not installed")
@@ -95,7 +95,7 @@ class VoiceHubTTSAdapter:
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] voice.audio_output contract is incompatible; integration disabled"
+                    "[embodiment-bridge] voice.audio_output contract is incompatible; integration disabled"
                 )
                 self._incompatible_logged = True
             raise AdapterUnavailable("voice.audio_output contract is incompatible")
@@ -267,7 +267,7 @@ class FallbackTTSAdapter:
                 if yielded or not self.fallback.available:
                     raise
                 self.logger.warning(
-                    "[quest-avatar] voice hub TTS unavailable; using configured AstrBot Core fallback: error_type=%s",
+                    "[embodiment-bridge] voice hub TTS unavailable; using configured AstrBot Core fallback: error_type=%s",
                     type(exc).__name__,
                 )
         if not self.fallback.available:

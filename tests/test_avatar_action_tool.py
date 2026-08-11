@@ -7,22 +7,28 @@ import types
 from types import SimpleNamespace
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.core.avatar_action_tool import (
+from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
+    EXPLICIT_ACTION_SOURCE,
     QUEST_ACTION_INTENT_EXTRA,
     QUEST_ACTION_PROMPT_MARKER,
+    QUEST_ACTION_SOURCE_EXTRA,
     QUEST_ACTION_TOOL_NAME,
     execute_quest_action,
     inject_quest_action_tool,
+    prepare_quest_action_request,
     read_selected_intent,
+    read_selected_source,
+    stage_explicit_action,
 )
-from astrbot_plugin_quest_avatar_bridge.core.avatar_skills import AvatarSkillRegistry
+from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
 
 
 class EventStub:
-    def __init__(self, *, quest: bool) -> None:
+    def __init__(self, *, quest: bool, message_str: str = "") -> None:
         self.extras: dict[str, Any] = {}
+        self.message_str = message_str
         if quest:
-            self.extras["quest_avatar_bridge"] = True
+            self.extras["embodiment_bridge"] = True
 
     def get_extra(self, key: str) -> Any:
         return self.extras.get(key)
@@ -31,7 +37,9 @@ class EventStub:
         self.extras[key] = value
 
 
-def test_action_execution_accepts_one_allowlisted_action_and_rejects_replacement() -> None:
+def test_action_execution_accepts_one_allowlisted_action_and_rejects_replacement() -> (
+    None
+):
     async def scenario() -> None:
         event = EventStub(quest=True)
         records: list[tuple[str, dict[str, Any]]] = []
@@ -75,7 +83,9 @@ def test_action_execution_accepts_one_allowlisted_action_and_rejects_replacement
     asyncio.run(scenario())
 
 
-def test_action_execution_fails_closed_for_non_quest_unknown_and_extra_arguments() -> None:
+def test_action_execution_fails_closed_for_non_quest_unknown_and_extra_arguments() -> (
+    None
+):
     async def scenario() -> None:
         normal_event = EventStub(quest=False)
         denied = json.loads(
@@ -86,9 +96,7 @@ def test_action_execution_fails_closed_for_non_quest_unknown_and_extra_arguments
 
         quest_event = EventStub(quest=True)
         unknown = json.loads(
-            await execute_quest_action(
-                quest_event, action="play_file", diagnostic=None
-            )
+            await execute_quest_action(quest_event, action="play_file", diagnostic=None)
         )
         assert unknown == {"status": "rejected", "code": "unknown_action"}
         assert read_selected_intent(quest_event) is None
@@ -103,6 +111,137 @@ def test_action_execution_fails_closed_for_non_quest_unknown_and_extra_arguments
         )
         assert extra == {"status": "rejected", "code": "unknown_argument"}
         assert read_selected_intent(quest_event) is None
+
+    asyncio.run(scenario())
+
+
+def test_explicit_request_preselects_without_exposing_model_tool() -> None:
+    async def scenario() -> None:
+        event = EventStub(quest=True, message_str="请随便跳个舞")
+        request = SimpleNamespace(func_tool=None, system_prompt="base")
+        records: list[tuple[str, dict[str, Any]]] = []
+        handler_calls = 0
+
+        async def handler(*_args: Any, **_kwargs: Any) -> str:
+            nonlocal handler_calls
+            handler_calls += 1
+            return "unused"
+
+        result = await prepare_quest_action_request(
+            request,
+            event,
+            handler,
+            lambda name, **fields: records.append((name, fields)),
+        )
+
+        intent = read_selected_intent(event)
+        assert result == "preselected"
+        assert intent is not None
+        assert intent.gesture.value == "dance"
+        assert read_selected_source(event) == EXPLICIT_ACTION_SOURCE
+        assert event.extras[QUEST_ACTION_SOURCE_EXTRA] == EXPLICIT_ACTION_SOURCE
+        assert request.func_tool is None
+        assert request.system_prompt == "base"
+        assert handler_calls == 0
+        assert [name for name, _fields in records] == [
+            "avatar.action.explicit_parse",
+            "avatar.action.accepted",
+            "avatar.action.tool_skipped",
+        ]
+        assert records[0][1]["operation"] == "dance"
+        assert records[0][1]["status"] == "matched"
+        assert records[1][1]["result"] == "explicit_request"
+        assert records[2][1]["reason_code"] == "explicit_action_preselected"
+        assert "请随便跳个舞" not in repr(records)
+
+    asyncio.run(scenario())
+
+
+def test_negative_or_non_quest_requests_never_expose_or_select_action() -> None:
+    async def scenario() -> None:
+        records: list[tuple[str, dict[str, Any]]] = []
+        denied_event = EventStub(quest=True, message_str="不要跳舞")
+        denied_request = SimpleNamespace(func_tool=None, system_prompt="base")
+        denied = await prepare_quest_action_request(
+            denied_request,
+            denied_event,
+            lambda *_args, **_kwargs: asyncio.sleep(0, result="unused"),
+            lambda name, **fields: records.append((name, fields)),
+        )
+        assert denied == "unsafe_context"
+        assert read_selected_intent(denied_event) is None
+        assert denied_request.func_tool is None
+        assert [name for name, _fields in records] == [
+            "avatar.action.explicit_parse",
+            "avatar.action.tool_skipped",
+        ]
+
+        ordinary_event = EventStub(quest=False, message_str="请跳舞")
+        ordinary_request = SimpleNamespace(func_tool=None, system_prompt="base")
+        assert (
+            await prepare_quest_action_request(
+                ordinary_request,
+                ordinary_event,
+                lambda *_args, **_kwargs: asyncio.sleep(0, result="unused"),
+                lambda name, **fields: records.append((name, fields)),
+            )
+            == "non_quest"
+        )
+        assert ordinary_request.func_tool is None
+        assert read_selected_intent(ordinary_event) is None
+
+    asyncio.run(scenario())
+
+
+def test_model_tool_cannot_override_server_preselected_action() -> None:
+    async def scenario() -> None:
+        event = EventStub(quest=True, message_str="请挥手")
+        records: list[tuple[str, dict[str, Any]]] = []
+        await execute_quest_action(
+            event,
+            action="wave",
+            diagnostic=lambda name, **fields: records.append((name, fields)),
+            selection_source=EXPLICIT_ACTION_SOURCE,
+        )
+
+        duplicate = json.loads(
+            await execute_quest_action(
+                event,
+                action="bow",
+                diagnostic=lambda name, **fields: records.append((name, fields)),
+            )
+        )
+
+        assert duplicate == {
+            "status": "rejected",
+            "code": "action_already_selected",
+        }
+        assert read_selected_intent(event).gesture.value == "wave"
+        assert records[-1][0] == "avatar.action.model_override_rejected"
+        assert records[-1][1]["operation"] == "bow"
+        assert records[-1][1]["reason_code"] == "explicit_action_preselected"
+        assert records[-1][1]["result"] == "explicit_request"
+
+    asyncio.run(scenario())
+
+
+def test_staged_original_parse_wins_over_later_event_text_mutation() -> None:
+    async def scenario() -> None:
+        event = EventStub(quest=True, message_str="请挥手")
+        assert stage_explicit_action(event, event.message_str) is True
+        event.message_str = "不要挥手"
+        request = SimpleNamespace(func_tool=None, system_prompt="base")
+
+        result = await prepare_quest_action_request(
+            request,
+            event,
+            lambda *_args, **_kwargs: asyncio.sleep(0, result="unused"),
+            None,
+        )
+
+        assert result == "preselected"
+        assert read_selected_intent(event).gesture.value == "wave"
+        assert request.func_tool is None
 
     asyncio.run(scenario())
 
@@ -148,9 +287,7 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
 
     quest_request = SimpleNamespace(func_tool=None)
     assert (
-        inject_quest_action_tool(
-            quest_request, EventStub(quest=True), handler, None
-        )
+        inject_quest_action_tool(quest_request, EventStub(quest=True), handler, None)
         is True
     )
     assert len(quest_request.func_tool.tools) == 1
@@ -165,13 +302,35 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
     assert "dance_next" in quest_request.system_prompt
     assert not hasattr(ordinary_request, "system_prompt")
     assert (
-        inject_quest_action_tool(
-            quest_request, EventStub(quest=True), handler, None
-        )
+        inject_quest_action_tool(quest_request, EventStub(quest=True), handler, None)
         is True
     )
     assert len(quest_request.func_tool.tools) == 1
     assert quest_request.system_prompt.count(QUEST_ACTION_PROMPT_MARKER) == 1
+
+    ambiguous_event = EventStub(
+        quest=True,
+        message_str="先跳舞，然后挥手",
+    )
+    ambiguous_request = SimpleNamespace(func_tool=None, system_prompt="base")
+    records: list[tuple[str, dict[str, Any]]] = []
+    assert (
+        asyncio.run(
+            prepare_quest_action_request(
+                ambiguous_request,
+                ambiguous_event,
+                handler,
+                lambda name, **fields: records.append((name, fields)),
+            )
+        )
+        == "tool_exposed"
+    )
+    assert len(ambiguous_request.func_tool.tools) == 1
+    assert read_selected_intent(ambiguous_event) is None
+    assert records[0][0] == "avatar.action.explicit_parse"
+    assert records[0][1]["status"] == "ambiguous"
+    assert records[-2][0] == "avatar.action.tool_exposed"
+    assert records[-1][0] == "avatar.action.prompt_injected"
 
 
 def test_action_allowlist_contains_current_protocol_capabilities() -> None:

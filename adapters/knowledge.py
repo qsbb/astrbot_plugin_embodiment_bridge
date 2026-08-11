@@ -43,7 +43,7 @@ class GlobalKnowledgeAdapter:
             self.status = "provider_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] active learner not installed; continuing without global knowledge"
+                    "[embodiment-bridge] active learner not installed; continuing without global knowledge"
                 )
                 self._missing_logged = True
             return []
@@ -60,7 +60,7 @@ class GlobalKnowledgeAdapter:
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] active_learner.knowledge contract is incompatible; integration disabled"
+                    "[embodiment-bridge] active_learner.knowledge contract is incompatible; integration disabled"
                 )
                 self._incompatible_logged = True
             return []
@@ -76,7 +76,7 @@ class GlobalKnowledgeAdapter:
             return []
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] global knowledge recall failed: error_type=%s",
+                "[embodiment-bridge] global knowledge recall failed: error_type=%s",
                 type(exc).__name__,
             )
             self.status = "error"

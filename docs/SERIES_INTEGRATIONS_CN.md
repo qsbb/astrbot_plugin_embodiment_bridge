@@ -1,6 +1,6 @@
 # 凝心溯溪系列后端复用
 
-Quest Unity 客户端只连接 `astrbot_plugin_quest_avatar_bridge` 的 HTTP/SSE 接口；它不直接调用“知、言、序、情、境、声、核”或“枢”。所有复用发生在 Bridge 后端，并且只消费提供方显式声明的版本化契约。
+具身客户端只连接 `astrbot_plugin_embodiment_bridge` 的 HTTP/SSE 接口；它不直接调用“知、言、序、情、境、声、核”或“枢”。所有复用发生在 Bridge 后端，并且只消费提供方显式声明的版本化契约。
 
 ## 当前接入矩阵
 
@@ -19,9 +19,9 @@ Quest Unity 客户端只连接 `astrbot_plugin_quest_avatar_bridge` 的 HTTP/SSE
 
 ## 受保护上下文授权
 
-关系快照默认关闭。可直接在“临”的「Quest 角色设置」Page 集中配置：
+关系快照默认关闭。可直接在“临”的具身服务控制台集中配置：
 
-- `trusted_client_id`：固定 Quest 客户端标识；`session.start.client_id` 必须精确匹配。
+- `trusted_client_id`：固定具身客户端标识；`session.start.client_id` 必须精确匹配。
 - `trusted_platform_id`：原始 AstrBot 平台 ID，例如 `aiocqhttp`。
 
 `api_principal` 来自 AstrBot 已认证请求的 `request.username`，不是 Unity JSON。`platform_id` 和授权使用的 `client_id` 来自 Bridge 配置。`bot_id`、`user_id` 保持原始权限身份，禁止用“情”的自然人映射替换。

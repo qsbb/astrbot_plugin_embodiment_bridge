@@ -37,7 +37,7 @@ class RelationshipIdentityCandidatesAdapter:
             self.status = "provider_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] relationship plugin not installed; identity candidates unavailable"
+                    "[embodiment-bridge] relationship plugin not installed; identity candidates unavailable"
                 )
                 self._missing_logged = True
             return self._result()
@@ -50,7 +50,7 @@ class RelationshipIdentityCandidatesAdapter:
             self.status = "contract_unavailable"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] relationship.identity_candidates contract unavailable; private registry fallback is forbidden"
+                    "[embodiment-bridge] relationship.identity_candidates contract unavailable; private registry fallback is forbidden"
                 )
                 self._incompatible_logged = True
             return self._result()
@@ -68,7 +68,7 @@ class RelationshipIdentityCandidatesAdapter:
         except Exception as exc:
             self.status = "error"
             self.logger.warning(
-                "[quest-avatar] relationship identity candidates failed: error_type=%s",
+                "[embodiment-bridge] relationship identity candidates failed: error_type=%s",
                 type(exc).__name__,
             )
             return self._result()
@@ -77,7 +77,7 @@ class RelationshipIdentityCandidatesAdapter:
         if normalized is None:
             self.status = "invalid_response"
             self.logger.warning(
-                "[quest-avatar] relationship.identity_candidates returned an invalid payload"
+                "[embodiment-bridge] relationship.identity_candidates returned an invalid payload"
             )
             return self._result()
         self.status = "ok"

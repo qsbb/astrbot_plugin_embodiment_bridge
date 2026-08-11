@@ -10,8 +10,8 @@ AstrBot 4.27.1 的公开 `Platform.create_event(AstrBotMessage)` 会按当前平
 
 - `self_id`、发送者 `user_id`、`group_id`、会话 ID 和平台实例 ID 只来自已经通过序授权的服务端会话；Unity 不能覆盖它们。
 - `event.role` 保持 AstrBot 默认的 `member`，并明确设置 `_api_key_allow_admin_role=false`；Quest 事件不会继承管理员权限。
-- 事件额外上下文 `quest_avatar_bridge.identity_context` 只供受控的 Bridge/记忆适配器读取，标记 `trusted=true`，不改变 AstrBot 权限判断。
-- `raw_message` 是明确标记为 `quest_avatar_bridge` 的最小、稳定兼容元数据，不伪造平台网络凭据或未获知的昵称。通用插件应优先使用 `AstrMessageEvent` 的公开访问器；依赖真实平台私有字段的插件仍需自行提供兼容契约。
+- 事件额外上下文 `embodiment_bridge.identity_context` 只供受控的 Bridge/记忆适配器读取，标记 `trusted=true`，不改变 AstrBot 权限判断；旧键保留一个主版本周期。
+- `raw_message` 是明确标记为 `embodiment_bridge` 的最小、稳定兼容元数据，不伪造平台网络凭据或未获知的昵称。通用插件应优先使用 `AstrMessageEvent` 的公开访问器；依赖真实平台私有字段的插件仍需自行提供兼容契约。
 
 ## 可验证行为
 

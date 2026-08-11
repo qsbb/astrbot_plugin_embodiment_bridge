@@ -160,7 +160,7 @@ class AvatarSkillRegistry:
             "For the direct JSON fallback only, set action to "
             '{"name":"<skill>","arguments":{"intensity":0.0,"duration_ms":0,"look_at":"user|hand|away|none"}} '
             "and keep intent consistent. On an AstrBot Quest EventBus turn, call the "
-            "quest_avatar_action function tool with its top-level action argument instead. "
+            "embodiment_avatar_action function tool with its top-level action argument instead. "
             "Available skills: "
             + skills
             + ". Use null action for a normal reply. A tool call is one action decision "

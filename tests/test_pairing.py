@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.core.pairing import (
+from astrbot_plugin_embodiment_bridge.core.pairing import (
     PUBLIC_API_PATH,
     PairingCreateRequest,
     PairingError,

@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from astrbot_plugin_quest_avatar_bridge.core.intent_parser import IntentParser
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.intent_parser import IntentParser
+from astrbot_plugin_embodiment_bridge.core.models import (
     AudioChunkRequest,
     Emotion,
     Gesture,

@@ -69,7 +69,7 @@ class SeriesRuntimeAdapter:
             self.snapshot = self._empty("unavailable", "provider_unavailable")
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] update manager not installed; runtime diagnostics skipped"
+                    "[embodiment-bridge] update manager not installed; runtime diagnostics skipped"
                 )
                 self._missing_logged = True
             return self.snapshot
@@ -91,7 +91,7 @@ class SeriesRuntimeAdapter:
             self.snapshot = self._empty("unavailable", "contract_incompatible")
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] update_manager.series_runtime contract is incompatible; diagnostics disabled"
+                    "[embodiment-bridge] update_manager.series_runtime contract is incompatible; diagnostics disabled"
                 )
                 self._incompatible_logged = True
             return self.snapshot
@@ -109,7 +109,7 @@ class SeriesRuntimeAdapter:
             return self.snapshot
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] series runtime diagnostics failed: error_type=%s",
+                "[embodiment-bridge] series runtime diagnostics failed: error_type=%s",
                 type(exc).__name__,
             )
             self.snapshot = self._empty("error", "DIAGNOSTIC_FAILED")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.core.persona_profiles import (
+from astrbot_plugin_embodiment_bridge.core.persona_profiles import (
     PersonaConversion,
     PersonaProfileError,
     PersonaProfileStore,

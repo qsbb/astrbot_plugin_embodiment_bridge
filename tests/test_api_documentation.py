@@ -22,8 +22,8 @@ def test_frontend_api_document_covers_public_protocol() -> None:
     ):
         assert route in document
 
-    assert "Authorization: Bearer <ASTRBOT_API_KEY_WITH_PLUGIN_SCOPE>" in document
-    assert "X-Quest-Avatar-Key: <bridge_api_key>" in document
+    assert "Authorization: ApiKey <ASTRBOT_API_KEY_WITH_PLUGIN_SCOPE>" in document
+    assert "X-Embodiment-Bridge-Key: <bridge_api_key>" in document
 
     for event_type in (
         "asr.partial",
@@ -78,8 +78,8 @@ def test_local_integration_document_keeps_security_and_fixture_contract() -> Non
     for required_text in (
         "127.0.0.1",
         "Quest 中的 `127.0.0.1` 指向头显自身",
-        "Authorization: Bearer",
-        "X-Quest-Avatar-Key",
+        "Authorization: ApiKey",
+        "X-Embodiment-Bridge-Key",
         "plugin` scope",
         "fixtures/protocol_v1/manifest.json",
         "不启用宽泛 CORS",

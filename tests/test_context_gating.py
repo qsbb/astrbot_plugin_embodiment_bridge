@@ -3,16 +3,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.adapters.stt import DisabledSTTAdapter
-from astrbot_plugin_quest_avatar_bridge.adapters.tts import DisabledTTSAdapter
-from astrbot_plugin_quest_avatar_bridge.core.interaction_policy import InteractionPolicy
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.adapters.stt import DisabledSTTAdapter
+from astrbot_plugin_embodiment_bridge.adapters.tts import DisabledTTSAdapter
+from astrbot_plugin_embodiment_bridge.core.interaction_policy import InteractionPolicy
+from astrbot_plugin_embodiment_bridge.core.models import (
     SessionStartRequest,
     TurnStartRequest,
     safe_neutral_decision,
 )
-from astrbot_plugin_quest_avatar_bridge.core.session_manager import SessionManager
-from astrbot_plugin_quest_avatar_bridge.core.turn_orchestrator import TurnOrchestrator
+from astrbot_plugin_embodiment_bridge.core.session_manager import SessionManager
+from astrbot_plugin_embodiment_bridge.core.turn_orchestrator import TurnOrchestrator
 
 
 class LoggerStub:

@@ -10,13 +10,16 @@ import aiohttp
 from aiohttp import web
 from yarl import URL
 
-from astrbot_plugin_quest_avatar_bridge.core.pairing import (
+from astrbot_plugin_embodiment_bridge.core.pairing import (
     PUBLIC_API_PATH,
     PairingCreateRequest,
     PairingExchangeService,
     PairingManager,
 )
-from astrbot_plugin_quest_avatar_bridge.transport.builtin_listener import (
+from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    LEGACY_PUBLIC_API_PREFIX,
+)
+from astrbot_plugin_embodiment_bridge.transport.builtin_listener import (
     EXCHANGE_PATH,
     BuiltinListenerConfig,
     BuiltinQuestListener,
@@ -573,7 +576,7 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
 
             headers = {
                 "Authorization": "Bearer plugin-scope-key",
-                "X-Quest-Avatar-Key": "bridge-secret",
+                "X-Embodiment-Bridge-Key": "bridge-secret",
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
                 "Last-Event-ID": "event-7",
@@ -592,7 +595,7 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
             await response.read()
             observed = received[-1]["headers"]
             assert observed["Authorization"] == "Bearer plugin-scope-key"
-            assert observed["X-Quest-Avatar-Key"] == "bridge-secret"
+            assert observed["X-Embodiment-Bridge-Key"] == "bridge-secret"
             assert observed["Content-Type"] == "application/json"
             assert observed["Accept"] == "text/event-stream"
             assert observed["Last-Event-ID"] == "event-7"
@@ -609,6 +612,27 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
                 headers={"Content-Type": "application/json"},
             )
             assert too_large.status == 413
+
+            legacy_health = await client.get(
+                base + f"{LEGACY_PUBLIC_API_PREFIX}/health",
+                headers={
+                    "Authorization": "Bearer plugin-scope-key",
+                    "X-Quest-Avatar-Key": "legacy-bridge-secret",
+                },
+            )
+            assert legacy_health.status == 200
+            await legacy_health.read()
+            assert received[-1]["path"] == f"{LEGACY_PUBLIC_API_PREFIX}/health"
+            assert received[-1]["headers"]["X-Quest-Avatar-Key"] == (
+                "legacy-bridge-secret"
+            )
+
+            legacy_exchange = await client.post(
+                base + f"{LEGACY_PUBLIC_API_PREFIX}/pairing/exchange",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+            )
+            assert legacy_exchange.status == 404
 
         before = len(received)
         async with aiohttp.ClientSession() as client:

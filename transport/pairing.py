@@ -26,12 +26,12 @@ from ..core.pairing import (
     PairingStatusRequest,
 )
 from ..core.operator_settings import OperatorSettingsError
+from ..core.plugin_identity import PLUGIN_ID, ROUTE_PREFIX
 from ..core.persona_service import QuestPersonaServiceError
 from ..core.service_control import BridgeServiceControlError
 
 
-PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
-ROUTE_PREFIX = f"/{PLUGIN_NAME}"
+PLUGIN_NAME = PLUGIN_ID
 NO_STORE_HEADERS = {
     "Cache-Control": "no-store, max-age=0",
     "Pragma": "no-cache",
@@ -214,13 +214,13 @@ class PairingHttpApi:
                 "pairing/service-status",
                 self.service_status,
                 ["GET"],
-                "Read Quest Bridge service status",
+                "Read Embodiment Bridge service status",
             ),
             (
                 "pairing/service-control",
                 self.service_control,
                 ["POST"],
-                "Start or stop Quest Bridge service",
+                "Start or stop Embodiment Bridge service",
             ),
             (
                 "pairing/listener-port",
@@ -352,7 +352,7 @@ class PairingHttpApi:
                 "pairing/diagnostics",
                 self.diagnostics_overview,
                 ["GET"],
-                "Read redacted Quest Bridge diagnostics",
+                "Read redacted Embodiment Bridge diagnostics",
             ),
             (
                 "pairing/identity-candidates",
@@ -1333,7 +1333,7 @@ class PairingHttpApi:
             )
             return _with_headers(response, headers)
         self.logger.error(
-            "[quest-avatar] pairing operation failed: operation=%s error_type=%s",
+            "[embodiment-bridge] pairing operation failed: operation=%s error_type=%s",
             operation,
             type(exc).__name__,
             exc_info=True,

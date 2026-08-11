@@ -13,20 +13,31 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .avatar_skills import AvatarSkillRegistry
+from .explicit_action_parser import ExplicitActionResult, parse_explicit_action
 from .models import ProposedIntent
+from .plugin_identity import BRIDGE_EVENT_MARKER, LEGACY_BRIDGE_EVENT_MARKER
 
 
-QUEST_EVENT_MARKER = "quest_avatar_bridge"
-QUEST_ACTION_INTENT_EXTRA = "quest_avatar_bridge.avatar_action_intent"
-QUEST_ACTION_TOOL_NAME = "quest_avatar_action"
-QUEST_ACTION_PROMPT_MARKER = "# 临：Quest 角色动作工具"
+QUEST_EVENT_MARKER = BRIDGE_EVENT_MARKER
+LEGACY_QUEST_EVENT_MARKER = LEGACY_BRIDGE_EVENT_MARKER
+QUEST_ACTION_INTENT_EXTRA = "embodiment_bridge.avatar_action_intent"
+QUEST_ACTION_PARSE_EXTRA = "embodiment_bridge.explicit_action_parse"
+QUEST_ACTION_SOURCE_EXTRA = "embodiment_bridge.avatar_action_source"
+QUEST_ACTION_TOOL_NAME = "embodiment_avatar_action"
+QUEST_ACTION_PROMPT_MARKER = "# 临：具身角色动作工具"
+EXPLICIT_ACTION_SOURCE = "explicit_request"
+MODEL_TOOL_SOURCE = "model_tool"
+
 
 def _is_quest_event(event: Any) -> bool:
     getter = getattr(event, "get_extra", None)
     if not callable(getter):
         return False
     try:
-        return getter(QUEST_EVENT_MARKER) is True
+        return (
+            getter(QUEST_EVENT_MARKER) is True
+            or getter(LEGACY_QUEST_EVENT_MARKER) is True
+        )
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return False
 
@@ -52,6 +63,45 @@ def read_selected_intent(event: Any) -> ProposedIntent | None:
     return None
 
 
+def read_selected_source(event: Any) -> str:
+    """Read the bounded internal source marker for a selected Quest action."""
+    if not _is_quest_event(event):
+        return ""
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return ""
+    try:
+        value = getter(QUEST_ACTION_SOURCE_EXTRA)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+    return value if value in {EXPLICIT_ACTION_SOURCE, MODEL_TOOL_SOURCE} else ""
+
+
+def stage_explicit_action(event: Any, user_text: str) -> bool:
+    """Cache only the bounded parse result from the original Bridge text."""
+    if not _is_quest_event(event):
+        return False
+    setter = getattr(event, "set_extra", None)
+    if not callable(setter):
+        return False
+    try:
+        setter(QUEST_ACTION_PARSE_EXTRA, parse_explicit_action(user_text))
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _read_staged_parse(event: Any) -> ExplicitActionResult | None:
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return None
+    try:
+        value = getter(QUEST_ACTION_PARSE_EXTRA)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+    return value if isinstance(value, ExplicitActionResult) else None
+
+
 def inject_quest_action_tool(
     request: Any,
     event: Any,
@@ -64,6 +114,23 @@ def inject_quest_action_tool(
     lazily keeps plugin discovery compatible with older AstrBot builds.
     """
     if not _is_quest_event(event):
+        return False
+    selected = read_selected_intent(event)
+    if selected is not None:
+        source = read_selected_source(event)
+        _diagnostic(
+            diagnostic,
+            "avatar.action.tool_skipped",
+            component="action",
+            operation=selected.gesture.value,
+            status="skipped",
+            reason_code=(
+                "explicit_action_preselected"
+                if source == EXPLICIT_ACTION_SOURCE
+                else "action_already_selected"
+            ),
+            result=source or "unknown",
+        )
         return False
     try:
         from astrbot.core.agent.tool import FunctionTool, ToolSet
@@ -82,7 +149,7 @@ def inject_quest_action_tool(
     tool = FunctionTool(
         name=QUEST_ACTION_TOOL_NAME,
         description=(
-            "选择一个已允许的 Quest 角色动作。仅在确实要让角色做动作时调用，"
+            "选择一个已允许的具身角色动作。仅在确实要让角色做动作时调用，"
             "每轮最多调用一次；不要传动画文件路径或骨骼名称。"
         ),
         parameters={
@@ -95,7 +162,14 @@ def inject_quest_action_tool(
                 },
                 "emotion": {
                     "type": "string",
-                    "enum": ["neutral", "happy", "shy", "surprised", "concerned", "uncomfortable"],
+                    "enum": [
+                        "neutral",
+                        "happy",
+                        "shy",
+                        "surprised",
+                        "concerned",
+                        "uncomfortable",
+                    ],
                     "description": "动作期间的表情倾向",
                     "default": "neutral",
                 },
@@ -174,6 +248,69 @@ def inject_quest_action_tool(
     return True
 
 
+async def prepare_quest_action_request(
+    request: Any,
+    event: Any,
+    handler: Callable[..., Awaitable[str]],
+    diagnostic: Callable[..., None] | None = None,
+) -> str:
+    """Preselect explicit imperatives or expose the bounded model tool."""
+    if not _is_quest_event(event):
+        return "non_quest"
+
+    parsed = _read_staged_parse(event) or parse_explicit_action(
+        str(getattr(event, "message_str", "") or "")
+    )
+    _diagnostic(
+        diagnostic,
+        "avatar.action.explicit_parse",
+        component="action",
+        operation=parsed.action or "none",
+        status=parsed.status,
+        reason_code=parsed.reason,
+        result=("tool_allowed" if parsed.allow_model_tool else "tool_suppressed"),
+    )
+
+    if parsed.action is not None:
+        await execute_quest_action(
+            event,
+            action=parsed.action,
+            diagnostic=diagnostic,
+            selection_source=EXPLICIT_ACTION_SOURCE,
+        )
+        if read_selected_intent(event) is not None:
+            inject_quest_action_tool(request, event, handler, diagnostic)
+            return "preselected"
+        _diagnostic(
+            diagnostic,
+            "avatar.action.tool_skipped",
+            component="action",
+            operation=parsed.action,
+            status="skipped",
+            reason_code="explicit_preselection_failed",
+            result="tool_suppressed",
+        )
+        return "preselection_failed"
+
+    if not parsed.allow_model_tool:
+        _diagnostic(
+            diagnostic,
+            "avatar.action.tool_skipped",
+            component="action",
+            operation="none",
+            status="skipped",
+            reason_code=parsed.reason,
+            result="unsafe_context",
+        )
+        return "unsafe_context"
+
+    return (
+        "tool_exposed"
+        if inject_quest_action_tool(request, event, handler, diagnostic)
+        else "tool_unavailable"
+    )
+
+
 async def execute_quest_action(
     event: Any,
     action: str = "",
@@ -183,11 +320,17 @@ async def execute_quest_action(
     look_at: str = "user",
     *,
     diagnostic: Callable[..., None] | None = None,
+    selection_source: str = MODEL_TOOL_SOURCE,
     **extra: Any,
 ) -> str:
     """Validate and store one action intent on the current Quest event."""
     started = time.perf_counter()
     normalized_action = str(action or "").strip().lower()
+    normalized_source = (
+        EXPLICIT_ACTION_SOURCE
+        if selection_source == EXPLICIT_ACTION_SOURCE
+        else MODEL_TOOL_SOURCE
+    )
     try:
         if not _is_quest_event(event):
             _diagnostic(
@@ -212,13 +355,27 @@ async def execute_quest_action(
             )
             return _result("rejected", "unknown_argument")
         if read_selected_intent(event) is not None:
+            existing_source = read_selected_source(event)
+            model_override_rejected = bool(
+                normalized_source == MODEL_TOOL_SOURCE
+                and existing_source == EXPLICIT_ACTION_SOURCE
+            )
             _diagnostic(
                 diagnostic,
-                "avatar.action.rejected",
+                (
+                    "avatar.action.model_override_rejected"
+                    if model_override_rejected
+                    else "avatar.action.rejected"
+                ),
                 component="action",
                 operation=normalized_action or "unknown",
                 status="rejected",
-                reason_code="action_already_selected",
+                reason_code=(
+                    "explicit_action_preselected"
+                    if model_override_rejected
+                    else "action_already_selected"
+                ),
+                result=existing_source or "unknown",
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return _result("rejected", "action_already_selected")
@@ -245,6 +402,7 @@ async def execute_quest_action(
         setter = getattr(event, "set_extra", None)
         if not callable(setter):
             raise RuntimeError("event_extra_unavailable")
+        setter(QUEST_ACTION_SOURCE_EXTRA, normalized_source)
         setter(QUEST_ACTION_INTENT_EXTRA, intent)
         _diagnostic(
             diagnostic,
@@ -258,6 +416,7 @@ async def execute_quest_action(
             look_at=intent.look_at.value,
             intensity=intent.intensity,
             duration_ms=intent.duration_ms,
+            result=normalized_source,
         )
         return _result("accepted", normalized_action)
     except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -290,7 +449,7 @@ def _inject_action_prompt(
     instruction = f"""
 
 {QUEST_ACTION_PROMPT_MARKER}
-本轮是 Quest 具身对话。只有确实需要角色执行身体动作时，调用
+本轮是可信具身客户端对话。只有确实需要角色执行身体动作时，调用
 `{QUEST_ACTION_TOOL_NAME}`，不要只在回复正文中描述“我抬手/转身/跳舞”。
 `action` 只能从以下白名单选择：{skills}。
 “换一个/另一支舞”使用 dance_next，普通跳舞使用 dance。每轮至多选择一个动作；
@@ -323,10 +482,17 @@ def _diagnostic(
 
 __all__ = [
     "QUEST_ACTION_INTENT_EXTRA",
+    "QUEST_ACTION_PARSE_EXTRA",
     "QUEST_ACTION_PROMPT_MARKER",
+    "QUEST_ACTION_SOURCE_EXTRA",
     "QUEST_ACTION_TOOL_NAME",
     "QUEST_EVENT_MARKER",
+    "EXPLICIT_ACTION_SOURCE",
+    "MODEL_TOOL_SOURCE",
     "execute_quest_action",
     "inject_quest_action_tool",
+    "prepare_quest_action_request",
     "read_selected_intent",
+    "read_selected_source",
+    "stage_explicit_action",
 ]

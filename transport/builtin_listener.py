@@ -18,6 +18,12 @@ from ..core.pairing import (
     PairingExchangeService,
     normalize_pairing_exchange_url,
 )
+from ..core.plugin_identity import (
+    BRIDGE_AUTH_HEADER,
+    LEGACY_BRIDGE_AUTH_HEADER,
+    LEGACY_PUBLIC_API_PREFIX,
+    PUBLIC_API_PREFIX,
+)
 
 
 EXCHANGE_PATH = f"{PUBLIC_API_PATH}/pairing/exchange"
@@ -37,9 +43,15 @@ _FIXED_PROXY_ROUTES = {
     ("POST", f"{PUBLIC_API_PATH}/interrupt"),
     ("POST", f"{PUBLIC_API_PATH}/session/close"),
 }
+_LEGACY_FIXED_PROXY_ROUTES = {
+    (method, path.replace(PUBLIC_API_PREFIX, LEGACY_PUBLIC_API_PREFIX, 1))
+    for method, path in _FIXED_PROXY_ROUTES
+}
+LEGACY_EVENTS_PATH_PREFIX = f"{LEGACY_PUBLIC_API_PREFIX}/events/"
 _FORWARDED_REQUEST_HEADERS = {
     "authorization": "Authorization",
-    "x-quest-avatar-key": "X-Quest-Avatar-Key",
+    BRIDGE_AUTH_HEADER.lower(): BRIDGE_AUTH_HEADER,
+    LEGACY_BRIDGE_AUTH_HEADER.lower(): LEGACY_BRIDGE_AUTH_HEADER,
     "content-type": "Content-Type",
     "accept": "Accept",
     "last-event-id": "Last-Event-ID",
@@ -385,7 +397,7 @@ class BuiltinQuestListener:
             except OSError as exc:
                 self._reason = "bind_failed"
                 self.logger.warning(
-                    "[quest-avatar] built-in listener unavailable: reason=%s error_type=%s",
+                    "[embodiment-bridge] built-in listener unavailable: reason=%s error_type=%s",
                     self._reason,
                     type(exc).__name__,
                 )
@@ -400,7 +412,7 @@ class BuiltinQuestListener:
             except Exception as exc:
                 self._reason = "start_failed"
                 self.logger.warning(
-                    "[quest-avatar] built-in listener unavailable: reason=%s error_type=%s",
+                    "[embodiment-bridge] built-in listener unavailable: reason=%s error_type=%s",
                     self._reason,
                     type(exc).__name__,
                 )
@@ -489,7 +501,7 @@ class BuiltinQuestListener:
                 return self._error_response(
                     "listener_busy",
                     503,
-                    "Quest Bridge listener is busy",
+                    "Embodiment Bridge listener is busy",
                 )
 
             path = self._validated_path(request)
@@ -507,7 +519,7 @@ class BuiltinQuestListener:
                 return self._error_response(
                     "route_not_allowed",
                     404,
-                    "Route is not available on the Quest Bridge listener",
+                    "Route is not available on the Embodiment Bridge listener",
                 )
             return await self._proxy(request, path)
         except ListenerHttpError as exc:
@@ -541,11 +553,19 @@ class BuiltinQuestListener:
 
     @staticmethod
     def _proxy_route_allowed(method: str, path: str) -> bool:
-        if (method, path) in _FIXED_PROXY_ROUTES:
+        if (method, path) in _FIXED_PROXY_ROUTES or (
+            method,
+            path,
+        ) in _LEGACY_FIXED_PROXY_ROUTES:
             return True
-        if method != "GET" or not path.startswith(EVENTS_PATH_PREFIX):
+        if method != "GET":
             return False
-        session_id = path.removeprefix(EVENTS_PATH_PREFIX)
+        if path.startswith(EVENTS_PATH_PREFIX):
+            session_id = path.removeprefix(EVENTS_PATH_PREFIX)
+        elif path.startswith(LEGACY_EVENTS_PATH_PREFIX):
+            session_id = path.removeprefix(LEGACY_EVENTS_PATH_PREFIX)
+        else:
+            return False
         if not _SESSION_ID_RE.fullmatch(session_id):
             return False
         return True

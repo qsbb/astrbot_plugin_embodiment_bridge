@@ -1,12 +1,12 @@
 {
   "pages": {
     "pairing": {
-      "title": "Quest 快速绑定",
-      "description": "生成一次性二维码或 6 位配对码，在 Quest 中完成绑定"
+      "title": "具身客户端快速绑定",
+      "description": "生成一次性二维码或 6 位配对码，在具身客户端中完成绑定"
     },
     "operator": {
-      "title": "Quest 角色设置",
-      "description": "控制 Quest 服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人"
+      "title": "具身服务控制台",
+      "description": "控制具身客户端服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人"
     }
   }
 }

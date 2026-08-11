@@ -11,23 +11,23 @@ import wave
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.environment import (
+from astrbot_plugin_embodiment_bridge.adapters.environment import (
     CachedEnvironmentAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.identity import (
+from astrbot_plugin_embodiment_bridge.adapters.identity import (
     ProtectedContextDecision,
     QuestSessionAuthorizationAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.relationship_event_identity import (
+from astrbot_plugin_embodiment_bridge.adapters.relationship_event_identity import (
     QuestEventIdentity,
     QuestEventIdentityResolution,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.knowledge import (
+from astrbot_plugin_embodiment_bridge.adapters.knowledge import (
     GlobalKnowledgeAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.runtime import SeriesRuntimeAdapter
-from astrbot_plugin_quest_avatar_bridge.adapters.stt import AdapterUnavailable
-from astrbot_plugin_quest_avatar_bridge.adapters.voice_hub_tts import (
+from astrbot_plugin_embodiment_bridge.adapters.runtime import SeriesRuntimeAdapter
+from astrbot_plugin_embodiment_bridge.adapters.stt import AdapterUnavailable
+from astrbot_plugin_embodiment_bridge.adapters.voice_hub_tts import (
     VoiceHubTTSAdapter,
 )
 
@@ -448,7 +448,7 @@ def test_series_adapter_timeouts_degrade_or_fail_closed(
 
     async def scenario() -> None:
         monkeypatch.setattr(
-            "astrbot_plugin_quest_avatar_bridge.adapters.identity.IDENTITY_TIMEOUT_SECONDS",
+            "astrbot_plugin_embodiment_bridge.adapters.identity.IDENTITY_TIMEOUT_SECONDS",
             0.01,
         )
         logger = LoggerStub()

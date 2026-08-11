@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.core.config_persistence import (
+from astrbot_plugin_embodiment_bridge.core.config_persistence import (
     config_is_writable,
     save_config_changes,
 )

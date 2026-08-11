@@ -15,10 +15,10 @@ from typing import Any
 
 from aiohttp import web
 
-from astrbot_plugin_quest_avatar_bridge.adapters.api_principal import (
+from astrbot_plugin_embodiment_bridge.adapters.api_principal import (
     ApiPrincipalVerificationError,
 )
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.models import (
     Emotion,
     Gesture,
     LookAt,
@@ -437,14 +437,14 @@ def build_plugin(
     monkeypatch.setitem(sys.modules, "astrbot.api.star", star)
     monkeypatch.setitem(sys.modules, "astrbot.api.web", web_module)
     for module_name in (
-        "astrbot_plugin_quest_avatar_bridge.adapters.astrbot_llm",
-        "astrbot_plugin_quest_avatar_bridge.main",
-        "astrbot_plugin_quest_avatar_bridge.transport.http_sse",
-        "astrbot_plugin_quest_avatar_bridge.transport.pairing",
+        "astrbot_plugin_embodiment_bridge.adapters.astrbot_llm",
+        "astrbot_plugin_embodiment_bridge.main",
+        "astrbot_plugin_embodiment_bridge.transport.http_sse",
+        "astrbot_plugin_embodiment_bridge.transport.pairing",
     ):
         sys.modules.pop(module_name, None)
 
-    main_module = importlib.import_module("astrbot_plugin_quest_avatar_bridge.main")
+    main_module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
     context = ContextStub()
     config: NativeConfigStub = NativeConfigStub(
         {
@@ -506,7 +506,7 @@ class LiveHttpServer:
         await self.bundle.plugin.terminate()
 
     def url(self, path: str) -> str:
-        return f"{self.base_url}/astrbot_plugin_quest_avatar_bridge{path}"
+        return f"{self.base_url}/astrbot_plugin_embodiment_bridge{path}"
 
     def _endpoint(self, handler: Any) -> Any:
         async def endpoint(value: web.Request) -> web.StreamResponse:

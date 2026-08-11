@@ -1,6 +1,6 @@
 # AstrBot 与 Unity 本机联调指南
 
-本文档用于在开发网络中联调 AstrBot Quest Avatar Bridge 与 Unity 前端。公开协议见 [API_CN.md](API_CN.md)，可执行样本见 [`fixtures/protocol_v1/`](../fixtures/protocol_v1/)。
+本文档用于在开发网络中联调 AstrBot Embodiment Bridge 与具身客户端。公开协议见 [API_CN.md](API_CN.md)，可执行样本见 [`fixtures/protocol_v1/`](../fixtures/protocol_v1/)。
 
 ## 1. 联调边界
 
@@ -12,10 +12,10 @@
 ## 2. 前置条件
 
 - AstrBot 版本满足 `metadata.yaml` 中的 `astrbot_version`。
-- 插件安装在 AstrBot 的 `data/plugins/astrbot_plugin_quest_avatar_bridge/`。
+- 插件安装在 AstrBot 的 `data/plugins/astrbot_plugin_embodiment_bridge/`。
 - 已配置可用的聊天模型 Provider，并取得它的 Provider ID。
 - Unity Editor 或 Quest 设备能够访问 AstrBot Dashboard 所在主机。
-- 如果要联调真实语音：已在 AstrBot Provider 设置中实例化 STT/TTS Provider；随后在「Quest 角色设置」Page 显式选择 STT Provider，Core TTS fallback 仍使用 AstrBot 当前默认 TTS Provider。
+- 如果要联调真实语音：已在 AstrBot Provider 设置中实例化 STT/TTS Provider；随后在具身服务控制台显式选择 STT Provider，Core TTS fallback 仍使用 AstrBot 当前默认 TTS Provider。
 
 安装生产依赖：
 
@@ -44,16 +44,16 @@ $bridgeBytes = New-Object byte[] 32
 | 配置 | 联调要求 |
 |---|---|
 | `bridge_api_key` | 使用上一步生成的随机值，至少 32 字符 |
-| `bridge_service_enabled` | 总服务开关，默认 `true`；也可从「Quest 角色设置」Page 即时启停 |
+| `bridge_service_enabled` | 总服务开关，默认 `true`；也可从具身服务控制台即时启停 |
 | `pairing_listener_enabled` | 默认 `false`；容器私网统一入口时显式设为 `true` |
 | `pairing_listener_host` / `pairing_listener_port` | 只允许 IP 字面量与 1024–65535 端口；容器通常用 `0.0.0.0` / `8520` |
 | `pairing_listener_upstream_url` | 只允许无路径、无认证信息的 loopback HTTP IP，例如 `http://127.0.0.1:6185` |
-| `pairing_listener_public_url` | Quest 可达的主机 base URL 或精确 exchange URL；不猜宿主机 IP |
+| `pairing_listener_public_url` | 具身客户端可达的主机 base URL 或精确 exchange URL；不猜宿主机 IP |
 | `pairing_exchange_proxy_url` | 可选旧外部代理 fallback；内置 listener 未就绪或 public URL 不合法时才使用 |
 | `pairing_trusted_proxy_ip` | 仅供旧外部代理路径；内置 listener 始终使用直接 peer IP，不信任转发来源头 |
 | `allow_private_http_pairing` | 只在受控私网启用；由服务端固定，快速绑定页不显示，公网继续强制 HTTPS |
 | `pairing_public_url` / `pairing_astrbot_api_key` | 服务端快速绑定使用的 Quest 地址与专用 plugin-scope Key；不进入 Page、二维码或日志 |
-| Bot/User 规范身份 | 在「Quest 角色设置」页明确填写或从“情”解析；只存插件数据目录的 `server_identity.json`，AstrBot 配置 Page 不回显；配对交换只下发占位值 |
+| Bot/User 规范身份 | 在具身服务控制台明确填写或从“情”解析；只存插件数据目录的 `server_identity.json`，AstrBot 配置 Page 不回显；配对交换只下发占位值 |
 | `pairing_ttl_seconds` | 服务端固定的一次性凭证 TTL，默认 120 秒；Page 只显示剩余时间 |
 | `chat_provider_id` | 明确选择聊天模型 Provider |
 | `persona_source_mode` | 默认 `astrbot`，继承 AstrBot 正式人格；仅兼容旧手动设定时选 `manual_override` |
@@ -62,7 +62,7 @@ $bridgeBytes = New-Object byte[] 32
 | `persona_prompt` / 四个 `character_*` 字段 | 仅 `manual_override` 兼容模式生效；未知经历必须明确不知道，且不由 `relationship_person_id` 推断 |
 | `max_sessions` | 按开发设备数量设置，保持较小值 |
 | `max_audio_seconds` | 联调时建议保持默认或更小 |
-| `astrbot_stt_provider_id` | 在「Quest 角色设置」Page 选择已实例化的正式 `STTProvider`；留空关闭 STT，`audio/end` 返回 SSE `stt_unavailable` |
+| `astrbot_stt_provider_id` | 在具身服务控制台选择已实例化的正式 `STTProvider`；留空关闭 STT，`audio/end` 返回 SSE `stt_unavailable` |
 | `enable_astrbot_tts` | 真实 TTS 联调时设为 `true`，否则只发送文字和意图 |
 | `enable_voice_hub_tts` | 默认 `true`；安装“声”后优先消费 `voice.audio_output@1.0` |
 | `trusted_client_id` / `trusted_platform_id` | 由 AstrBot 管理员在服务端配置；留空会关闭受保护关系上下文 |
@@ -72,13 +72,13 @@ $bridgeBytes = New-Object byte[] 32
 | `stt_timeout_seconds` / `tts_timeout_seconds` | 按 Provider 延迟设置，保持有界，不要设为无限 |
 | `max_tts_audio_seconds` | 限制单轮 Provider WAV 读入和输出时长 |
 
-「Quest 快速绑定」Page 只生成一次性二维码和短码，不承担模型、人格、连接或身份设置。聊天模型、AstrBot 人格、自然人范围和服务启停均由管理员在「Quest 角色设置」Page 或本插件专属配置中管理；Bridge 仍只接受公开 API/契约并在缺失、超时或畸形响应时安全降级，不访问 Core 或其他插件私有配置。
+“具身客户端快速绑定”Page 只生成一次性二维码和短码，不承担模型、人格、连接或身份设置。聊天模型、AstrBot 人格、自然人范围和服务启停均由管理员在具身服务控制台或本插件专属配置中管理；Bridge 仍只接受公开 API/契约并在缺失、超时或畸形响应时安全降级，不访问 Core 或其他插件私有配置。
 
 还需要在 AstrBot 中创建一个具有 `plugin` scope 的 API Key。Unity 的每个请求必须同时携带：
 
 ```http
-Authorization: Bearer <ASTRBOT_PLUGIN_SCOPE_API_KEY>
-X-Quest-Avatar-Key: <bridge_api_key>
+Authorization: ApiKey <ASTRBOT_PLUGIN_SCOPE_API_KEY>
+X-Embodiment-Bridge-Key: <bridge_api_key>
 ```
 
 两把密钥用途不同，不能只配置其中一个。
@@ -106,14 +106,14 @@ AstrBot 当前没有面向普通 Star 插件的稳定 STT tool/contract，因此
 
 可选配置 `server_timing_enabled=true` 时，既有 `reply.end` 会带上 `server_timing@1.0` 脱敏摘要；该摘要只包含非负整数耗时和固定决策路径枚举，不增加 SSE 事件，不改变 Protocol 1.0 顺序。默认关闭，旧客户端可继续忽略缺失字段。
 
-STT 输入在 `audio/end` 后一次性写为 16000 Hz 单声道 PCM16 WAV，再调用 Provider。当前没有 `asr.partial`，也不会把原始 PCM 写入插件安装目录；临时文件只在 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/stt_input/` 中短暂存在。
+STT 输入在 `audio/end` 后一次性写为 16000 Hz 单声道 PCM16 WAV，再调用 Provider。当前没有 `asr.partial`，也不会把原始 PCM 写入插件安装目录；临时文件只在 `data/plugin_data/astrbot_plugin_embodiment_bridge/stt_input/` 中短暂存在。
 
 ## 4. 选择正确地址
 
 ### Unity Editor 与 AstrBot 在同一台电脑
 
 ```text
-http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge
 ```
 
 ### Quest 真机访问电脑上的 AstrBot
@@ -121,7 +121,7 @@ http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_brid
 Quest 中的 `127.0.0.1` 指向头显自身，不能用于访问电脑。应使用电脑的局域网 IPv4，例如：
 
 ```text
-http://192.168.1.10:8520/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge
+http://192.168.1.10:8520/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge
 ```
 
 要求电脑和 Quest 位于互通的可信开发网络。Windows 防火墙只应允许专用网络和必要端口，不要创建面向公用网络或任意来源的宽泛规则。
@@ -159,7 +159,7 @@ ports:
 
 
 ```powershell
-$bridgeBase = "http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge"
+$bridgeBase = "http://127.0.0.1:6185/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge"
 $astrbotKey = "<ASTRBOT_PLUGIN_SCOPE_API_KEY>"
 $bridgeKey = "<bridge_api_key>"
 ```
@@ -167,7 +167,7 @@ $bridgeKey = "<bridge_api_key>"
 ### 5.1 健康检查
 
 ```powershell
-curl.exe --fail-with-body "$bridgeBase/health" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey"
+curl.exe --fail-with-body "$bridgeBase/health" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey"
 ```
 
 先检查 `protocol_version=1.0`，再根据 `stt_available` 和 `tts_available` 决定是否启用音频输入/输出。
@@ -177,7 +177,7 @@ curl.exe --fail-with-body "$bridgeBase/health" -H "Authorization: Bearer $astrbo
 在插件根目录执行：
 
 ```powershell
-curl.exe --fail-with-body "$bridgeBase/session/start" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/session_start.request.json"
+curl.exe --fail-with-body "$bridgeBase/session/start" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/session_start.request.json"
 ```
 
 ### 5.3 建立 SSE
@@ -185,7 +185,7 @@ curl.exe --fail-with-body "$bridgeBase/session/start" -H "Authorization: Bearer 
 另开一个终端并保持连接：
 
 ```powershell
-curl.exe -N "$bridgeBase/events/smoke-session" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey" -H "Accept: text/event-stream"
+curl.exe -N "$bridgeBase/events/smoke-session" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey" -H "Accept: text/event-stream"
 ```
 
 首先应看到 `: connected`。Unity 必须按空行拆分 frame，不能把一次网络读取当成一个完整事件。
@@ -193,7 +193,7 @@ curl.exe -N "$bridgeBase/events/smoke-session" -H "Authorization: Bearer $astrbo
 ### 5.4 上报交互
 
 ```powershell
-curl.exe --fail-with-body "$bridgeBase/interaction" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/interaction.request.json"
+curl.exe --fail-with-body "$bridgeBase/interaction" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/interaction.request.json"
 ```
 
 SSE 至少会返回 `avatar.intent`；是否继续返回文字和音频由角色决策及 adapter 状态决定。
@@ -201,11 +201,11 @@ SSE 至少会返回 `avatar.intent`；是否继续返回文字和音频由角色
 ### 5.5 打断与关闭
 
 ```powershell
-curl.exe --fail-with-body "$bridgeBase/interrupt" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/interrupt.request.json"
+curl.exe --fail-with-body "$bridgeBase/interrupt" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/interrupt.request.json"
 ```
 
 ```powershell
-curl.exe --fail-with-body "$bridgeBase/session/close" -H "Authorization: Bearer $astrbotKey" -H "X-Quest-Avatar-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/session_close.request.json"
+curl.exe --fail-with-body "$bridgeBase/session/close" -H "Authorization: ApiKey $astrbotKey" -H "X-Embodiment-Bridge-Key: $bridgeKey" -H "Content-Type: application/json" --data-binary "@fixtures/protocol_v1/session_close.request.json"
 ```
 
 关闭会话后 SSE 应结束。再次使用相同 `session_id` 前必须确认旧会话已关闭。
@@ -268,12 +268,12 @@ python -m pytest -q tests/test_http_contract_smoke.py tests/test_protocol_fixtur
 
 | 现象 | 检查项 |
 |---|---|
-| 401 `astrbot_auth_required` | `Authorization` 是否为有效、具有 plugin scope 的 Bearer Key |
-| 401 `bridge_auth_failed` | `X-Quest-Avatar-Key` 是否与插件配置完全一致 |
+| 401 `astrbot_auth_required` | `Authorization` 是否为有效、具有 plugin scope 的 ApiKey |
+| 401 `bridge_auth_failed` | `X-Embodiment-Bridge-Key` 是否与插件配置完全一致；旧 Header 仅用于迁移兼容 |
 | 403 `session_ownership_mismatch` | 后续请求是否换了 AstrBot API Key |
 | 404 `session_not_found` | 会话是否被关闭、插件是否重载、服务是否重启 |
 | 409 `session_conflict` | session 是否重复、是否已有活动轮或 SSE |
-| 503 `bridge_service_disabled` | 在「Quest 角色设置」Page 重新启动服务；关闭服务会主动清理旧会话 |
+| 503 `bridge_service_disabled` | 在具身服务控制台重新启动服务；关闭服务会主动清理旧会话 |
 | 422 `schema_validation_failed` | 对照 manifest、请求 fixture 和 Pydantic 字段范围 |
 | SSE 无事件 | 是否先创建会话、SSE 是否仍连接、interaction 是否被去抖 |
 | `stt_unavailable` | `astrbot_stt_provider_id` 是否已选择且仍精确命中一个已实例化的正式 STT Provider；旧私有 MiMo 配置不会自动启用 |

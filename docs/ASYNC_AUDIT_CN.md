@@ -1,4 +1,4 @@
-# Quest Avatar Bridge 实时异步审计
+# AstrBot Embodiment Bridge 实时异步审计
 
 审计范围仅为“临”的 HTTP/SSE、session/turn、LLM/STT/TTS、interaction 和独立诊断日志。Protocol 1.0、端点与 Unity 字段未改变。
 

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.identity_control_plane import (
+from astrbot_plugin_embodiment_bridge.adapters.identity_control_plane import (
     IdentityControlPlaneAdapter,
     IdentityControlPlaneError,
     authenticated_principal_digest,

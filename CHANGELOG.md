@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-11
+
+### Breaking changes
+
+- 插件内部 ID 与仓库名迁移为 `astrbot_plugin_embodiment_bridge`，正式 API 根路径同步迁移到 `/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge`。安装目录必须使用新 ID，并在升级后完整重启 AstrBot，避免旧版无法注销的 Web API 残留。
+- 插件自有诊断契约迁移为 `embodiment_bridge.diagnostics@1.0`，独立日志迁移为 `embodiment_bridge.log`，AstrBot 日志命名空间迁移为 `astrbot.plugin.astrbot_plugin_embodiment_bridge`。
+
+### Migration
+
+- 首次启动会从 `data/plugin_data/astrbot_plugin_quest_avatar_bridge/` 向新数据目录执行非破坏、原子复制；拒绝符号链接或 Junction，旧目录和旧文件始终保留，并写入不含秘密的迁移标记。
+- AstrBot 以安装目录命名的旧配置文件会按已知 schema 导入：只填充仍为默认值的字段，不覆盖管理员已设置的新值，不导入未知字段；成功持久化后设置一次性迁移标记，旧配置文件保持不变。
+- 已绑定客户端可在一个主版本周期内继续使用旧运行 API 路径和 `X-Quest-Avatar-Key`，但仍必须通过 AstrBot API Key 与 Bridge Key 双重认证。8520 不开放旧匿名 exchange；新绑定必须使用新路径。
+- Protocol 1.0 的 QR type、既有配置字段和跨插件 `identity.quest_*` / `relationship.quest_*` 契约名暂时保留，避免只升级“临”就破坏客户端、“序”和“情”的既有 1.0 联动。
+
+### Changed
+
+- 新客户端首选 `X-Embodiment-Bridge-Key`，EventBus 使用 `embodiment_bridge` 主标记；旧 Header 和旧事件标记仅作为有界兼容别名。
+- 插件入口类改为 `EmbodimentBridgePlugin`，并保留旧类名的源码兼容别名。
+- Bridge 创建且已授权的具身 EventBus 轮次会在服务端保守识别整句明确动作祈使；命中后复用现有严格动作 handler 预选白名单 intent，并继续原有单次 EventBus 模型调用。
+- 否定、假设、引用、转述和动作讨论语境禁止动作工具；多动作歧义和不完整表达仍交给请求级 `quest_avatar_action` 兼容工具，模型未调用时继续使用 `talk`。
+
+### Added
+
+- 新增根目录 `logo.png`，作为凝心溯溪-临在 AstrBot 插件列表和详情页中的头像。
+- README 新增前后端职责、EventBus 架构、快速配置、Protocol 1.0 摘要、凝心溯溪系列互荐、参考项目与贡献说明。
+- 原创源码采用 MPL-2.0，并补充第三方依赖、参考项目与头像边界声明。
+
+### Fixed
+
+- 服务开关和监听端口切换以会话创建门为边界；启动或换端口失败会尝试恢复持久化配置与旧监听器，避免产生无传输会话。
+- 修正文档中已经过期的 `Authorization: Bearer` 示例为 AstrBot 当前使用的 `Authorization: ApiKey`，并同步 TTS 分段流水线和内置 listener 配对语义。
+
+### Diagnostics
+
+- 增加显式动作解析、预选、工具跳过和异常模型覆盖拒绝的脱敏事件，只记录白名单动作名、状态与原因码，不记录用户正文或身份。
+
+### Security
+
+- 旧数据迁移只允许两个精确插件专属目录，拒绝重解析点并通过同级 staging 原子提交；已有新数据永远优先且不会与旧数据静默合并。
+- 8520 匿名面仍只有新 ID 下的精确 `POST pairing/exchange`；旧路径兼容只覆盖需要双重认证的九个 Protocol 1.0 运行接口。
+
 ## 0.4.22 - 2026-08-11
 
 ### Added

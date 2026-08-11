@@ -42,7 +42,7 @@ class CachedEnvironmentAdapter:
             self.status = "provider_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] environment awareness not installed; continuing without cached context"
+                    "[embodiment-bridge] environment awareness not installed; continuing without cached context"
                 )
                 self._missing_logged = True
             return None
@@ -59,14 +59,14 @@ class CachedEnvironmentAdapter:
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] environment.opportunity contract is incompatible; integration disabled"
+                    "[embodiment-bridge] environment.opportunity contract is incompatible; integration disabled"
                 )
                 self._incompatible_logged = True
             return None
         if contract.get("request_hook_network") is not False:
             self.status = "network_safety_mismatch"
             self.logger.warning(
-                "[quest-avatar] environment cache contract no longer guarantees a network-free request hook"
+                "[embodiment-bridge] environment cache contract no longer guarantees a network-free request hook"
             )
             return None
         try:
@@ -81,7 +81,7 @@ class CachedEnvironmentAdapter:
             return None
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] cached environment read failed: error_type=%s",
+                "[embodiment-bridge] cached environment read failed: error_type=%s",
                 type(exc).__name__,
             )
             self.status = "error"

@@ -289,7 +289,7 @@ class OperatorSettings:
             raise OperatorSettingsError(
                 "invalid_trusted_client_id",
                 422,
-                "Quest 客户端 ID 无效",
+                "具身客户端 ID 无效",
             )
         self._validate_platform_id(platform)
         api_key = str(astrbot_api_key or "").strip() or str(
@@ -590,7 +590,7 @@ class OperatorSettings:
             raise OperatorSettingsError(
                 "trusted_client_id_missing",
                 422,
-                "请先配置 Quest 客户端 ID",
+                "请先配置具身客户端 ID",
             )
         platform = str(platform_id or "").strip()
         self._validate_platform_id(platform)
@@ -832,7 +832,7 @@ class OperatorSettings:
             providers = self.context.get_all_providers()
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             self.logger.warning(
-                "[quest-avatar] failed to list chat providers: error_type=%s",
+                "[embodiment-bridge] failed to list chat providers: error_type=%s",
                 type(exc).__name__,
             )
             return []
@@ -970,7 +970,7 @@ class OperatorSettings:
             except Exception as exc:
                 self._restore_values(old_values)
                 self.logger.warning(
-                    "[quest-avatar] operator setting save failed: key=%s error_type=%s",
+                    "[embodiment-bridge] operator setting save failed: key=%s error_type=%s",
                     key,
                     type(exc).__name__,
                 )

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .plugin_identity import PLUGIN_DISPLAY_NAME, PLUGIN_ID
+
 
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
 _SAFE_FIELD_NAMES = frozenset(
@@ -97,16 +99,15 @@ _SAFE_PERSONA_ENUM_VALUES = frozenset(
     }
 )
 
-PLUGIN_ID = "astrbot_plugin_quest_avatar_bridge"
-PLUGIN_NAME = "临"
-DIAGNOSTIC_CONTRACT = "quest_avatar_bridge.diagnostics@1.0"
+PLUGIN_NAME = PLUGIN_DISPLAY_NAME
+DIAGNOSTIC_CONTRACT = "embodiment_bridge.diagnostics@1.0"
 _MAX_EVENTS = 1000
 
 
 class DiagnosticLog:
     """Small plugin-owned JSONL logger with no logging-module integration."""
 
-    filename = "quest_avatar_bridge.log"
+    filename = "embodiment_bridge.log"
 
     def __init__(
         self,
@@ -125,7 +126,7 @@ class DiagnosticLog:
         self.backup_count = max(0, min(int(backup_count), 10))
         self.platform_log_enabled = bool(platform_log_enabled)
         self._platform_logger = logging.getLogger(
-            "astrbot.plugin.astrbot_plugin_quest_avatar_bridge"
+            f"astrbot.plugin.{PLUGIN_ID}"
         )
         self._lock = threading.RLock()
         self._write_failures = 0
@@ -213,7 +214,7 @@ class DiagnosticLog:
                 },
             }
             self._platform_logger.info(
-                "[quest_avatar_bridge] diagnostic=%s",
+                "[embodiment_bridge] diagnostic=%s",
                 json.dumps(summary, ensure_ascii=True, separators=(",", ":")),
             )
         except Exception:
@@ -231,7 +232,7 @@ class DiagnosticLog:
         self._loop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
         self._writer_task = asyncio.create_task(
-            self._writer(), name="quest-avatar:diagnostic-writer"
+            self._writer(), name="embodiment-bridge:diagnostic-writer"
         )
         with self._lock:
             has_pending = bool(self._pending)

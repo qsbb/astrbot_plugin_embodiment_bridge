@@ -5,12 +5,12 @@ import base64
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.core.models import (
+from astrbot_plugin_embodiment_bridge.core.models import (
     AudioChunkRequest,
     InteractionEvent,
     SessionStartRequest,
 )
-from astrbot_plugin_quest_avatar_bridge.core.session_manager import (
+from astrbot_plugin_embodiment_bridge.core.session_manager import (
     BoundedEventQueue,
     QueueItem,
     SessionManager,

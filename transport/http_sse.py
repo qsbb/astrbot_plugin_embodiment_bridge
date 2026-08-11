@@ -23,6 +23,14 @@ from ..core.models import (
     SessionStartRequest,
     TurnStartRequest,
 )
+from ..core.plugin_identity import (
+    BRIDGE_AUTH_HEADER,
+    LEGACY_BRIDGE_AUTH_HEADER,
+    LEGACY_ROUTE_PREFIX,
+    PLUGIN_ID,
+    PUBLIC_API_PREFIX,
+    ROUTE_PREFIX,
+)
 from ..core.session_manager import (
     BridgeStateError,
     QueueClosed,
@@ -33,9 +41,7 @@ from ..core.service_control import BridgeServiceUnavailable
 from ..core.turn_orchestrator import TurnOrchestrator
 
 
-PLUGIN_NAME = "astrbot_plugin_quest_avatar_bridge"
-ROUTE_PREFIX = f"/{PLUGIN_NAME}"
-PUBLIC_API_PREFIX = f"/api/v1/plugins/extensions/{PLUGIN_NAME}"
+PLUGIN_NAME = PLUGIN_ID
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
@@ -95,33 +101,39 @@ class HttpSseTransport:
                 "session/start",
                 self.session_start,
                 ["POST"],
-                "Start Quest avatar session",
+                "Start embodied-client session",
             ),
-            ("events/<session_id>", self.events, ["GET"], "Quest avatar SSE events"),
-            ("turn/start", self.turn_start, ["POST"], "Start Quest avatar turn"),
-            ("audio/chunk", self.audio_chunk, ["POST"], "Append Quest PCM16 audio"),
-            ("audio/end", self.audio_end, ["POST"], "Finish Quest PCM16 audio"),
+            ("events/<session_id>", self.events, ["GET"], "Embodied-client SSE events"),
+            ("turn/start", self.turn_start, ["POST"], "Start embodied-client turn"),
+            ("audio/chunk", self.audio_chunk, ["POST"], "Append client PCM16 audio"),
+            ("audio/end", self.audio_end, ["POST"], "Finish client PCM16 audio"),
             (
                 "interaction",
                 self.interaction,
                 ["POST"],
-                "Submit Quest interaction fact",
+                "Submit embodied interaction fact",
             ),
-            ("interrupt", self.interrupt, ["POST"], "Interrupt active Quest turn"),
+            ("interrupt", self.interrupt, ["POST"], "Interrupt active client turn"),
             (
                 "session/close",
                 self.session_close,
                 ["POST"],
-                "Close Quest avatar session",
+                "Close embodied-client session",
             ),
-            ("health", self.health, ["GET"], "Quest avatar bridge health"),
+            ("health", self.health, ["GET"], "Embodiment bridge health"),
         )
         for suffix, handler, methods, description in routes:
             self.context.register_web_api(
-                f"{ROUTE_PREFIX}/{suffix}",
+                f"{ROUTE_PREFIX}/{suffix}", handler, methods, description
+            )
+            # One bounded compatibility cycle for already-bound clients. These
+            # aliases still pass AstrBot auth and bridge-key auth; the standalone
+            # listener never exposes the legacy anonymous exchange endpoint.
+            self.context.register_web_api(
+                f"{LEGACY_ROUTE_PREFIX}/{suffix}",
                 handler,
                 methods,
-                description,
+                f"Legacy authenticated alias: {description}",
             )
 
     async def session_start(self) -> Any:
@@ -478,12 +490,20 @@ class HttpSseTransport:
         configured_key = self.config.bridge_api_key
         if len(configured_key) < 32:
             raise HttpApiError(
-                "bridge_not_configured", 503, "Quest bridge API key is not configured"
+                "bridge_not_configured",
+                503,
+                "Embodiment bridge API key is not configured",
             )
-        supplied_key = str(request.headers.get("x-quest-avatar-key") or "")
+        supplied_key = str(
+            request.headers.get(BRIDGE_AUTH_HEADER)
+            or request.headers.get(BRIDGE_AUTH_HEADER.lower())
+            or request.headers.get(LEGACY_BRIDGE_AUTH_HEADER)
+            or request.headers.get(LEGACY_BRIDGE_AUTH_HEADER.lower())
+            or ""
+        )
         if not hmac.compare_digest(supplied_key, configured_key):
             raise HttpApiError(
-                "bridge_auth_failed", 401, "Quest bridge authentication failed"
+                "bridge_auth_failed", 401, "Embodiment bridge authentication failed"
             )
         return owner
 
@@ -550,7 +570,7 @@ class HttpSseTransport:
                 data={"code": "schema_validation_failed"},
             )
         self.logger.error(
-            "[quest-avatar] HTTP operation failed: operation=%s error_type=%s",
+            "[embodiment-bridge] HTTP operation failed: operation=%s error_type=%s",
             operation,
             type(exc).__name__,
             exc_info=True,

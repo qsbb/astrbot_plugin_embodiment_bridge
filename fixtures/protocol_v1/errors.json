@@ -55,7 +55,7 @@
     },
     {
       "status_code": 503,
-      "body": {"status": "error", "message": "Quest Bridge 服务已由管理员关闭", "data": {"code": "bridge_service_disabled"}}
+      "body": {"status": "error", "message": "具身桥接服务已由管理员关闭", "data": {"code": "bridge_service_disabled"}}
     }
   ]
 }

@@ -52,7 +52,7 @@ class RelationshipSnapshotAdapter:
             self.status = "provider_unavailable"
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] relationship plugin not installed; continuing without snapshot"
+                    "[embodiment-bridge] relationship plugin not installed; continuing without snapshot"
                 )
                 self._missing_logged = True
             return None
@@ -65,7 +65,7 @@ class RelationshipSnapshotAdapter:
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] relationship.snapshot contract is incompatible; integration disabled"
+                    "[embodiment-bridge] relationship.snapshot contract is incompatible; integration disabled"
                 )
                 self._incompatible_logged = True
             return None
@@ -89,7 +89,7 @@ class RelationshipSnapshotAdapter:
         except Exception as exc:
             self.status = "error"
             self.logger.warning(
-                "[quest-avatar] relationship snapshot failed: error_type=%s",
+                "[embodiment-bridge] relationship snapshot failed: error_type=%s",
                 type(exc).__name__,
             )
             return None
@@ -100,7 +100,7 @@ class RelationshipSnapshotAdapter:
         if normalized is None:
             self.status = "invalid_response"
             self.logger.warning(
-                "[quest-avatar] relationship.snapshot returned an invalid payload"
+                "[embodiment-bridge] relationship.snapshot returned an invalid payload"
             )
             return None
         self.status = "ok"

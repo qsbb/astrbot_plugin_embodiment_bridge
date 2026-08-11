@@ -1,14 +1,20 @@
 {
-  "bridge_service_enabled": {
-    "description": "启用 Quest Bridge 对话服务",
+  "legacy_plugin_id_migrated": {
+    "description": "旧插件 ID 配置迁移状态（内部）",
     "type": "bool",
-    "hint": "可在 Quest 角色设置 Page 中即时启停。关闭会停止 8520 监听、终止现有 Quest 会话并拒绝业务请求；AstrBot 管理 Page 保持可用以便重新开启。",
+    "hint": "由 1.0.0 首次启动原子写入。为 true 时不再读取旧 astrbot_plugin_quest_avatar_bridge 配置文件；请勿手动修改。",
+    "default": false
+  },
+  "bridge_service_enabled": {
+    "description": "启用具身桥接对话服务",
+    "type": "bool",
+    "hint": "可在具身服务控制台中即时启停。关闭会停止 8520 监听、终止现有具身会话并拒绝业务请求；AstrBot 管理 Page 保持可用以便重新开启。",
     "default": true
   },
   "pairing_listener_enabled": {
-    "description": "启用内置 Quest Bridge 8520 监听器",
+    "description": "启用内置具身桥接 8520 监听器",
     "type": "bool",
-    "hint": "默认关闭以保持兼容。启用后插件在 initialize() 中监听；仅开放匿名 pairing/exchange 和严格白名单内的 Quest 正常接口。",
+    "hint": "默认关闭以保持兼容。启用后插件在 initialize() 中监听；仅开放匿名 pairing/exchange 和严格白名单内的具身客户端接口。",
     "default": false
   },
   "pairing_listener_host": {
@@ -32,15 +38,15 @@
     "default": "http://127.0.0.1:6185"
   },
   "pairing_listener_public_url": {
-    "description": "向 Quest 公布的内置监听器 URL",
+    "description": "向具身客户端公布的内置监听器 URL",
     "type": "string",
     "hint": "可填写主机 base URL 或精确 pairing/exchange URL。私网 HTTP 还必须启用 allow_private_http_pairing；公网必须 HTTPS。不自动猜测宿主机 IP。",
     "default": ""
   },
   "bridge_api_key": {
-    "description": "Quest 桥接二次认证密钥",
+    "description": "具身桥接二次认证密钥",
     "type": "string",
-    "hint": "至少 32 个随机字符。留空后也可在「Quest 角色设置」保存身份时由服务端自动生成；Unity 通过 X-Quest-Avatar-Key 发送，它不能替代带 plugin scope 的 AstrBot API Key。",
+    "hint": "至少 32 个随机字符。留空后也可在「伴夏服务控制台」保存身份时由服务端自动生成；新客户端通过 X-Embodiment-Bridge-Key 发送，旧 X-Quest-Avatar-Key 仅作迁移兼容。它不能替代带 plugin scope 的 AstrBot API Key。",
     "obvious_hint": true,
     "default": ""
   },
@@ -64,60 +70,60 @@
     "default": false
   },
   "pairing_public_url": {
-    "description": "Quest 正常连接地址",
+    "description": "具身客户端正常连接地址",
     "type": "string",
     "hint": "快速绑定由服务端使用，不在扫码页显示。通常与 pairing_listener_public_url 的主机一致；可填写主机地址或完整 Bridge extensions 地址。",
     "default": ""
   },
   "pairing_astrbot_api_key": {
-    "description": "Quest 专用 AstrBot API Key",
+    "description": "具身客户端专用 AstrBot API Key",
     "type": "string",
-    "hint": "必须具有 plugin scope。可在「Quest 角色设置」的密码框写入；后端只保存不回显，并由快速绑定服务端注入 Quest，不进入二维码、日志或状态接口。",
+    "hint": "必须具有 plugin scope。可在具身服务控制台的密码框写入；后端只保存不回显，并由快速绑定服务端注入客户端，不进入二维码、日志或状态接口。",
     "obvious_hint": true,
     "default": ""
   },
   "pairing_api_principal_digest": {
-    "description": "Quest API Key 已认证身份摘要",
+    "description": "具身客户端 API Key 已认证身份摘要",
     "type": "string",
-    "hint": "由“Quest 角色设置”页面通过 AstrBot 官方 API Key 认证自动写入；只保存不可逆 SHA-256 摘要，请勿手动填写。",
+    "hint": "由具身服务控制台通过 AstrBot 官方 API Key 认证自动写入；只保存不可逆 SHA-256 摘要，请勿手动填写。",
     "default": ""
   },
   "pairing_identity_sync_state": {
-    "description": "Quest 服务端身份同步状态（内部）",
+    "description": "具身客户端服务端身份同步状态（内部）",
     "type": "string",
     "default": "ready",
     "options": ["ready", "pending"],
-    "hint": "由临自动维护。pending 时拒绝新 Quest 会话，避免身份控制面与本地事件身份不一致。"
+    "hint": "由临自动维护。pending 时拒绝新具身会话，避免身份控制面与本地事件身份不一致。"
   },
   "pairing_identity_source": {
-    "description": "Quest 服务端身份来源（内部）",
+    "description": "具身客户端服务端身份来源（内部）",
     "type": "string",
     "default": "manual",
     "options": ["none", "manual", "relationship"],
     "hint": "由临自动维护；原始 Bot/User 只在临的专属管理页写入且不回显。"
   },
   "pairing_user_id": {
-    "description": "Quest 用户 ID 旧配置迁移槽（内部）",
+    "description": "具身客户端用户 ID 旧配置迁移槽（内部）",
     "type": "string",
     "secret": true,
-    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在 Quest 角色设置页管理。",
+    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在具身服务控制台管理。",
     "default": ""
   },
   "pairing_bot_id": {
-    "description": "Quest Bot ID 旧配置迁移槽（内部）",
+    "description": "具身客户端 Bot ID 旧配置迁移槽（内部）",
     "type": "string",
     "secret": true,
-    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在 Quest 角色设置页管理。",
+    "hint": "升级时自动迁移到临的服务端身份存储并清空；请在具身服务控制台管理。",
     "default": ""
   },
   "pairing_group_id": {
-    "description": "Quest 会话群组 ID",
+    "description": "具身客户端会话群组 ID",
     "type": "string",
     "hint": "可选；由服务端固定，不在扫码页显示。",
     "default": ""
   },
   "pairing_relationship_profile_id": {
-    "description": "Quest 会话关系档案 ID",
+    "description": "具身客户端会话关系档案 ID",
     "type": "string",
     "hint": "可选兼容字段；优先使用 relationship_person_id，不在扫码页显示。",
     "default": ""
@@ -141,7 +147,7 @@
   "enable_astrbot_message_pipeline": {
     "description": "普通对话进入 AstrBot 正式消息管线",
     "type": "bool",
-    "hint": "仅对通过身份授权的文字/语音会话生效。输入会作为受控消息事件进入 EventBus，经过人格、工具与插件钩子；禁止继承管理员权限，最终 TTS 仍由 Quest Bridge 流式输出。不可用时回退上方 Provider。",
+    "hint": "仅对通过身份授权的文字/语音会话生效。输入会作为受控消息事件进入 EventBus，经过人格、工具与插件钩子；禁止继承管理员权限，最终 TTS 仍由具身桥接服务流式输出。不可用时回退上方 Provider。",
     "default": true
   },
   "allow_direct_provider_fallback": {
@@ -151,7 +157,7 @@
     "default": false
   },
   "persona_source_mode": {
-    "description": "Quest 角色人格来源",
+    "description": "具身角色人格来源",
     "type": "string",
     "options": [
       "astrbot",
@@ -161,32 +167,32 @@
     "default": "astrbot"
   },
   "astrbot_persona_id": {
-    "description": "Quest 会话使用的 AstrBot 人格",
+    "description": "具身会话使用的 AstrBot 人格",
     "type": "string",
     "_special": "select_persona",
     "hint": "留空时继承 AstrBot 明确默认人格；选择值只由服务端配置，Unity 不能提交人格或任意人格 ID。",
     "default": ""
   },
   "character_name": {
-    "description": "Quest 角色姓名",
+    "description": "具身角色姓名",
     "type": "string",
     "hint": "仅在 persona_source_mode=manual_override 时生效；留空时角色不得自行编造姓名。",
     "default": ""
   },
   "character_self_reference": {
-    "description": "Quest 角色自称",
+    "description": "具身角色自称",
     "type": "string",
     "hint": "仅在 manual_override 时生效。例如“我”或角色固定自称；留空时安全默认使用“我”。",
     "default": ""
   },
   "character_self_description": {
-    "description": "Quest 角色自我描述",
+    "description": "具身角色自我描述",
     "type": "text",
     "hint": "仅在 manual_override 时生效。描述角色是谁、性格与已知背景；不知道的经历不得编造。",
     "default": ""
   },
   "character_user_relationship": {
-    "description": "Quest 角色与用户的关系定位",
+    "description": "具身角色与用户的关系定位",
     "type": "string",
     "hint": "仅在 manual_override 时生效；不会替代身份授权或 relationship_person_id。",
     "default": ""
@@ -205,7 +211,7 @@
     "default": ""
   },
   "astrbot_stt_provider_id": {
-    "description": "Quest 语音识别 STT Provider",
+    "description": "具身客户端语音识别 STT Provider",
     "type": "string",
     "_special": "select_provider_stt",
     "hint": "选择 AstrBot 已实例化的 STT Provider；包括通过 AstrBot 正式 Provider 机制注册的第三方实现。临不会读取或保存 Provider 的 API 地址、密钥或原始配置。留空时关闭语音识别。",
@@ -224,19 +230,19 @@
     "default": true
   },
   "trusted_client_id": {
-    "description": "服务端固定的 Quest 客户端身份",
+    "description": "服务端固定的具身客户端身份",
     "type": "string",
-    "hint": "由 AstrBot 管理员在服务端或「Quest 角色设置」配置，不能信任 Unity 自报。留空会明确关闭受保护关系上下文；配置后 session.start.client_id 必须精确匹配。",
+    "hint": "由 AstrBot 管理员在服务端或具身服务控制台配置，不能信任客户端自报。留空会明确关闭受保护关系上下文；配置后 session.start.client_id 必须精确匹配。",
     "default": ""
   },
   "trusted_platform_id": {
     "description": "服务端固定的原始 AstrBot 平台身份",
     "type": "string",
-    "hint": "填写 AstrBot 已启用的平台实例 ID，也可在 Quest 角色设置 Page 中验证并保存。不能由 Unity 提交，也不能从自然人关系映射推导；留空会关闭受保护关系上下文与 EventBus 正式消息链路。",
+    "hint": "填写 AstrBot 已启用的平台实例 ID，也可在具身服务控制台中验证并保存。不能由客户端提交，也不能从自然人关系映射推导；留空会关闭受保护关系上下文与 EventBus 正式消息链路。",
     "default": ""
   },
   "relationship_person_id": {
-    "description": "Quest 角色绑定的自然人 ID",
+    "description": "具身角色绑定的自然人 ID",
     "type": "string",
     "hint": "由 AstrBot 管理员在本插件专属配置中管理。它只决定受保护关系快照的自然人范围，不授予平台权限；快速绑定页不会读取或显示该值，契约缺失时不得从私有存储猜测。",
     "default": ""
@@ -289,13 +295,13 @@
     "maximum": 300
   },
   "persona_prompt": {
-    "description": "Quest 角色设定",
+    "description": "具身角色设定",
     "type": "text",
     "hint": "只描述角色性格、表达和边界；不要填写 PMX 骨骼、Morph、Unity 对象或动画路径。",
     "default": "保持自然、尊重边界、不过度亲昵的角色。"
   },
   "max_sessions": {
-    "description": "最大并发 Quest 会话数",
+    "description": "最大并发具身客户端会话数",
     "type": "int",
     "default": 8,
     "minimum": 1,

@@ -10,11 +10,11 @@ import wave
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.stt import (
+from astrbot_plugin_embodiment_bridge.adapters.stt import (
     AdapterUnavailable,
     AstrBotSTTAdapter,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.tts import AstrBotTTSAdapter
+from astrbot_plugin_embodiment_bridge.adapters.tts import AstrBotTTSAdapter
 
 
 class ProviderContext:

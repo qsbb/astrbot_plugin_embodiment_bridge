@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from astrbot_plugin_quest_avatar_bridge.core.diagnostic_log import (
+from astrbot_plugin_embodiment_bridge.core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
 )
@@ -35,8 +35,8 @@ def test_diagnostics_snapshot_keeps_memory_events_when_file_log_disabled(
 
     payload = diagnostic.diagnostic_events()
 
-    assert payload["contract"] == "quest_avatar_bridge.diagnostics@1.0"
-    assert payload["plugin_id"] == "astrbot_plugin_quest_avatar_bridge"
+    assert payload["contract"] == "embodiment_bridge.diagnostics@1.0"
+    assert payload["plugin_id"] == "astrbot_plugin_embodiment_bridge"
     assert payload["plugin_name"] == "临"
     assert payload["status"] == "memory_only"
     assert payload["reason"] == "FILE_LOG_DISABLED"
@@ -145,7 +145,7 @@ def test_platform_logger_mirror_is_namespaced_and_redacted(
         diagnostic = DiagnosticLog(tmp_path, enabled=True, platform_log_enabled=True)
         caplog.set_level(
             logging.INFO,
-            logger="astrbot.plugin.astrbot_plugin_quest_avatar_bridge",
+            logger="astrbot.plugin.astrbot_plugin_embodiment_bridge",
         )
         await diagnostic.start()
         diagnostic.record(
@@ -160,7 +160,7 @@ def test_platform_logger_mirror_is_namespaced_and_redacted(
         records = [
             record
             for record in caplog.records
-            if record.name == "astrbot.plugin.astrbot_plugin_quest_avatar_bridge"
+            if record.name == "astrbot.plugin.astrbot_plugin_embodiment_bridge"
         ]
         assert records
         rendered = records[-1].getMessage()
@@ -320,7 +320,7 @@ def test_rotation_and_concurrent_writes_keep_valid_jsonl(tmp_path: Path) -> None
         assert await diagnostic.flush()
         await diagnostic.close()
 
-        files = [diagnostic.path, *sorted(tmp_path.glob("quest_avatar_bridge.log.*"))]
+        files = [diagnostic.path, *sorted(tmp_path.glob("embodiment_bridge.log.*"))]
         assert diagnostic.path.exists()
         assert any(path.name.endswith(".1") for path in files)
         for path in files:

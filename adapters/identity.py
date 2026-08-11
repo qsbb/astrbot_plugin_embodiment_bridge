@@ -209,7 +209,7 @@ class QuestSessionAuthorizationAdapter:
             self.status = decision.reason
             if not self._missing_logged:
                 self.logger.info(
-                    "[quest-avatar] identity guardian not installed; using exact local Quest binding fallback"
+                    "[embodiment-bridge] identity guardian not installed; using exact local binding fallback"
                 )
                 self._missing_logged = True
             return decision
@@ -218,7 +218,7 @@ class QuestSessionAuthorizationAdapter:
             self.status = "contract_incompatible"
             if not self._incompatible_logged:
                 self.logger.warning(
-                    "[quest-avatar] identity.quest_session_authorization contract is incompatible; protected context disabled"
+                    "[embodiment-bridge] identity.quest_session_authorization contract is incompatible; protected context disabled"
                 )
                 self._incompatible_logged = True
             return ProtectedContextDecision(False, self.status)
@@ -243,7 +243,7 @@ class QuestSessionAuthorizationAdapter:
             return ProtectedContextDecision(False, self.status)
         except Exception as exc:
             self.logger.warning(
-                "[quest-avatar] Quest session authorization failed: error_type=%s",
+                "[embodiment-bridge] session authorization failed: error_type=%s",
                 type(exc).__name__,
             )
             self.status = "authorization_error"

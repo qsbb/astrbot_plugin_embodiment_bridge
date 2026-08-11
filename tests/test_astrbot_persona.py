@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters.astrbot_persona import (
+from astrbot_plugin_embodiment_bridge.adapters.astrbot_persona import (
     ASTRBOT_DEFAULT_PERSONA_SOURCE_ID,
     AstrBotPersonaAdapter,
     PersonaSelectionError,

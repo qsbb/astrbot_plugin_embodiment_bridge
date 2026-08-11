@@ -16,16 +16,16 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
         )
     )
     assert metadata["pages"]["operator"] == {
-        "title": "Quest 角色设置",
-        "description": "控制 Quest 服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人",
+        "title": "具身服务控制台",
+        "description": "控制具身客户端服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人",
     }
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=0.4.22-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=0.4.22-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=0.4.22-1")
-    assert "凝心溯溪-临｜Quest 角色设置" in html
+    assert '<script type="module" src="./app.js?v=1.0.0-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.0-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.0-1")
+    assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
 
@@ -113,8 +113,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert 'apiPost("pairing/service-control", { enabled })' in js
     assert 'apiPost("pairing/listener-port", { port })' in js
     assert 'value="8520"' in html
-    assert "修改端口会断开当前 Quest 会话" in js
-    assert "关闭服务会断开当前 Quest 会话" in js
+    assert "修改端口会断开当前具身会话" in js
+    assert "关闭服务会断开当前具身会话" in js
     for capability in (
         "dialogue",
         "eventbus",

@@ -1,1 +1,1 @@
-"""Core protocol and orchestration primitives for the Quest avatar bridge."""
+"""Core protocol and orchestration primitives for the embodiment bridge."""

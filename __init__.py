@@ -1,1 +1,1 @@
-"""AstrBot Quest avatar bridge plugin package."""
+"""AstrBot embodiment bridge plugin package."""

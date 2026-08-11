@@ -7,17 +7,17 @@ from typing import Any
 
 import pytest
 
-from astrbot_plugin_quest_avatar_bridge.adapters import (
+from astrbot_plugin_embodiment_bridge.adapters import (
     persona_converter as persona_converter_module,
 )
-from astrbot_plugin_quest_avatar_bridge.adapters.persona_converter import (
+from astrbot_plugin_embodiment_bridge.adapters.persona_converter import (
     PERSONA_CONVERTER_PROMPT_VERSION,
     PERSONA_CONVERTER_SYSTEM_PROMPT,
     PersonaConversionError,
     PersonaConverter,
     parse_conversion_response,
 )
-from astrbot_plugin_quest_avatar_bridge.core.persona_profiles import (
+from astrbot_plugin_embodiment_bridge.core.persona_profiles import (
     PROFILE_SCHEMA_VERSION,
 )
 

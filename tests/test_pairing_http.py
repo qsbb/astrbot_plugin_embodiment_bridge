@@ -97,7 +97,7 @@ def test_real_http_pairing_create_exchange_status_and_replay(
                 assert configuration["astrbot_api_key"] == "quest-plugin-scope-key"
                 assert configuration["bridge_api_key"] == BRIDGE_API_KEY
                 assert configuration["base_url"].endswith(
-                    "/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge"
+                    "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge"
                 )
                 assert configuration["allow_insecure_http"] is False
                 assert configuration["user_id"] == "server-managed-user"
