@@ -20,8 +20,8 @@ SKIP_PARTS = {".git", ".pytest_cache", ".ruff_cache", "__pycache__"}
 
 
 def test_bridge_sources_do_not_restore_known_personal_defaults() -> None:
+    public_contact = "".join(("14839", "04397"))
     forbidden = {
-        "".join(("14839", "04397")),
         "".join(("20581", "41897")),
         "".join(("192.168.5", ".88")),
         "".join(("192.168.5", ".70")),
@@ -43,4 +43,10 @@ def test_bridge_sources_do_not_restore_known_personal_defaults() -> None:
         for value in forbidden:
             if value in text:
                 findings.append(f"{path.relative_to(PLUGIN_ROOT)}: forbidden default")
+        if public_contact in text and path != PLUGIN_ROOT / "README.md":
+            findings.append(f"{path.relative_to(PLUGIN_ROOT)}: personal contact outside README")
     assert findings == []
+
+    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.count(public_contact) == 1
+    assert f"QQ：`{public_contact}`" in readme
