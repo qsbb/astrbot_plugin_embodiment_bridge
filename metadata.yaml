@@ -1,9 +1,10 @@
 name: astrbot_plugin_embodiment_bridge
 display_name: 凝心溯溪-临
-short_desc: 凝心溯溪系列具身交互模块：让 AI 化身进入多种终端与现实空间
+short_desc: 让虚拟角色走进现实空间的 AstrBot 具身桥接插件，连接 VR/MR、桌面角色与实体设备，支持实时对话、语音、动作、表情、触碰和空间感知
 desc: >
-  凝心溯溪系列具身交互模块：通过 HTTP POST 与 SSE 连接具身客户端，
-  让 AstrBot 统一决定回复、触碰边界、动作、表情、注视和语音意图。
+  凝心溯溪-临是面向虚拟陪伴与具身 AI 的 AstrBot 桥接插件。它将 VR/MR、
+  桌面虚拟角色和实体设备接入 AstrBot 正式消息链，把用户的语音、触碰与空间信息
+  交给人格、记忆、知识和工具系统处理，再将回复、语音、动作、表情与注视意图实时返回客户端。
 version: 1.0.0
 author: qsbb
 repo: https://github.com/qsbb/astrbot_plugin_embodiment_bridge

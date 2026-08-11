@@ -2,7 +2,9 @@
 
 ![凝心溯溪-临](logo.png)
 
-`astrbot_plugin_embodiment_bridge` 是凝心溯溪系列的具身客户端桥接插件。它把 XR、桌面虚拟角色及其他受控终端上报的文字、语音与交互事实送入 AstrBot 正式消息链，再通过 HTTP/SSE 返回文字、PCM 音频和模型无关的角色意图。
+**让虚拟角色走进现实空间。**
+
+`astrbot_plugin_embodiment_bridge` 是 AstrBot 具身桥接插件，连接 VR/MR、桌面角色与实体设备，支持实时对话、语音、动作、表情、触碰和空间感知。它把客户端上报的文字、语音与交互事实送入 AstrBot 正式消息链，再通过 HTTP/SSE 返回文字、PCM 音频和模型无关的角色意图。
 
 协议不绑定设备和模型格式。当前官方参考客户端是运行于 Meta Quest 3 的 [伴夏（Banxia）](https://github.com/qsbb/banxia)，目前实现 PMX/VMD、手追、物理接触、彩透和房间交互。
 
