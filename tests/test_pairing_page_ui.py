@@ -126,7 +126,9 @@ def test_pairing_page_has_no_external_runtime_assets_or_embedded_secrets() -> No
         assert forbidden not in html + js
 
 
-def test_pairing_page_documentation_explains_busy_and_unknown_states() -> None:
-    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
-    assert "对应按钮会暂时禁用" in readme
-    assert "尚不认识的配对状态" in readme
+def test_pairing_documentation_explains_busy_and_unknown_states() -> None:
+    pairing_docs = (PLUGIN_ROOT / "docs" / "PAIRING_CN.md").read_text(
+        encoding="utf-8"
+    )
+    assert "对应按钮会暂时禁用" in pairing_docs
+    assert "尚不认识的配对状态" in pairing_docs
