@@ -4,6 +4,10 @@
 
 插件基于 AstrBot 当前公开的 `Context.register_web_api()`、事件队列、消息事件、`Context.llm_generate()`、`Context.persona_manager`、`Context.get_using_stt_provider()` 和 `Context.get_using_tts_provider()`。普通文字/语音默认只进入已授权的正式 EventBus；直连 Provider 回退必须由管理员显式开启，触碰动作仍使用受控兼容决策。人格接入按 AstrBot 4.27.1 的公开接口实现；不注册 WebSocket，也不修改 AstrBot Core、service hub 或 orchestration hub。
 
+## 参与项目
+
+本项目希望先给出一条可运行、可验证的具身 AI 接入路径，以此抛砖引玉，而不是把当前实现当作唯一答案。欢迎通过 [Issues](https://github.com/qsbb/astrbot_plugin_embodiment_bridge/issues) 反馈设备兼容、协议、安全和交互体验问题，也欢迎提交 Pull Request，共同完善客户端适配、服务端能力、测试与文档。提交内容请说明测试环境，并确认拥有所附代码、图片、模型、动作和音频的必要授权。
+
 ## 项目信息
 
 - 作者：`qsbb`
@@ -502,12 +506,7 @@ python -m compileall .
 | [OpenAI Realtime Console](https://github.com/openai/openai-realtime-console) | 实时音频事件、打断与调试可观察性 | MIT |
 | [Gemini Live API Web Console](https://github.com/google-gemini/live-api-web-console) | PCM 队列、全双工会话和多模态通道 | Apache-2.0 |
 | [Pipecat](https://github.com/pipecat-ai/pipecat) | 异步处理管线、轮次与 barge-in | BSD-2-Clause |
-| [Project N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) | 人格、记忆、活动状态和 Avatar 分层 | Apache-2.0 |
 | [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber) | VAD、可取消会话与表情映射 | MIT；其 Live2D 样例模型另有条款 |
 | [Together Companion](https://github.com/menglimi/astrbot_plugin_together_companion) | AstrBot 消息链、连续识别和房间连接思路 | 仓库未声明许可证；仅作行为参考，未复制或分发代码 |
 
 本仓库原创源码采用 [Mozilla Public License 2.0](LICENSE)。运行依赖仍分别遵守 AstrBot 及 Python 包自己的许可证，头像与第三方资产边界见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。仓库没有导入上述参考项目的源码或素材；若未来引入代码，必须先记录精确版本、许可证、修改和 NOTICE。
-
-## 参与项目
-
-本项目希望先给出一条可运行、可验证的具身 AI 接入路径，以此抛砖引玉，而不是把当前实现当作唯一答案。欢迎通过 [Issues](https://github.com/qsbb/astrbot_plugin_embodiment_bridge/issues) 反馈设备兼容、协议、安全和交互体验问题，也欢迎提交 Pull Request，共同完善客户端适配、服务端能力、测试与文档。提交内容请说明测试环境，并确认拥有所附代码、图片、模型、动作和音频的必要授权。
