@@ -258,10 +258,10 @@ function renderOperatorSettings(settings) {
     : [];
   select.replaceChildren();
   if (!providers.length) {
-    select.add(new Option("没有可用的 Chat Completion Provider", ""));
+    select.add(new Option("没有可用的决策 / 回退 Provider", ""));
     select.disabled = true;
   } else {
-    select.add(new Option("请选择聊天模型", ""));
+    select.add(new Option("请选择决策 / 回退模型", ""));
     providers.forEach((provider) => {
       select.add(new Option(providerLabel(provider), provider.id));
     });
@@ -288,7 +288,7 @@ function renderOperatorSettings(settings) {
   } else if (operatorSettings.selected_available) {
     status.textContent = "当前模型：" + operatorSettings.selected_id;
   } else {
-    status.textContent = "尚未选择聊天模型，实时对话不可用。";
+    status.textContent = "尚未选择决策 / 回退模型；EventBus 基础对话仍可使用 AstrBot 默认模型。";
   }
   document.getElementById("save-model-button").disabled =
     select.disabled || !select.value;
@@ -1464,7 +1464,7 @@ async function saveModelSelection() {
       chat_provider_id: selected
     });
     renderOperatorSettings(response.settings);
-    toast("聊天模型已保存并立即生效");
+    toast("临直连与交互决策模型已保存并立即生效");
   } catch (error) {
     toast("模型保存失败：" + error.message, true);
   } finally {
@@ -1526,14 +1526,16 @@ function renderIdentityCandidates(catalog) {
   const status = document.getElementById("identity-status");
   const candidates = Array.isArray(catalog?.candidates) ? catalog.candidates : [];
   const selected = String(operatorSettings?.relationship_person_id || "");
-  select.replaceChildren(new Option("不绑定自然人", ""));
+  select.replaceChildren(new Option("不使用“情”的关系上下文", ""));
 
   if (catalog?.status !== "ok") {
     if (selected) select.add(new Option("已选择 · " + selected, selected));
     select.value = selected;
-    select.disabled = true;
-    saveButton.disabled = true;
-    status.textContent = identityUnavailableMessage(catalog?.status);
+    select.disabled = false;
+    saveButton.disabled = false;
+    status.textContent = selected
+      ? identityUnavailableMessage(catalog?.status) + " 当前选择无法验证；可切换为空值并关闭关系上下文。"
+      : identityUnavailableMessage(catalog?.status) + " 可保持留空，基础对话不受影响。";
     return;
   }
 
@@ -1559,7 +1561,7 @@ function renderIdentityCandidates(catalog) {
   saveButton.disabled = false;
   status.textContent = candidates.length
     ? "已读取 " + candidates.length + " 个自然人，只包含管理员标签。"
-    : "“情”中尚无可选自然人。";
+    : "“情”中尚无可选自然人；可保持留空，基础对话不受影响。";
 }
 
 async function loadIdentityCandidates() {
@@ -1591,7 +1593,7 @@ async function saveIdentitySelection() {
     renderOperatorSettings(response.settings);
     toast(personId
       ? "自然人与正式消息身份已同步"
-      : "已清除关系绑定；Quest 服务端身份保持不变");
+      : "已关闭“情”的关系上下文；Quest 基础对话身份保持不变");
   } catch (error) {
     toast("自然人保存失败：" + error.message, true);
   } finally {

@@ -206,8 +206,8 @@ sequenceDiagram
 | 方法 | 路径 | 成功状态 | 用途 |
 |---|---|---:|---|
 | POST | `/pairing/listener-port` | 200 | 保存并立即应用内置 listener 端口；默认 8520，修改会断开旧端口上的具身会话 |
-| GET | `/pairing/operator-settings` | 200 | 枚举可用聊天模型并读取当前服务端选择 |
-| POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换运行时模型 |
+| GET | `/pairing/operator-settings` | 200 | 枚举触碰/动作决策及直连回退可用的 Chat Completion Provider，并读取当前选择；正常 EventBus 对话仍使用 AstrBot 平台或会话默认 Provider |
+| POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换临的交互决策与直连回退模型，不覆盖 EventBus 默认 Provider |
 | GET | `/pairing/stt-settings` | 200 | 枚举已实例化正式 STT Provider 的安全摘要并读取当前选择/降级状态 |
 | POST | `/pairing/stt-settings` | 200 | 验证并持久化 `astrbot_stt_provider_id`；空值关闭 STT，成功后立即更新运行时选择 |
 | GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |
@@ -644,6 +644,9 @@ GET /health
       "capabilities": {
         "dialogue": true,
         "eventbus": true,
+        "eventbus_dialogue": true,
+        "interaction_decision": true,
+        "direct_provider_fallback": false,
         "identity_configured": true,
         "stt": false,
         "tts": false,

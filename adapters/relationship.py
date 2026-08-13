@@ -47,6 +47,9 @@ class RelationshipSnapshotAdapter:
         group_id: str,
         relationship_profile_id: str,
     ) -> dict[str, Any] | None:
+        if not self.person_id:
+            self.status = "disabled"
+            return None
         provider = find_active_provider(self.context, RELATIONSHIP_PLUGIN_NAME)
         if provider is None:
             self.status = "provider_unavailable"
@@ -177,6 +180,12 @@ class RelationshipSnapshotAdapter:
 
     def configure_person_id(self, person_id: str) -> None:
         self.person_id = str(person_id or "").strip()
+        if not self.person_id:
+            # Clearing the optional natural-person selector must immediately
+            # disable relationship reads, even before the next turn arrives.
+            self.status = "disabled"
+        else:
+            self.status = "authorization_gated"
 
     async def close(self) -> None:
         return None

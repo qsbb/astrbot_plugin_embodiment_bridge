@@ -187,6 +187,8 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         health = plugin.plugin_health()
         assert health["version"] == module.__version__
         assert health["checks"]["pairing_bootstrap_ready"] is True
+        assert health["checks"]["eventbus_dialogue_available"] is False
+        assert "DIALOGUE_PATH_AVAILABLE" in health["reasons"]
         assert plugin.diagnostic_log_contract() == {
             "name": "series.diagnostics",
             "version": "1.0",

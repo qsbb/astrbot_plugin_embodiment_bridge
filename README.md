@@ -25,7 +25,7 @@
 - 输出受白名单约束的情绪、动作和注视意图，不向客户端发送骨骼、Morph、动画路径或 Unity 对象。
 - 上报握手、摸头、捏脸、注视和说话等交互事实，由后端结合身份、关系和边界决定反应。
 - 提供一次性二维码与 6 位短码配对，客户端无需手工搬运长期密钥和完整 API 路径。
-- 提供聊天模型、正式平台、身份、STT、人格转换、自然人绑定、服务启停和诊断管理页面。
+- 提供直连/交互决策模型、正式平台、身份、STT、人格转换、可选关系增强、服务启停和诊断管理页面。
 - 可以单独安装；安装凝心溯溪系列插件后，通过公开、版本化契约复用知识、身份、关系、环境、语音和诊断能力。
 
 ## 前后端仓库
@@ -58,9 +58,9 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 运行要求：AstrBot `>=4.26,<5`、一个可用的 Chat Completion Provider，以及客户端能够访问的 AstrBot 主机。STT、TTS 和其他凝心溯溪插件均为可选能力。
 
 1. 将仓库目录安装为 `data/plugins/astrbot_plugin_embodiment_bridge/`，安装 [requirements.txt](requirements.txt) 后重载插件。
-2. 在 AstrBot 管理后台创建并启用聊天模型；需要语音输入时，再创建一个正式 STT Provider。
+2. 在 AstrBot 管理后台创建并启用平台或会话默认聊天模型；需要语音输入时，再创建一个正式 STT Provider。
 3. 在 AstrBot“设置 → API Key 管理”创建一把具身客户端专用 API Key，至少授予 `plugin` scope。密钥明文通常只显示一次。
-4. 打开插件的“具身服务控制台”Page，选择聊天模型和正式消息平台，再填写客户端 ID、Bot、User 与专用 API Key并保存验证。
+4. 打开插件的“具身服务控制台”Page，选择正式消息平台，并选择触碰/动作决策与显式直连回退使用的 Provider；再填写客户端 ID、Bot、User 与专用 API Key并保存验证。正常 EventBus 对话继续使用 AstrBot 平台或会话的默认 Provider。
 5. 在插件配置中启用内置 listener。私网 Docker 部署的最小示例：
 
    ```text
@@ -89,7 +89,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | 配置 | 默认值 | 作用 |
 |---|---:|---|
 | `bridge_service_enabled` | `true` | 启停具身对话服务；关闭时清理现有会话和 listener |
-| `chat_provider_id` | 空 | 触碰决策及显式回退使用的聊天 Provider |
+| `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
 | `pairing_listener_enabled` | `false` | 启用严格白名单内置 listener |

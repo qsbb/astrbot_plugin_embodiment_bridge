@@ -99,7 +99,7 @@
     "description": "具身客户端服务端身份来源（内部）",
     "type": "string",
     "default": "manual",
-    "options": ["none", "manual", "relationship"],
+    "options": ["none", "manual", "relationship", "preserved"],
     "hint": "由临自动维护；原始 Bot/User 只在临的专属管理页写入且不回显。"
   },
   "pairing_user_id": {

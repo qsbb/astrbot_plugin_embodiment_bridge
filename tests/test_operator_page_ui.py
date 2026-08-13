@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.0-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.0-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.0-1")
+    assert '<script type="module" src="./app.js?v=1.0.1-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.1-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.1-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -161,10 +161,18 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "本地精确绑定" in js
     assert 'apiGet("pairing/identity-candidates")' in js
     assert 'apiPost("pairing/identity-selection"' in js
+    assert "不使用“情”的关系上下文" in js
+    assert "基础对话不受影响" in js
+    assert "“情”自然人（可留空）" in html
     assert "provider.id" in js
     assert "provider?.model" in js
     assert "provider?.adapter_type" in js
     assert "provider?.provider_type" in js
+    assert "可切换为空值并关闭关系上下文" in js
+    assert "临直连 / 交互决策模型" in html
+    assert "仍使用 AstrBot 平台或会话的默认聊天模型" in html
+    assert "EventBus 基础对话仍可使用 AstrBot 默认模型" in js
+    assert "实时对话不可用" not in js
     assert "candidate.display_name" in js
     assert "candidate.person_id" in js
     assert "candidate.account_count" in js

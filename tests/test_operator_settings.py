@@ -197,6 +197,10 @@ class IdentityStub:
         self.trusted_platform_id = values["platform_id"]
         self.local_binding = dict(values)
 
+    @property
+    def local_binding_configured(self) -> bool:
+        return bool(getattr(self, "local_binding", None))
+
     def configure_relationship_person_id(self, person_id: str) -> None:
         self.relationship_person_id = person_id
 
@@ -337,6 +341,20 @@ def test_astrbot_4265_sync_config_enables_all_operator_workflows() -> None:
     asyncio.run(scenario())
 
 
+def test_empty_relationship_selection_is_valid_without_relationship_plugin() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({"relationship_person_id": ""})
+        settings = build_settings(config=config)
+
+        snapshot = await settings.clear_resolved_relationship_identity()
+
+        assert snapshot["relationship_person_id"] == ""
+        assert settings.relationship.person_id == ""
+        assert settings.identity.relationship_person_id == ""
+
+    asyncio.run(scenario())
+
+
 def test_platform_snapshot_lists_only_safe_loaded_platform_metadata() -> None:
     settings = build_settings(config={})
 
@@ -374,6 +392,58 @@ def test_model_and_relationship_selection_persist_before_runtime_switch() -> Non
         assert config.saves == [
             {"chat_provider_id": "model-b"},
             {"relationship_person_id": "person-a"},
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_empty_relationship_save_uses_clear_path_and_preserves_base_binding() -> None:
+    class ControlPlane:
+        def __init__(self) -> None:
+            self.revocations: list[dict[str, str]] = []
+
+        async def revoke_quest_read_only_binding(self, **values: str) -> dict[str, Any]:
+            self.revocations.append(dict(values))
+            return {"status": "revoked"}
+
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "trusted_client_id": "quest-room",
+                "trusted_platform_id": "platform-a",
+                "relationship_person_id": "person-a",
+                "pairing_identity_source": "relationship",
+                "pairing_identity_sync_state": "ready",
+                "pairing_api_principal_digest": "sha256:" + "a" * 64,
+                "pairing_bot_id": "real-bot",
+                "pairing_user_id": "real-user",
+            }
+        )
+        settings = build_settings(config=config)
+        settings.relationship.configure_person_id("person-a")
+        settings.identity.configure_local_binding(
+            api_principal_digest="sha256:" + "a" * 64,
+            client_id="quest-room",
+            platform_id="platform-a",
+            bot_id="real-bot",
+            user_id="real-user",
+            group_id="",
+        )
+        settings.identity.configure_relationship_person_id("person-a")
+        settings.identity.configure_sync_ready(True)
+        control = ControlPlane()
+        settings.identity_control_plane = control
+
+        snapshot = await settings.save_relationship_person_id("")
+
+        assert snapshot["relationship_person_id"] == ""
+        assert settings.relationship.person_id == ""
+        assert settings.identity.relationship_person_id == ""
+        assert settings.identity.local_binding_configured is True
+        assert settings.identity.sync_ready is True
+        assert config["pairing_identity_source"] == "preserved"
+        assert control.revocations == [
+            {"api_principal_digest": "sha256:" + "a" * 64, "client_id": "quest-room"}
         ]
 
     asyncio.run(scenario())
@@ -578,7 +648,7 @@ def test_failed_authoritative_relationship_sync_stays_pending_and_does_not_switc
     asyncio.run(scenario())
 
 
-def test_clear_relationship_identity_revokes_and_removes_server_identity() -> None:
+def test_clear_relationship_context_preserves_verified_server_identity() -> None:
     class ControlPlane:
         def __init__(self) -> None:
             self.requests: list[dict[str, str]] = []
@@ -591,6 +661,7 @@ def test_clear_relationship_identity_revokes_and_removes_server_identity() -> No
         config = NativeConfigStub(
             {
                 "trusted_client_id": "quest-room",
+                "trusted_platform_id": "platform-a",
                 "relationship_person_id": "person-a",
                 "pairing_identity_source": "relationship",
                 "pairing_identity_sync_state": "ready",
@@ -603,22 +674,92 @@ def test_clear_relationship_identity_revokes_and_removes_server_identity() -> No
         control = ControlPlane()
         settings.identity_control_plane = control
         settings.relationship.configure_person_id("person-a")
+        settings.identity.configure_local_binding(
+            api_principal_digest="sha256:" + "a" * 64,
+            client_id="quest-room",
+            platform_id="platform-a",
+            bot_id="real-bot",
+            user_id="real-user",
+            group_id="",
+        )
+        settings.identity.configure_sync_ready(True)
+        settings.identity.configure_relationship_person_id("person-a")
+        previous_binding = dict(settings.identity.local_binding)
 
         snapshot = await settings.clear_resolved_relationship_identity()
 
         assert snapshot["relationship_person_id"] == ""
-        assert settings.identity_store.identity is None
+        assert settings.identity_store.identity.bot_id == "real-bot"
+        assert settings.identity_store.identity.user_id == "real-user"
         assert settings.identity.sync_ready is True
         assert settings.identity.relationship_person_id == ""
-        assert config["pairing_identity_source"] == "none"
-        assert config["pairing_bot_id"] == ""
-        assert config["pairing_user_id"] == ""
+        assert settings.identity.local_binding == previous_binding
+        assert config["pairing_identity_source"] == "preserved"
+        assert config["pairing_bot_id"] == "real-bot"
+        assert config["pairing_user_id"] == "real-user"
         assert control.requests == [
             {
                 "api_principal_digest": "sha256:" + "a" * 64,
                 "client_id": "quest-room",
             }
         ]
+
+    asyncio.run(scenario())
+
+
+def test_clear_pending_relationship_restores_verified_base_identity() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "trusted_client_id": "quest-room",
+                "trusted_platform_id": "platform-a",
+                "relationship_person_id": "person-a",
+                "pairing_identity_source": "relationship",
+                "pairing_identity_sync_state": "pending",
+                "pairing_api_principal_digest": "sha256:" + "a" * 64,
+                "pairing_bot_id": "real-bot",
+                "pairing_user_id": "real-user",
+            }
+        )
+        settings = build_settings(config=config)
+        # Simulate a fresh plugin process: the persisted server tuple exists,
+        # but main intentionally did not preload it while sync was pending.
+        settings.relationship.configure_person_id("person-a")
+        settings.identity.configure_trusted_platform("platform-a")
+        settings.identity.configure_sync_ready(False)
+        settings.identity.configure_relationship_person_id("person-a")
+
+        snapshot = await settings.clear_resolved_relationship_identity()
+
+        assert snapshot["relationship_person_id"] == ""
+        assert config["pairing_identity_source"] == "preserved"
+        assert config["pairing_identity_sync_state"] == "ready"
+        assert settings.identity.sync_ready is True
+        assert settings.identity.relationship_person_id == ""
+        assert settings.identity.local_binding["bot_id"] == "real-bot"
+        assert settings.identity.local_binding["user_id"] == "real-user"
+        assert settings.message_pipeline.platform_id == "platform-a"
+
+    asyncio.run(scenario())
+
+
+def test_clear_relationship_does_not_claim_ready_without_base_identity() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {
+                "relationship_person_id": "person-a",
+                "pairing_identity_source": "relationship",
+                "pairing_identity_sync_state": "pending",
+            }
+        )
+        settings = build_settings(config=config)
+        settings.identity.configure_sync_ready(False)
+
+        await settings.clear_resolved_relationship_identity()
+
+        assert config["pairing_identity_source"] == "preserved"
+        assert config["pairing_identity_sync_state"] == "pending"
+        assert settings.identity.sync_ready is False
 
     asyncio.run(scenario())
 

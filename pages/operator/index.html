@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.0.0-1" />
+  <link rel="stylesheet" href="./style.css?v=1.0.1-1" />
 </head>
 <body>
   <main class="shell">
@@ -95,15 +95,15 @@
 
     <section class="settings-grid" aria-label="具身服务设置">
       <section class="setting-panel" aria-labelledby="model-title">
-        <span class="section-label">对话</span>
-        <h2 id="model-title">聊天模型</h2>
-        <p>只显示 AstrBot 已实例化的 Chat Completion Provider，不读取密钥或原始配置。</p>
+        <span class="section-label">决策与回退</span>
+        <h2 id="model-title">临直连 / 交互决策模型</h2>
+        <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音进入 AstrBot EventBus 时，仍使用 AstrBot 平台或会话的默认聊天模型。这里只显示已实例化 Provider 的安全摘要，不读取密钥或原始配置。</p>
         <label for="chat-provider-id">Provider</label>
         <select id="chat-provider-id" disabled>
           <option value="">正在读取可用模型</option>
         </select>
         <p id="model-status" class="field-status" role="status">尚未读取</p>
-        <button id="save-model-button" class="primary" type="button" aria-busy="false" disabled>保存模型</button>
+        <button id="save-model-button" class="primary" type="button" aria-busy="false" disabled>保存决策模型</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="stt-provider-title">
@@ -304,18 +304,18 @@
       </section>
 
       <section class="setting-panel" aria-labelledby="identity-title">
-        <span class="section-label">关系</span>
-        <h2 id="identity-title">自然人绑定</h2>
-        <p>候选列表只显示管理员标签。保存时后端会通过“情”的服务端契约解析唯一私聊账号，并同步正式消息链身份；原始账号不会返回页面。</p>
+        <span class="section-label">可选关系增强</span>
+        <h2 id="identity-title">“情”自然人（可留空）</h2>
+        <p>不安装“情”或不选择自然人时，基础对话、动作和语音仍然可用，只是不注入关系上下文。选择后候选列表只显示管理员标签，原始账号不会返回页面。</p>
         <div class="inline-actions">
           <button id="load-identity-candidates" type="button" aria-busy="false">从“情”读取</button>
         </div>
         <label for="relationship-person-select">自然人</label>
         <select id="relationship-person-select" disabled>
-          <option value="">请先读取候选</option>
+          <option value="">不使用“情”的关系上下文</option>
         </select>
-        <p id="identity-status" class="field-status" role="status">尚未读取候选</p>
-        <button id="save-identity-button" class="primary" type="button" aria-busy="false" disabled>保存自然人</button>
+        <p id="identity-status" class="field-status" role="status">当前可保持留空；读取候选仅用于启用关系增强。</p>
+        <button id="save-identity-button" class="primary" type="button" aria-busy="false">保存可选关系设置</button>
       </section>
 
       <section class="setting-panel diagnostics-panel" aria-labelledby="diagnostics-title">
@@ -347,6 +347,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.0.0-1"></script>
+  <script type="module" src="./app.js?v=1.0.1-1"></script>
 </body>
 </html>

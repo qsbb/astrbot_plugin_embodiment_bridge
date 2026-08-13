@@ -483,6 +483,11 @@ class OperatorSettings:
                 422,
                 "自然人 ID 无效",
             )
+        # Empty selection is an opt-out. Reuse the full clearing path so the
+        # relationship-only binding is revoked while the base Quest identity
+        # remains available for EventBus.
+        if not person_id:
+            return await self.clear_resolved_relationship_identity()
         await self._persist("relationship_person_id", person_id)
         self.relationship.configure_person_id(person_id)
         if self.identity is not None:
@@ -490,51 +495,83 @@ class OperatorSettings:
         return self.snapshot()
 
     async def clear_resolved_relationship_identity(self) -> dict[str, Any]:
-        source = str(
-            self.config.get("pairing_identity_source", "manual") or "manual"
-        ).strip()
-        if source != "relationship":
-            return await self.save_relationship_person_id("")
-        client = str(self.config.get("trusted_client_id", "") or "").strip()
+        # Relationship is an optional protected-context enhancer. Clearing the
+        # selected natural person must not revoke the already verified Quest
+        # message identity, otherwise opting out of “情” would break EventBus.
+        async with self._identity_sync_lock:
+            source = str(
+                self.config.get("pairing_identity_source", "manual") or "manual"
+            ).strip()
+            preserved_binding = self._preserved_base_identity()
+            if self.identity_control_plane is not None and source == "relationship":
+                try:
+                    principal_digest = validate_principal_digest(
+                        self.config.get("pairing_api_principal_digest", "")
+                    )
+                    client_id = str(
+                        self.config.get("trusted_client_id", "") or ""
+                    ).strip()
+                    await self.identity_control_plane.revoke_quest_read_only_binding(
+                        api_principal_digest=principal_digest,
+                        client_id=client_id,
+                    )
+                except (ValueError, IdentityControlPlaneError) as exc:
+                    code = (
+                        exc.code
+                        if isinstance(exc, IdentityControlPlaneError)
+                        else "pairing_api_principal_digest_missing"
+                    )
+                    raise OperatorSettingsError(
+                        code,
+                        503 if isinstance(exc, IdentityControlPlaneError) else 422,
+                        "无法关闭“情”的关系授权绑定",
+                    ) from exc
+            changes = {"relationship_person_id": ""}
+            if source == "relationship":
+                changes["pairing_identity_source"] = "preserved"
+            if preserved_binding is not None:
+                changes["pairing_identity_sync_state"] = "ready"
+            await self._persist_many(changes)
+            self.relationship.configure_person_id("")
+            if self.identity is not None:
+                self.identity.configure_relationship_person_id("")
+                if preserved_binding is not None:
+                    principal_digest, client_id, platform_id, bot_id, user_id = (
+                        preserved_binding
+                    )
+                    self.identity.configure_local_binding(
+                        api_principal_digest=principal_digest,
+                        client_id=client_id,
+                        platform_id=platform_id,
+                        bot_id=bot_id,
+                        user_id=user_id,
+                        group_id="",
+                    )
+                    self.identity.configure_sync_ready(True)
+                    if self.message_pipeline is not None:
+                        self.message_pipeline.configure_platform(platform_id)
+        return self.snapshot()
+
+    def _preserved_base_identity(self) -> tuple[str, str, str, str, str] | None:
+        bot_id, user_id = self.server_identity_values()
+        client_id = str(self.config.get("trusted_client_id", "") or "").strip()
+        platform_id = str(self.config.get("trusted_platform_id", "") or "").strip()
+        if not bot_id or not user_id or not _CLIENT_ID_RE.fullmatch(client_id):
+            return None
+        if (
+            not platform_id
+            or len(platform_id) > 128
+            or "|" in platform_id
+            or any(char.isspace() or ord(char) < 33 for char in platform_id)
+        ):
+            return None
         try:
             principal_digest = validate_principal_digest(
                 self.config.get("pairing_api_principal_digest", "")
             )
-        except ValueError as exc:
-            raise OperatorSettingsError(
-                "pairing_api_principal_digest_missing",
-                422,
-                "无法验证需要撤销的 Quest 身份摘要",
-            ) from exc
-
-        async with self._identity_sync_lock:
-            await self._persist("pairing_identity_sync_state", "pending")
-            if self.identity is not None:
-                self.identity.configure_sync_ready(False)
-            if self.identity_control_plane is not None:
-                try:
-                    await self.identity_control_plane.revoke_quest_read_only_binding(
-                        api_principal_digest=principal_digest,
-                        client_id=client,
-                    )
-                except IdentityControlPlaneError as exc:
-                    raise OperatorSettingsError(exc.code, 503, str(exc)) from exc
-            await self._persist_many(
-                {
-                    "relationship_person_id": "",
-                    "pairing_bot_id": "",
-                    "pairing_user_id": "",
-                    "pairing_group_id": "",
-                    "pairing_identity_source": "none",
-                    "pairing_identity_sync_state": "ready",
-                }
-            )
-            if self.identity_store is not None:
-                await self.identity_store.clear()
-            self.relationship.configure_person_id("")
-            if self.identity is not None:
-                self.identity.clear_local_binding()
-        return self.snapshot()
+        except ValueError:
+            return None
+        return principal_digest, client_id, platform_id, bot_id, user_id
 
     async def mark_relationship_identity_sync_pending(self) -> None:
         if str(self.config.get("relationship_person_id", "") or "").strip() == "":

@@ -58,7 +58,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 
 class EmbodimentBridgePlugin(Star):
@@ -592,6 +592,14 @@ class EmbodimentBridgePlugin(Star):
         )
 
     def plugin_health(self) -> dict[str, object]:
+        eventbus_status = self.message_pipeline.status_snapshot()
+        eventbus_dialogue = bool(
+            eventbus_status.get("available") is True and self.identity.configured
+        )
+        interaction_decision = bool(self.llm.available)
+        direct_provider_fallback = bool(
+            interaction_decision and self.orchestrator.allow_direct_provider_fallback
+        )
         checks = {
             "bridge_service_enabled": self.service.enabled,
             "transport_registered": self.transport is not None,
@@ -602,13 +610,26 @@ class EmbodimentBridgePlugin(Star):
             ),
             "bridge_api_key_configured": len(self.transport.config.bridge_api_key)
             >= 32,
-            "chat_provider_configured": self.llm.available,
+            # The optional direct Provider is not required when EventBus is
+            # configured. Keep the legacy check, but make the aggregate health
+            # decision reflect the actual text path now used by the turn.
+            "eventbus_dialogue_available": eventbus_dialogue,
+            "interaction_decision_available": interaction_decision,
+            "direct_provider_fallback_available": direct_provider_fallback,
+            "chat_provider_configured": interaction_decision,
             "data_dir_ready": self.data_dir.is_dir(),
             "identity_guard_configured": self.identity.configured,
             "series_runtime_checked": self.runtime.snapshot.get("status")
             != "not_checked",
         }
-        reasons = [name.upper() for name, passed in checks.items() if not passed]
+        required_checks = {
+            name: passed
+            for name, passed in checks.items()
+            if name != "chat_provider_configured"
+        }
+        if not eventbus_dialogue and not direct_provider_fallback:
+            required_checks["dialogue_path_available"] = False
+        reasons = [name.upper() for name, passed in required_checks.items() if not passed]
         result = {
             "status": "ok" if not reasons else "degraded",
             "checks": checks,
@@ -620,7 +641,7 @@ class EmbodimentBridgePlugin(Star):
             component="health",
             status=result["status"],
             ready=bool(checks["pairing_listener_ready"]),
-            available=bool(checks["chat_provider_configured"]),
+            available=eventbus_dialogue or direct_provider_fallback,
         )
         return result
 

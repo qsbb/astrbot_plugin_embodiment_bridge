@@ -79,6 +79,18 @@ class BridgeServiceControl:
         integrations = self.orchestrator.integration_status()
         pipeline = integrations.get("astrbot_message_pipeline", {})
         identity = integrations.get("identity", {})
+        # Keep the three dialogue paths explicit.  ``chat_provider_id`` backs
+        # interaction decisions and the optional direct fallback; ordinary
+        # text/voice turns use the AstrBot EventBus when its platform is ready.
+        identity_configured = identity.get("configured") is True
+        eventbus_dialogue = pipeline.get("available") is True and identity_configured
+        interaction_decision = bool(
+            getattr(self.orchestrator.llm, "available", False)
+        )
+        direct_provider_fallback = bool(
+            getattr(self.orchestrator, "allow_direct_provider_fallback", False)
+            and interaction_decision
+        )
         return {
             "enabled": self.enabled,
             "ready": status == "running",
@@ -93,9 +105,14 @@ class BridgeServiceControl:
             },
             "sessions": stats,
             "capabilities": {
-                "dialogue": bool(getattr(self.orchestrator.llm, "available", False)),
-                "eventbus": pipeline.get("available") is True,
-                "identity_configured": identity.get("configured") is True,
+                # Legacy aggregate retained for existing clients.  New clients
+                # should use the explicit fields below.
+                "dialogue": eventbus_dialogue or direct_provider_fallback,
+                "eventbus": eventbus_dialogue,
+                "eventbus_dialogue": eventbus_dialogue,
+                "interaction_decision": interaction_decision,
+                "direct_provider_fallback": direct_provider_fallback,
+                "identity_configured": identity_configured,
                 "stt": bool(getattr(self.orchestrator.stt, "available", False)),
                 "tts": bool(getattr(self.orchestrator.tts, "available", False)),
                 "avatar_actions": True,

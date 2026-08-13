@@ -721,9 +721,13 @@ class PairingHttpApi:
                 client_id=payload.client_id,
                 platform_id=payload.platform_id,
                 bot_id=payload.bot_id
-                or (stored_bot_id if identity_source == "manual" else ""),
+                or (
+                    stored_bot_id if identity_source in {"manual", "preserved"} else ""
+                ),
                 user_id=payload.user_id
-                or (stored_user_id if identity_source == "manual" else ""),
+                or (
+                    stored_user_id if identity_source in {"manual", "preserved"} else ""
+                ),
                 api_principal_digest=principal_digest,
                 astrbot_api_key=api_key,
             )
@@ -973,11 +977,26 @@ class PairingHttpApi:
             settings = await (
                 self.operator_settings.clear_resolved_relationship_identity()
             )
+            server_identity_ready = bool(
+                all(self.operator_settings.server_identity_values())
+                and str(
+                    self.operator_settings.config.get(
+                        "pairing_identity_sync_state", "pending"
+                    )
+                    or "pending"
+                )
+                == "ready"
+                and getattr(
+                    self.operator_settings.identity,
+                    "local_binding_configured",
+                    False,
+                )
+            )
             self.pairing_defaults.update(
                 user_id="server-managed-user",
                 bot_id="server-managed-bot",
                 group_id="",
-                server_identity_ready=False,
+                server_identity_ready=server_identity_ready,
             )
             await self.service.sessions.close_all_sessions()
             self.relationship_refresh_ready = True
@@ -986,8 +1005,16 @@ class PairingHttpApi:
                     "success": True,
                     "settings": settings,
                     "event_identity": {
-                        "status": "revoked",
-                        "source": "relationship.quest_event_identity@1.0",
+                        "status": (
+                            "relationship_disabled"
+                            if server_identity_ready
+                            else "base_identity_unavailable"
+                        ),
+                        "source": (
+                            "server_identity_preserved"
+                            if server_identity_ready
+                            else "server_identity_incomplete"
+                        ),
                     },
                 }
             )

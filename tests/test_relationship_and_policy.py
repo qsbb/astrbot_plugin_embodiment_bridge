@@ -120,7 +120,9 @@ def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
 
         incompatible = RelationshipProviderStub(version="2.0")
         logger = LoggerStub()
-        adapter = RelationshipSnapshotAdapter(ContextStub(incompatible), logger)
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(incompatible), logger, person_id="person-a"
+        )
         assert (
             await adapter.read(
                 bot_id="bot",
@@ -143,7 +145,9 @@ def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
             return payload
 
         malformed.get_relationship_snapshot = malformed_snapshot  # type: ignore[method-assign]
-        adapter = RelationshipSnapshotAdapter(ContextStub(malformed), LoggerStub())
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(malformed), LoggerStub(), person_id="person-a"
+        )
         assert (
             await adapter.read(
                 bot_id="bot",
@@ -165,7 +169,9 @@ def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
             return payload
 
         unhashable.get_relationship_snapshot = unhashable_snapshot  # type: ignore[method-assign]
-        adapter = RelationshipSnapshotAdapter(ContextStub(unhashable), LoggerStub())
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(unhashable), LoggerStub(), person_id="person-a"
+        )
         assert (
             await adapter.read(
                 bot_id="bot",
@@ -178,6 +184,38 @@ def test_relationship_adapter_requires_explicit_compatible_contract() -> None:
         assert adapter.status == "invalid_response"
 
     asyncio.run(scenario())
+
+
+def test_empty_person_selection_disables_relationship_without_provider_call() -> None:
+    async def scenario() -> None:
+        provider = RelationshipProviderStub()
+        adapter = RelationshipSnapshotAdapter(ContextStub(provider), LoggerStub())
+
+        snapshot = await adapter.read(
+            bot_id="bot",
+            user_id="user",
+            group_id="",
+            relationship_profile_id="persona-a",
+        )
+
+        assert snapshot is None
+        assert adapter.status == "disabled"
+        assert provider.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_clearing_person_selection_disables_relationship_immediately() -> None:
+    provider = RelationshipProviderStub()
+    adapter = RelationshipSnapshotAdapter(
+        ContextStub(provider), LoggerStub(), person_id="person-a"
+    )
+    adapter.status = "ok"
+
+    adapter.configure_person_id("")
+
+    assert adapter.person_id == ""
+    assert adapter.status == "disabled"
 
 
 def test_relationship_timeout_degrades_to_neutral_context() -> None:
@@ -204,6 +242,7 @@ def test_relationship_timeout_degrades_to_neutral_context() -> None:
         adapter = RelationshipSnapshotAdapter(
             ContextStub(SlowRelationshipProvider()),
             LoggerStub(),
+            person_id="person-a",
             timeout_seconds=0.01,
         )
         assert (

@@ -898,11 +898,21 @@ def test_natural_person_selection_resolves_real_event_identity_without_exposing_
                     json={"person_id": ""},
                 )
                 assert cleared.status == 200
-                assert (await cleared.json())["event_identity"]["status"] == ("revoked")
-                assert bundle.plugin.server_identity_store.identity is None
+                assert (await cleared.json())["event_identity"] == {
+                    "status": "relationship_disabled",
+                    "source": "server_identity_preserved",
+                }
+                assert bundle.plugin.server_identity_store.identity.bot_id == (
+                    "real-private-bot"
+                )
+                assert bundle.plugin.server_identity_store.identity.user_id == (
+                    "real-private-user"
+                )
+                assert bundle.plugin.config["relationship_person_id"] == ""
+                assert bundle.plugin.config["pairing_identity_source"] == "preserved"
                 assert (
                     bundle.plugin.pairing_api.pairing_defaults["server_identity_ready"]
-                    is False
+                    is True
                 )
 
     asyncio.run(scenario())
@@ -1323,6 +1333,9 @@ def test_service_control_is_dashboard_protected_and_gates_quest_sessions(
                 assert service["capabilities"] == {
                     "dialogue": True,
                     "eventbus": False,
+                    "eventbus_dialogue": False,
+                    "interaction_decision": True,
+                    "direct_provider_fallback": True,
                     "identity_configured": False,
                     "stt": True,
                     "tts": True,
