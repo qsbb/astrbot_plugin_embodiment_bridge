@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from unittest.mock import patch
 
 import pytest
 
@@ -9,12 +10,14 @@ from astrbot_plugin_embodiment_bridge.core.models import (
     AudioChunkRequest,
     InteractionEvent,
     SessionStartRequest,
+    SpatialContextRequest,
 )
 from astrbot_plugin_embodiment_bridge.core.session_manager import (
     BoundedEventQueue,
     QueueItem,
     SessionManager,
     SessionConflict,
+    SessionNotFound,
     SessionOwnershipError,
 )
 
@@ -37,6 +40,28 @@ def interaction(event_id: str) -> InteractionEvent:
         strength=0.7,
         duration_ms=0,
         hand="right",
+    )
+
+
+def spatial_context(
+    revision: int,
+    *,
+    session_id: str = "s1",
+    seat_count: int = 1,
+) -> SpatialContextRequest:
+    return SpatialContextRequest(
+        session_id=session_id,
+        schema_version=1,
+        revision=revision,
+        floor_count=1,
+        seat_count=seat_count,
+        bed_count=0,
+        table_count=1,
+        wall_count=4,
+        door_count=1,
+        window_count=1,
+        scene_capture_available=True,
+        occlusion_available=False,
     )
 
 
@@ -104,6 +129,94 @@ def test_interaction_dedupe_and_debounce() -> None:
         assert await manager.record_interaction(session, interaction("e1")) is False
         assert await manager.record_interaction(session, interaction("e2")) is False
         assert len(session.interactions) == 1
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_spatial_context_revision_update_idempotency_and_conflicts() -> None:
+    async def scenario() -> None:
+        manager = SessionManager()
+        session = await manager.start_session(session_request("s1"), "owner")
+
+        status, initial = await manager.update_spatial_context(
+            session,
+            spatial_context(1),
+        )
+        assert status == "updated"
+        assert (await manager.read_spatial_context(session)) is initial
+
+        status, unchanged = await manager.update_spatial_context(
+            session,
+            spatial_context(1),
+        )
+        assert status == "unchanged"
+        assert unchanged is initial
+
+        with pytest.raises(SessionConflict, match="content conflicts"):
+            await manager.update_spatial_context(
+                session,
+                spatial_context(1, seat_count=2),
+            )
+        with pytest.raises(SessionConflict, match="stale"):
+            await manager.update_spatial_context(session, spatial_context(0))
+
+        status, latest = await manager.update_spatial_context(
+            session,
+            spatial_context(2, seat_count=2),
+        )
+        assert status == "updated"
+        assert latest.revision == 2
+        assert latest.seat_count == 2
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_spatial_context_is_session_owned_isolated_and_destroyed_on_close() -> None:
+    async def scenario() -> None:
+        manager = SessionManager(max_sessions=2)
+        first = await manager.start_session(session_request("s1"), "owner-one")
+        second = await manager.start_session(
+            session_request("s2", "quest-b"),
+            "owner-two",
+        )
+        with pytest.raises(SessionOwnershipError):
+            await manager.get_owned("s1", "owner-two")
+        with pytest.raises(SessionConflict, match="another session"):
+            await manager.update_spatial_context(
+                first, spatial_context(1, session_id="s2")
+            )
+
+        await manager.update_spatial_context(first, spatial_context(1))
+        assert await manager.read_spatial_context(second) is None
+
+        await manager.close_session(first)
+        assert first.spatial_context is None
+        with pytest.raises(SessionNotFound, match="closed"):
+            await manager.read_spatial_context(first)
+        with pytest.raises(SessionNotFound):
+            await manager.get_owned("s1", "owner-one")
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
+def test_spatial_context_expires_instead_of_becoming_stale_room_truth() -> None:
+    async def scenario() -> None:
+        manager = SessionManager()
+        session = await manager.start_session(session_request("s1"), "owner")
+        with patch(
+            "astrbot_plugin_embodiment_bridge.core.session_manager.monotonic",
+            return_value=10.0,
+        ):
+            await manager.update_spatial_context(session, spatial_context(1))
+        with patch(
+            "astrbot_plugin_embodiment_bridge.core.session_manager.monotonic",
+            return_value=41.0,
+        ):
+            assert await manager.read_spatial_context(session) is None
+        assert session.spatial_context_updated_at == 0.0
         await manager.terminate()
 
     asyncio.run(scenario())

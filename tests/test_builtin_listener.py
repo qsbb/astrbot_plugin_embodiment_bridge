@@ -21,6 +21,8 @@ from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
 )
 from astrbot_plugin_embodiment_bridge.transport.builtin_listener import (
     EXCHANGE_PATH,
+    _FIXED_PROXY_ROUTES,
+    _LEGACY_FIXED_PROXY_ROUTES,
     BuiltinListenerConfig,
     BuiltinQuestListener,
     normalize_listener_public_url,
@@ -559,6 +561,7 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
             ("POST", f"{PUBLIC_API_PATH}/interaction"),
             ("POST", f"{PUBLIC_API_PATH}/interrupt"),
             ("POST", f"{PUBLIC_API_PATH}/session/close"),
+            ("POST", f"{PUBLIC_API_PATH}/spatial/context"),
             ("GET", f"{PUBLIC_API_PATH}/events/session-1"),
         )
 
@@ -656,6 +659,17 @@ def test_proxy_allowlist_body_limits_and_header_sanitization() -> None:
         await runner.cleanup()
 
     asyncio.run(scenario())
+
+
+def test_spatial_context_is_not_added_to_legacy_listener_routes() -> None:
+    assert (
+        "POST",
+        f"{PUBLIC_API_PATH}/spatial/context",
+    ) in _FIXED_PROXY_ROUTES
+    assert not any(
+        path.endswith("/spatial/context")
+        for _method, path in _LEGACY_FIXED_PROXY_ROUTES
+    )
 
 
 def test_sse_is_streamed_before_upstream_completion() -> None:

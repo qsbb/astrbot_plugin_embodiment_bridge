@@ -27,6 +27,7 @@ QUEST_ACTION_TOOL_NAME = "embodiment_avatar_action"
 QUEST_ACTION_PROMPT_MARKER = "# 临：具身角色动作工具"
 EXPLICIT_ACTION_SOURCE = "explicit_request"
 MODEL_TOOL_SOURCE = "model_tool"
+NO_ACTION_SOURCE = "none"
 
 
 def _is_quest_event(event: Any) -> bool:
@@ -130,6 +131,7 @@ def inject_quest_action_tool(
                 else "action_already_selected"
             ),
             result=source or "unknown",
+            action_source=source or "unknown",
         )
         return False
     try:
@@ -143,6 +145,7 @@ def inject_quest_action_tool(
             status="rejected",
             reason_code="astrbot_tool_api_unavailable",
             error_type=type(exc).__name__,
+            action_source=MODEL_TOOL_SOURCE,
         )
         return False
 
@@ -211,6 +214,7 @@ def inject_quest_action_tool(
             operation=QUEST_ACTION_TOOL_NAME,
             status="rejected",
             reason_code="astrbot_tool_set_api_unavailable",
+            action_source=MODEL_TOOL_SOURCE,
         )
         return False
     try:
@@ -234,6 +238,7 @@ def inject_quest_action_tool(
             status="rejected",
             reason_code="quest_action_tool_injection_failed",
             error_type=type(exc).__name__,
+            action_source=MODEL_TOOL_SOURCE,
         )
         return False
     _diagnostic(
@@ -243,6 +248,7 @@ def inject_quest_action_tool(
         operation=QUEST_ACTION_TOOL_NAME,
         status="ready",
         event_count=len(AvatarSkillRegistry.names()),
+        action_source=MODEL_TOOL_SOURCE,
     )
     _inject_action_prompt(request, diagnostic)
     return True
@@ -269,6 +275,7 @@ async def prepare_quest_action_request(
         status=parsed.status,
         reason_code=parsed.reason,
         result=("tool_allowed" if parsed.allow_model_tool else "tool_suppressed"),
+        action_source=(EXPLICIT_ACTION_SOURCE if parsed.action else NO_ACTION_SOURCE),
     )
 
     if parsed.action is not None:
@@ -289,6 +296,7 @@ async def prepare_quest_action_request(
             status="skipped",
             reason_code="explicit_preselection_failed",
             result="tool_suppressed",
+            action_source=EXPLICIT_ACTION_SOURCE,
         )
         return "preselection_failed"
 
@@ -301,6 +309,7 @@ async def prepare_quest_action_request(
             status="skipped",
             reason_code=parsed.reason,
             result="unsafe_context",
+            action_source=NO_ACTION_SOURCE,
         )
         return "unsafe_context"
 
@@ -325,7 +334,10 @@ async def execute_quest_action(
 ) -> str:
     """Validate and store one action intent on the current Quest event."""
     started = time.perf_counter()
-    normalized_action = str(action or "").strip().lower()
+    normalized_action = (
+        AvatarSkillRegistry.normalize_action_name(action)
+        or str(action or "").strip().lower()
+    )
     normalized_source = (
         EXPLICIT_ACTION_SOURCE
         if selection_source == EXPLICIT_ACTION_SOURCE
@@ -341,6 +353,7 @@ async def execute_quest_action(
                 status="rejected",
                 reason_code="quest_event_required",
                 duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
             )
             return _result("rejected", "quest_event_required")
         if set(extra):
@@ -352,6 +365,7 @@ async def execute_quest_action(
                 status="rejected",
                 reason_code="unknown_argument",
                 duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
             )
             return _result("rejected", "unknown_argument")
         if read_selected_intent(event) is not None:
@@ -376,6 +390,7 @@ async def execute_quest_action(
                     else "action_already_selected"
                 ),
                 result=existing_source or "unknown",
+                action_source=normalized_source,
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return _result("rejected", "action_already_selected")
@@ -397,6 +412,7 @@ async def execute_quest_action(
                 status="rejected",
                 reason_code="unknown_action",
                 duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
             )
             return _result("rejected", "unknown_action")
         setter = getattr(event, "set_extra", None)
@@ -404,6 +420,21 @@ async def execute_quest_action(
             raise RuntimeError("event_extra_unavailable")
         setter(QUEST_ACTION_SOURCE_EXTRA, normalized_source)
         setter(QUEST_ACTION_INTENT_EXTRA, intent)
+        catalog_status = AvatarSkillRegistry.catalog_status(normalized_action)
+        motion_selection = AvatarSkillRegistry.motion_selection(normalized_action)
+        if catalog_status == "not_declared":
+            _diagnostic(
+                diagnostic,
+                "avatar.action.catalog_unavailable",
+                component="action",
+                operation=normalized_action,
+                status="degraded",
+                reason_code="action_catalog_not_declared",
+                catalog_status=catalog_status,
+                action_source=normalized_source,
+                motion_selection=motion_selection,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
         _diagnostic(
             diagnostic,
             "avatar.action.accepted",
@@ -417,6 +448,9 @@ async def execute_quest_action(
             intensity=intent.intensity,
             duration_ms=intent.duration_ms,
             result=normalized_source,
+            action_source=normalized_source,
+            catalog_status=catalog_status,
+            motion_selection=motion_selection,
         )
         return _result("accepted", normalized_action)
     except (AttributeError, RuntimeError, TypeError, ValueError):
@@ -428,6 +462,7 @@ async def execute_quest_action(
             status="failed",
             reason_code="action_store_failed",
             duration_ms=(time.perf_counter() - started) * 1000,
+            action_source=normalized_source,
         )
         return _result("failed", "action_store_failed")
 
@@ -489,6 +524,7 @@ __all__ = [
     "QUEST_EVENT_MARKER",
     "EXPLICIT_ACTION_SOURCE",
     "MODEL_TOOL_SOURCE",
+    "NO_ACTION_SOURCE",
     "execute_quest_action",
     "inject_quest_action_tool",
     "prepare_quest_action_request",

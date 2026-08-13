@@ -1,0 +1,14 @@
+{
+  "session_id": "smoke-session",
+  "schema_version": 1,
+  "revision": 1,
+  "floor_count": 1,
+  "seat_count": 1,
+  "bed_count": 0,
+  "table_count": 1,
+  "wall_count": 4,
+  "door_count": 1,
+  "window_count": 1,
+  "scene_capture_available": true,
+  "occlusion_available": false
+}

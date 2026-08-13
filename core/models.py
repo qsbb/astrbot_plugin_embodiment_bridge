@@ -178,6 +178,66 @@ class SessionCloseRequest(StrictModel):
     session_id: Identifier
 
 
+class SpatialContextRequest(StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        strict=True,
+    )
+
+    session_id: Identifier
+    schema_version: Literal[1]
+    revision: int = Field(ge=0)
+    floor_count: int = Field(ge=0, le=64)
+    seat_count: int = Field(ge=0, le=64)
+    bed_count: int = Field(ge=0, le=64)
+    table_count: int = Field(ge=0, le=64)
+    wall_count: int = Field(ge=0, le=64)
+    door_count: int = Field(ge=0, le=64)
+    window_count: int = Field(ge=0, le=64)
+    scene_capture_available: bool
+    occlusion_available: bool
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def require_exact_schema_version_type(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("schema_version must be the integer 1")
+        return value
+
+
+class SpatialContextSnapshot(StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        strict=True,
+        frozen=True,
+    )
+
+    schema_version: Literal[1]
+    revision: int = Field(ge=0)
+    floor_count: int = Field(ge=0, le=64)
+    seat_count: int = Field(ge=0, le=64)
+    bed_count: int = Field(ge=0, le=64)
+    table_count: int = Field(ge=0, le=64)
+    wall_count: int = Field(ge=0, le=64)
+    door_count: int = Field(ge=0, le=64)
+    window_count: int = Field(ge=0, le=64)
+    scene_capture_available: bool
+    occlusion_available: bool
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def require_exact_schema_version_type(cls, value: object) -> object:
+        if type(value) is not int or value != 1:
+            raise ValueError("schema_version must be the integer 1")
+        return value
+
+    @classmethod
+    def from_request(cls, request: SpatialContextRequest) -> SpatialContextSnapshot:
+        return cls.model_validate(request.model_dump(exclude={"session_id"}))
+
+
 class ProposedIntent(StrictModel):
     emotion: Emotion = Emotion.NEUTRAL
     gesture: Gesture = Gesture.IDLE

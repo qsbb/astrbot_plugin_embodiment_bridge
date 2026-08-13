@@ -17,6 +17,22 @@ def test_skill_registry_is_allowlisted_and_bounded() -> None:
     assert AvatarSkillRegistry.invoke("play_file", {"path": "C:/bad"}) is None
 
 
+def test_semantic_aliases_normalize_without_accepting_paths() -> None:
+    assert AvatarSkillRegistry.normalize_action_name("next_dance") == "dance_next"
+    assert AvatarSkillRegistry.normalize_action_name("switch-dance") == "dance_next"
+    assert AvatarSkillRegistry.normalize_action_name("hand_wave") == "wave"
+    assert AvatarSkillRegistry.normalize_action_name("turn around") == "turn_half"
+    assert AvatarSkillRegistry.normalize_action_name("C:/motion.vmd") is None
+
+
+def test_unavailable_motion_catalog_is_semantic_only() -> None:
+    assert AvatarSkillRegistry.catalog_status("dance") == "not_declared"
+    assert AvatarSkillRegistry.catalog_status("wave") == "not_applicable"
+    assert AvatarSkillRegistry.motion_selection("dance") == "recommended_imported"
+    assert AvatarSkillRegistry.motion_selection("next_dance") == "next_imported"
+    assert AvatarSkillRegistry.motion_selection("wave") == "none"
+
+
 def test_intent_parser_accepts_action_call_without_trusting_animation_paths() -> None:
     parsed = IntentParser().parse(
         '{"should_reply":true,"reply_text":"我来跳舞","action":'

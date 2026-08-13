@@ -24,6 +24,7 @@
 - 优先复用“声”的 `voice.audio_output@1.0`，也可回退 AstrBot Core TTS；统一输出 PCM16 24 kHz 单声道音频。
 - 输出受白名单约束的情绪、动作和注视意图，不向客户端发送骨骼、Morph、动画路径或 Unity 对象。
 - 上报握手、摸头、捏脸、注视和说话等交互事实，由后端结合身份、关系和边界决定反应。
+- 接收按会话隔离的脱敏房间语义快照，只包含地面、座位、床、桌、墙、门窗计数和场景能力布尔值；不上传图像、网格、坐标、尺寸或房间标识。
 - 提供一次性二维码与 6 位短码配对，客户端无需手工搬运长期密钥和完整 API 路径。
 - 提供直连/交互决策模型、正式平台、身份、STT、人格转换、可选关系增强、服务启停和诊断管理页面。
 - 可以单独安装；安装凝心溯溪系列插件后，通过公开、版本化契约复用知识、身份、关系、环境、语音和诊断能力。
@@ -137,9 +138,12 @@ X-Embodiment-Bridge-Key: <bridge_api_key>
 | POST | `/interaction` | 202 | 上报交互事实 |
 | POST | `/interrupt` | 200 | 取消轮次并阻止迟到事件 |
 | POST | `/session/close` | 200 | 关闭并清理会话 |
+| POST | `/spatial/context` | 200 | 更新按会话隔离的脱敏房间语义快照 |
 | GET | `/health` | 200 | 读取协议与能力的脱敏状态 |
 
 SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.delta`、`reply.audio.chunk`、`reply.end` 和 `error`。当前文件式 STT 不产生 `asr.partial`；输出音频固定为 PCM16 单声道 24 kHz。
+
+空间快照只包含有界的物体计数与能力布尔值，30 秒未刷新即失效；官方客户端以 15 秒低频续租，并对相同内容去重。图像、网格、坐标、尺寸、锚点和自由文本不会进入该通道。
 
 交互事实只接受 `handshake`、`head_pat`、`cheek_pinch`、`gaze` 和 `speaking`。角色意图只包含受控的 `emotion`、`gesture`、`look_at`、强度和时长；未知字段、枚举或越界值不会透传给客户端。
 

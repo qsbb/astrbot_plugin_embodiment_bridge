@@ -17,10 +17,12 @@ from ..core.avatar_action_tool import read_selected_intent, stage_explicit_actio
 from ..core.plugin_identity import (
     BRIDGE_EVENT_MARKER,
     BRIDGE_IDENTITY_CONTEXT,
+    BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
+    BRIDGE_SPATIAL_CONTEXT,
     LEGACY_BRIDGE_EVENT_MARKER,
     LEGACY_BRIDGE_IDENTITY_CONTEXT,
 )
-from ..core.session_manager import SessionState
+from ..core.session_manager import SPATIAL_CONTEXT_TTL_SECONDS, SessionState
 
 
 class MessagePipelineUnavailable(RuntimeError):
@@ -133,6 +135,8 @@ class AstrBotMessagePipelineAdapter:
             user_id=session.user_id,
             bot_id=session.bot_id,
             group_id=session.group_id,
+            protected_context_authorized=session.protected_context_authorized,
+            spatial_context=_session_spatial_context(session),
         )
         try:
             queue_getter().put_nowait(event)
@@ -150,18 +154,36 @@ class AstrBotMessagePipelineAdapter:
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
 
         self._record_event_outcome(event)
+        selected_intent = read_selected_intent(event)
         reply = event.captured_text().strip()
         if not reply:
             reply = _delivery_plan_text(event).strip()
+        # A tool-only action is still a valid turn.  AstrBot may finish after
+        # executing the action tool without emitting a textual assistant reply;
+        # do not discard the selected dance/turn intent as an empty response.
+        if not reply and selected_intent is not None:
+            self.status = "ok"
+            self.last_error = ""
+            self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            self._record_action_outcome(
+                selected_intent,
+                source="selected",
+                duration_ms=self.last_duration_ms,
+            )
+            return ModelDecision(
+                should_reply=False,
+                reply_text="",
+                intent=selected_intent,
+            )
         if not reply:
             self.status = "empty_reply"
             self.last_error = self._empty_reply_reason()
             raise MessagePipelineEmpty(self.last_error)
 
         self.status = "ok"
+        self.last_error = ""
         self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         reply = reply[:4000]
-        selected_intent = read_selected_intent(event)
         intent = selected_intent or ProposedIntent(
             emotion=Emotion.NEUTRAL,
             gesture=Gesture.TALK,
@@ -170,11 +192,47 @@ class AstrBotMessagePipelineAdapter:
             duration_ms=min(8_000, max(1_200, len(reply) * 85)),
             reason_code="astrbot_message_pipeline",
         )
+        self._record_action_outcome(
+            intent,
+            source="selected" if selected_intent is not None else "default_talk",
+            duration_ms=self.last_duration_ms,
+        )
         return ModelDecision(
             should_reply=True,
             reply_text=reply,
             intent=intent,
         )
+
+    def _record_action_outcome(
+        self,
+        intent: ProposedIntent,
+        *,
+        source: str,
+        duration_ms: int,
+    ) -> None:
+        recorder = getattr(self.logger, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                "avatar.action.pipeline_outcome",
+                component="action",
+                operation=intent.gesture.value,
+                status="selected" if source == "selected" else "fallback",
+                reason_code=intent.reason_code,
+                gesture=intent.gesture.value,
+                action_source=source,
+                motion_selection=(
+                    "recommended_imported"
+                    if intent.gesture.value == "dance"
+                    else "next_imported"
+                    if intent.gesture.value == "dance_next"
+                    else "none"
+                ),
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            return
 
     def status_snapshot(self) -> dict[str, Any]:
         return {
@@ -229,6 +287,8 @@ def _build_capture_event(
     user_id: str,
     bot_id: str,
     group_id: str,
+    protected_context_authorized: bool = False,
+    spatial_context: dict[str, Any] | None = None,
 ) -> Any:
     # Imports stay lazy so plugin discovery still degrades cleanly on older
     # AstrBot builds that do not expose the complete EventBus ABI.
@@ -325,6 +385,12 @@ def _build_capture_event(
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
     event.set_extra(BRIDGE_EVENT_MARKER, True)
+    event.set_extra(
+        BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
+        bool(protected_context_authorized),
+    )
+    if protected_context_authorized and spatial_context is not None:
+        event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))
     # Deprecated compatibility markers are emitted for one major release so
     # existing series plugins can migrate without losing authorized context.
     event.set_extra(LEGACY_BRIDGE_EVENT_MARKER, True)
@@ -346,6 +412,20 @@ def _build_capture_event(
     # synthetic event handled so voice_hub does not synthesize the same reply.
     event.set_extra("mimo_tts_handled", True)
     return event
+
+
+def _session_spatial_context(session: Any) -> dict[str, Any] | None:
+    snapshot = getattr(session, "spatial_context", None)
+    if snapshot is None:
+        return None
+    updated_at = float(getattr(session, "spatial_context_updated_at", 0.0) or 0.0)
+    if updated_at <= 0.0 or time.monotonic() - updated_at > SPATIAL_CONTEXT_TTL_SECONDS:
+        return None
+    dump = getattr(snapshot, "model_dump", None)
+    if not callable(dump):
+        return None
+    value = dump(mode="json")
+    return dict(value) if isinstance(value, dict) else None
 
 
 def _capture_message(event: Any, message: Any, *, streaming: bool) -> None:

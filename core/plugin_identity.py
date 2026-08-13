@@ -14,6 +14,10 @@ BRIDGE_EVENT_MARKER = "embodiment_bridge"
 LEGACY_BRIDGE_EVENT_MARKER = "quest_avatar_bridge"
 BRIDGE_IDENTITY_CONTEXT = f"{BRIDGE_EVENT_MARKER}.identity_context"
 LEGACY_BRIDGE_IDENTITY_CONTEXT = f"{LEGACY_BRIDGE_EVENT_MARKER}.identity_context"
+BRIDGE_PROTECTED_CONTEXT_AUTHORIZED = (
+    f"{BRIDGE_EVENT_MARKER}.protected_context_authorized"
+)
+BRIDGE_SPATIAL_CONTEXT = f"{BRIDGE_EVENT_MARKER}.spatial_context"
 
 BRIDGE_AUTH_HEADER = "X-Embodiment-Bridge-Key"
 LEGACY_BRIDGE_AUTH_HEADER = "X-Quest-Avatar-Key"

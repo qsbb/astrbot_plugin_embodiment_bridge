@@ -173,10 +173,11 @@ sequenceDiagram
 | POST | `/interaction` | 202 | 上报交互事实 |
 | POST | `/interrupt` | 200 | 打断当前轮次 |
 | POST | `/session/close` | 200 | 关闭会话 |
+| POST | `/spatial/context` | 200 | 更新当前会话的脱敏房间语义快照 |
 | GET | `/health` | 200 | 查询协议和适配器状态 |
 
 
-内置 8520 listener 仅代理上表九个正常接口，并额外直接处理：
+内置 8520 listener 仅代理上表十个正常接口，并额外直接处理：
 
 `/health` 的 `diagnostic_log` 只返回 `enabled`、`status=disabled|ready|unavailable` 和 `write_failures` 计数，不返回路径、日志正文、身份或密钥。可在启用独立日志后连续调用两次 health，确认第二次仍为 `ready` 且失败数为 0。
 
@@ -568,7 +569,50 @@ POST /interrupt
 
 收到打断后，旧轮次不会继续发送文字、音频、动作或 `reply.end`。如果目标轮次已经不是当前轮，返回 `cancelled=false`。
 
-## 13. 关闭会话
+## 13. 房间语义快照
+
+```http
+POST /spatial/context
+```
+
+该接口只接收当前会话内的粗粒度计数和能力布尔值，不接收图像、网格、坐标、尺寸、房间/锚点标识或自由文本：
+
+```json
+{
+  "session_id": "s1",
+  "schema_version": 1,
+  "revision": 1,
+  "floor_count": 1,
+  "seat_count": 1,
+  "bed_count": 0,
+  "table_count": 1,
+  "wall_count": 4,
+  "door_count": 1,
+  "window_count": 1,
+  "scene_capture_available": true,
+  "occlusion_available": false
+}
+```
+
+所有计数必须是 `0..64` 的整数，所有字段都必须出现，额外字段会被拒绝。`revision` 必须单调递增；相同 revision 与完全相同内容是幂等请求，相同 revision 不同内容或更旧 revision 返回 `409 session_conflict`。
+
+快照只保存在对应会话内存中，关闭会话即销毁；最后一次有效更新后 30 秒未刷新也会失效。官方客户端在内容变化时去重上传，并以 15 秒低频续租保持当前事实。后端只会把未过期快照注入由临创建且 `protected_context_authorized=true` 的 AstrBot EventBus 轮次；普通 QQ、未授权会话和其他会话不会读取。该事实不授予身份、工具、动作或场景操作权限。
+
+成功响应只确认 revision，不回显完整房间事实：
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "session_id": "s1",
+    "schema_version": 1,
+    "revision": 1,
+    "state": "updated"
+  }
+}
+```
+
+## 14. 关闭会话
 
 ```http
 POST /session/close
@@ -596,7 +640,7 @@ POST /session/close
 
 关闭会取消任务、清空音频和队列，并结束 SSE。前端退出场景或切换角色会话时必须调用。
 
-## 14. 健康检查
+## 15. 健康检查
 
 ```http
 GET /health

@@ -70,6 +70,7 @@ def test_action_execution_accepts_one_allowlisted_action_and_rejects_replacement
         assert records[-1][1]["look_at"] == "user"
         assert records[-1][1]["intensity"] == 0.8
         assert records[-1][1]["duration_ms"] == 9000
+        assert records[-1][1]["motion_selection"] == "next_imported"
 
         duplicate = json.loads(
             await execute_quest_action(event, action="wave", diagnostic=None)
@@ -145,13 +146,15 @@ def test_explicit_request_preselects_without_exposing_model_tool() -> None:
         assert handler_calls == 0
         assert [name for name, _fields in records] == [
             "avatar.action.explicit_parse",
+            "avatar.action.catalog_unavailable",
             "avatar.action.accepted",
             "avatar.action.tool_skipped",
         ]
         assert records[0][1]["operation"] == "dance"
         assert records[0][1]["status"] == "matched"
-        assert records[1][1]["result"] == "explicit_request"
-        assert records[2][1]["reason_code"] == "explicit_action_preselected"
+        assert records[1][1]["reason_code"] == "action_catalog_not_declared"
+        assert records[2][1]["result"] == "explicit_request"
+        assert records[3][1]["reason_code"] == "explicit_action_preselected"
         assert "请随便跳个舞" not in repr(records)
 
     asyncio.run(scenario())
@@ -273,8 +276,8 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
     monkeypatch.setitem(sys.modules, "astrbot.core.agent", agent)
     monkeypatch.setitem(sys.modules, "astrbot.core.agent.tool", tool_module)
 
-    async def handler(_event: Any, **_kwargs: Any) -> str:
-        return "ok"
+    async def handler(_event: Any, **kwargs: Any) -> str:
+        return await execute_quest_action(_event, diagnostic=None, **kwargs)
 
     ordinary_request = SimpleNamespace(func_tool=None)
     assert (
@@ -301,6 +304,18 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
     assert QUEST_ACTION_PROMPT_MARKER in quest_request.system_prompt
     assert "dance_next" in quest_request.system_prompt
     assert not hasattr(ordinary_request, "system_prompt")
+
+    # The injected FunctionTool must execute the same guarded handler that
+    # stores the protocol intent; exposing a schema alone is not sufficient.
+    execution_event = EventStub(quest=True)
+    execution_result = asyncio.run(
+        tool.handler(execution_event, action="dance_next", intensity=0.7)
+    )
+    assert json.loads(execution_result) == {
+        "status": "accepted",
+        "code": "dance_next",
+    }
+    assert read_selected_intent(execution_event).gesture.value == "dance_next"
     assert (
         inject_quest_action_tool(quest_request, EventStub(quest=True), handler, None)
         is True

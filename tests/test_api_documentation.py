@@ -18,6 +18,7 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         "/interaction",
         "/interrupt",
         "/session/close",
+        "/spatial/context",
         "/health",
     ):
         assert route in document

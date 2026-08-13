@@ -85,6 +85,7 @@
     {"method": "POST", "path": "/interaction", "success_status": 202},
     {"method": "POST", "path": "/interrupt", "success_status": 200},
     {"method": "POST", "path": "/session/close", "success_status": 200},
+    {"method": "POST", "path": "/spatial/context", "success_status": 200},
     {"method": "GET", "path": "/health", "success_status": 200}
   ],
   "enums": {
@@ -226,6 +227,15 @@
     "trusted_client_id_source": "bridge_server_config",
     "trusted_platform_id_source": "bridge_server_config",
     "unity_trusted_source_fields": false
+  },
+  "spatial_context_semantics": {
+    "schema_version": 1,
+    "storage": "session_memory_only",
+    "revision": "strictly_increasing_or_identical_idempotent",
+    "injection_scope": "authorized_embodiment_eventbus_turn_only",
+    "contains_free_text": false,
+    "contains_geometry_or_identifiers": false,
+    "grants_permission": false
   },
   "pairing_bootstrap_semantics": {
     "register_web_api_anonymous_supported": false,

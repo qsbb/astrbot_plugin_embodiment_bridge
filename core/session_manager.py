@@ -8,7 +8,13 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Callable
 
-from .models import AudioChunkRequest, InteractionEvent, SessionStartRequest
+from .models import (
+    AudioChunkRequest,
+    InteractionEvent,
+    SessionStartRequest,
+    SpatialContextRequest,
+    SpatialContextSnapshot,
+)
 from .server_timing import ServerTimingState
 
 
@@ -16,6 +22,7 @@ CRITICAL_EVENT_TYPES = frozenset(
     {"asr.final", "avatar.intent", "reply.audio.chunk", "reply.end", "error"}
 )
 DROPPABLE_EVENT_TYPES = frozenset({"asr.partial", "reply.text.delta"})
+SPATIAL_CONTEXT_TTL_SECONDS = 30.0
 
 
 class BridgeStateError(RuntimeError):
@@ -164,6 +171,8 @@ class SessionState:
     queue: BoundedEventQueue
     protected_context_authorized: bool = False
     context_authorization_reason: str = "not_checked"
+    spatial_context: SpatialContextSnapshot | None = None
+    spatial_context_updated_at: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     generation: int = 0
     current_turn: TurnState | None = None
@@ -482,6 +491,45 @@ class SessionManager:
         async with session.lock:
             return list(session.history)
 
+    async def update_spatial_context(
+        self,
+        session: SessionState,
+        request: SpatialContextRequest,
+    ) -> tuple[str, SpatialContextSnapshot]:
+        if request.session_id != session.session_id:
+            raise SessionConflict("spatial context belongs to another session")
+        incoming = SpatialContextSnapshot.from_request(request)
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            current = session.spatial_context
+            if current is None or incoming.revision > current.revision:
+                session.spatial_context = incoming
+                session.spatial_context_updated_at = monotonic()
+                return "updated", incoming
+            if incoming.revision == current.revision and incoming == current:
+                session.spatial_context_updated_at = monotonic()
+                return "unchanged", current
+            if incoming.revision == current.revision:
+                raise SessionConflict("spatial context revision content conflicts")
+            raise SessionConflict("spatial context revision is stale")
+
+    async def read_spatial_context(
+        self,
+        session: SessionState,
+    ) -> SpatialContextSnapshot | None:
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            if (
+                session.spatial_context is not None
+                and monotonic() - session.spatial_context_updated_at
+                > SPATIAL_CONTEXT_TTL_SECONDS
+            ):
+                session.spatial_context = None
+                session.spatial_context_updated_at = 0.0
+            return session.spatial_context
+
     async def close_session(self, session: SessionState) -> None:
         async with self._lock:
             self._sessions.pop(session.session_id, None)
@@ -499,6 +547,8 @@ class SessionManager:
             for interaction_turn in interaction_turns:
                 interaction_turn.audio.clear()
             session.history.clear()
+            session.spatial_context = None
+            session.spatial_context_updated_at = 0.0
             session.interactions.clear()
             session.seen_event_ids.clear()
             session.seen_event_order.clear()
@@ -535,6 +585,8 @@ class SessionManager:
                 for interaction_turn in interaction_turns:
                     interaction_turn.audio.clear()
                 session.history.clear()
+                session.spatial_context = None
+                session.spatial_context_updated_at = 0.0
                 session.interactions.clear()
             await session.queue.close()
         if tasks:

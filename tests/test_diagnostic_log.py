@@ -279,6 +279,9 @@ def test_action_decision_fields_are_preserved_without_free_form_content(
         look_at="user",
         intensity=0.75,
         duration_ms=8000,
+        action_source="model_tool",
+        catalog_status="not_declared",
+        motion_selection="next_imported",
         reply_text="hidden",
     )
 
@@ -293,6 +296,35 @@ def test_action_decision_fields_are_preserved_without_free_form_content(
         "look_at": "user",
         "intensity": 0.75,
         "duration_ms": 8000,
+        "action_source": "model_tool",
+        "catalog_status": "not_declared",
+        "motion_selection": "next_imported",
+    }
+
+
+def test_structured_sink_forwards_bounded_adapter_events(tmp_path: Path) -> None:
+    diagnostic = DiagnosticLog(tmp_path)
+    sink = DiagnosticLogSink(diagnostic)
+
+    sink.record(
+        "avatar.action.pipeline_outcome",
+        component="action",
+        operation="dance",
+        status="selected",
+        reason_code="skill_dance",
+        action_source="selected",
+        user_text="hidden",
+        motion_selection="recommended_imported",
+    )
+
+    details = diagnostic.diagnostic_events()["events"][0]["details"]
+    assert details == {
+        "component": "action",
+        "operation": "dance",
+        "status": "selected",
+        "reason_code": "skill_dance",
+        "action_source": "selected",
+        "motion_selection": "recommended_imported",
     }
 
 

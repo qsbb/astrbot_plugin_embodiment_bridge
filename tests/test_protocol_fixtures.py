@@ -101,6 +101,15 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "trusted_platform_id_source": "bridge_server_config",
         "unity_trusted_source_fields": False,
     }
+    assert manifest["spatial_context_semantics"] == {
+        "schema_version": 1,
+        "storage": "session_memory_only",
+        "revision": "strictly_increasing_or_identical_idempotent",
+        "injection_scope": "authorized_embodiment_eventbus_turn_only",
+        "contains_free_text": False,
+        "contains_geometry_or_identifiers": False,
+        "grants_permission": False,
+    }
     assert manifest["pairing_bootstrap_semantics"] == {
         "register_web_api_anonymous_supported": False,
         "page_create_authentication": "astrbot_dashboard",

@@ -145,10 +145,54 @@ class AvatarSkillRegistry:
         ),
     )
     _by_name = {skill.name: skill for skill in _skills}
+    _aliases = {
+        "dance": "dance",
+        "dance_next": "dance_next",
+        "next_dance": "dance_next",
+        "switch_dance": "dance_next",
+        "another_dance": "dance_next",
+        "hand_wave": "wave",
+        "wave_hand": "wave",
+        "turn": "turn_half",
+        "turn_around": "turn_half",
+        "half_turn": "turn_half",
+        "raise_hand": "raise_hand",
+    }
 
     @classmethod
     def names(cls) -> tuple[str, ...]:
         return tuple(skill.name for skill in cls._skills)
+
+    @classmethod
+    def normalize_action_name(cls, value: Any) -> str | None:
+        """Normalize bounded semantic aliases to the protocol allowlist."""
+        if not isinstance(value, str):
+            return None
+        candidate = " ".join(value.strip().lower().replace("-", " ").split())
+        candidate = candidate.replace(" ", "_")
+        normalized = cls._aliases.get(candidate, candidate)
+        return normalized if normalized in cls._by_name else None
+
+    @classmethod
+    def catalog_status(cls, action: str) -> str:
+        """Expose only semantic catalog availability, never device paths."""
+        return "not_declared" if action in {"dance", "dance_next"} else "not_applicable"
+
+    @classmethod
+    def motion_selection(cls, action: str) -> str:
+        """Return the bounded imported-motion selection semantic.
+
+        The bridge deliberately exposes no local catalog, filename, or path.
+        Unity resolves these two protocol semantics against its imported action
+        library: ``dance`` chooses the recommended imported motion and
+        ``dance_next`` advances to the next imported motion.
+        """
+        normalized = cls.normalize_action_name(action)
+        if normalized == "dance":
+            return "recommended_imported"
+        if normalized == "dance_next":
+            return "next_imported"
+        return "none"
 
     @classmethod
     def prompt_contract(cls) -> str:
@@ -169,7 +213,7 @@ class AvatarSkillRegistry:
 
     @classmethod
     def invoke(cls, name: Any, arguments: Any = None) -> ProposedIntent | None:
-        skill = cls._by_name.get(str(name or "").strip().lower())
+        skill = cls._by_name.get(cls.normalize_action_name(name) or "")
         if skill is None:
             return None
         args = arguments if isinstance(arguments, dict) else {}

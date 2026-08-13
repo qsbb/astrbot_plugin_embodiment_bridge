@@ -192,6 +192,7 @@ class PersonaConverter:
                     else self.first_chunk_timeout_seconds
                 )
                 wait_seconds = min(remaining, activity_timeout)
+                total_deadline_wins = remaining <= activity_timeout
                 try:
                     response = await asyncio.wait_for(
                         anext(iterator), timeout=wait_seconds
@@ -199,7 +200,10 @@ class PersonaConverter:
                 except StopAsyncIteration:
                     break
                 except TimeoutError as exc:
-                    if deadline - time.monotonic() <= 0:
+                    # Preserve the total conversion budget as the primary
+                    # contract when it expires during a busy stream. The
+                    # idle-specific code only describes an inactivity gap.
+                    if total_deadline_wins:
                         code = "conversion_timeout"
                     elif received_any:
                         code = "conversion_stream_idle_timeout"

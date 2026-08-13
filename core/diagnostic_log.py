@@ -45,6 +45,9 @@ _SAFE_FIELD_NAMES = frozenset(
         "active_sessions",
         "attached_streams",
         "event_count",
+        "action_source",
+        "catalog_status",
+        "motion_selection",
         "bytes",
         "chunks",
         "sequence",
@@ -83,6 +86,9 @@ _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
 )
 _SAFE_AGGREGATE_FIELDS = frozenset({"active_sessions", "attached_streams"})
 _SAFE_PERSONA_ENUM_FIELDS = frozenset({"persona_source", "persona_status"})
+_SAFE_ACTION_ENUM_FIELDS = frozenset(
+    {"action_source", "catalog_status", "motion_selection"}
+)
 _SAFE_PERSONA_ENUM_VALUES = frozenset(
     {
         "astrbot_selected",
@@ -96,6 +102,20 @@ _SAFE_PERSONA_ENUM_VALUES = frozenset(
         "timeout",
         "unavailable",
         "configuration_invalid",
+    }
+)
+_SAFE_ACTION_ENUM_VALUES = frozenset(
+    {
+        "explicit_request",
+        "model_tool",
+        "none",
+        "selected",
+        "default_talk",
+        "not_declared",
+        "not_applicable",
+        "recommended_imported",
+        "next_imported",
+        "unknown",
     }
 )
 
@@ -418,6 +438,8 @@ class DiagnosticLog:
             return value if isinstance(value, bool) else None
         if name in _SAFE_PERSONA_ENUM_FIELDS:
             return value if value in _SAFE_PERSONA_ENUM_VALUES else None
+        if name in _SAFE_ACTION_ENUM_FIELDS:
+            return value if value in _SAFE_ACTION_ENUM_VALUES else None
         if isinstance(value, bool):
             return value
         if isinstance(value, int) and not isinstance(value, bool):
@@ -444,6 +466,14 @@ class DiagnosticLogSink:
 
     def info(self, *_args: Any, **_kwargs: Any) -> None:
         self.diagnostic_log.record("component.info", component="plugin", status="info")
+
+    def record(self, event: str, **fields: Any) -> None:
+        """Expose the plugin-owned structured sink to adapters.
+
+        Components should use this method for bounded diagnostic events instead
+        of formatting user text into the platform logger.
+        """
+        self.diagnostic_log.record(event, **fields)
 
     def warning(self, *_args: Any, **_kwargs: Any) -> None:
         self.diagnostic_log.record(

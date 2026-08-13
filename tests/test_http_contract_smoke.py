@@ -90,6 +90,59 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
                 assert created.status == 201
                 assert await created.json() == load_json("session_start.response.json")
 
+                wrong_owner = await client.post(
+                    server.url("/spatial/context"),
+                    headers={
+                        "Authorization": f"Bearer {ASTRBOT_API_TOKEN}",
+                        "X-Embodiment-Bridge-Key": BRIDGE_API_KEY,
+                    },
+                    json=load_json("spatial_context.payload.json"),
+                )
+                assert wrong_owner.status == 403
+                assert (await wrong_owner.json())["data"]["code"] == (
+                    "session_ownership_mismatch"
+                )
+
+                spatial = await client.post(
+                    server.url("/spatial/context"),
+                    headers=AUTH_HEADERS,
+                    json=load_json("spatial_context.payload.json"),
+                )
+                assert spatial.status == 200
+                assert await spatial.json() == load_json(
+                    "spatial_context.response.json"
+                )
+
+                unchanged = await client.post(
+                    server.url("/spatial/context"),
+                    headers=AUTH_HEADERS,
+                    json=load_json("spatial_context.payload.json"),
+                )
+                assert unchanged.status == 200
+                assert (await unchanged.json())["data"]["state"] == "unchanged"
+
+                conflicting_payload = load_json("spatial_context.payload.json")
+                conflicting_payload["seat_count"] = 2
+                conflict = await client.post(
+                    server.url("/spatial/context"),
+                    headers=AUTH_HEADERS,
+                    json=conflicting_payload,
+                )
+                assert conflict.status == 409
+                assert (await conflict.json())["data"]["code"] == "session_conflict"
+
+                forbidden_payload = load_json("spatial_context.payload.json")
+                forbidden_payload["room_id"] = "private-room"
+                rejected = await client.post(
+                    server.url("/spatial/context"),
+                    headers=AUTH_HEADERS,
+                    json=forbidden_payload,
+                )
+                assert rejected.status == 422
+                assert (await rejected.json())["data"]["code"] == (
+                    "schema_validation_failed"
+                )
+
                 duplicate = await client.post(
                     server.url("/session/start"),
                     headers=AUTH_HEADERS,
@@ -766,5 +819,23 @@ def test_network_harness_rejects_missing_auth(monkeypatch: Any, tmp_path: Path) 
                 assert (await missing_bridge.json())["data"]["code"] == (
                     "bridge_auth_failed"
                 )
+
+                for headers, expected_code in (
+                    (
+                        {"X-Embodiment-Bridge-Key": BRIDGE_API_KEY},
+                        "astrbot_auth_required",
+                    ),
+                    (
+                        {"Authorization": f"ApiKey {ASTRBOT_API_TOKEN}"},
+                        "bridge_auth_failed",
+                    ),
+                ):
+                    spatial = await client.post(
+                        server.url("/spatial/context"),
+                        headers=headers,
+                        json=load_json("spatial_context.payload.json"),
+                    )
+                    assert spatial.status == 401
+                    assert (await spatial.json())["data"]["code"] == expected_code
 
     asyncio.run(scenario())

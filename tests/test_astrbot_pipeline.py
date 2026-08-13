@@ -5,6 +5,7 @@ import sys
 import types
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -42,6 +43,27 @@ class ContextStub:
         return self.platform if platform_id == "qq" else None
 
 
+def test_expired_spatial_context_is_not_captured_for_eventbus() -> None:
+    snapshot = SimpleNamespace(model_dump=lambda **_kwargs: {"schema_version": 1})
+    session = SimpleNamespace(
+        spatial_context=snapshot,
+        spatial_context_updated_at=10.0,
+    )
+    with patch(
+        "astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline.time.monotonic",
+        return_value=41.0,
+    ):
+        assert astrbot_pipeline._session_spatial_context(session) is None
+
+    with patch(
+        "astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline.time.monotonic",
+        return_value=39.0,
+    ):
+        assert astrbot_pipeline._session_spatial_context(session) == {
+            "schema_version": 1
+        }
+
+
 class CaptureEventStub:
     def __init__(
         self,
@@ -76,6 +98,14 @@ class CaptureEventStub:
 
     def is_stopped(self) -> bool:
         return self._stopped
+
+
+class DiagnosticStub:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def record(self, event: str, **fields: Any) -> None:
+        self.events.append((event, fields))
 
 
 def session(*, authorized: bool = True) -> Any:
@@ -159,6 +189,106 @@ def test_eventbus_action_tool_intent_replaces_fixed_talk_decision(
         assert decision.intent.gesture.value == action
         assert decision.intent.reason_code == f"skill_{action}"
         assert context.queue.put_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_pipeline_logs_selected_dance_without_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        diagnostic = DiagnosticStub()
+        event = CaptureEventStub("动作回复")
+        event.set_extra("embodiment_bridge", True)
+        event.set_extra(
+            QUEST_ACTION_INTENT_EXTRA,
+            AvatarSkillRegistry.invoke("dance_next", {"intensity": 0.7}),
+        )
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(session=session(), user_text="换个舞蹈")
+
+        assert decision.intent.gesture.value == "dance_next"
+        assert diagnostic.events == [
+            (
+                "avatar.action.pipeline_outcome",
+                {
+                    "component": "action",
+                    "operation": "dance_next",
+                    "status": "selected",
+                    "reason_code": "skill_dance_next",
+                    "gesture": "dance_next",
+                    "action_source": "selected",
+                    "motion_selection": "next_imported",
+                    "duration_ms": adapter.last_duration_ms,
+                },
+            )
+        ]
+        assert "换个舞蹈" not in repr(diagnostic.events)
+        assert "动作回复" not in repr(diagnostic.events)
+
+    asyncio.run(scenario())
+
+
+def test_tool_only_dance_is_not_lost_as_empty_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        diagnostic = DiagnosticStub()
+        event = CaptureEventStub("", stopped=False, send_observed=False)
+        event.set_extra("embodiment_bridge", True)
+        event.set_extra(
+            QUEST_ACTION_INTENT_EXTRA,
+            AvatarSkillRegistry.invoke("dance", {}),
+        )
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(session=session(), user_text="跳舞")
+
+        assert decision.should_reply is False
+        assert decision.reply_text == ""
+        assert decision.intent.gesture.value == "dance"
+        assert diagnostic.events[0][0] == "avatar.action.pipeline_outcome"
+        assert diagnostic.events[0][1]["operation"] == "dance"
+        assert diagnostic.events[0][1]["action_source"] == "selected"
+        assert diagnostic.events[0][1]["motion_selection"] == "recommended_imported"
+
+    asyncio.run(scenario())
+
+
+def test_pipeline_logs_default_talk_fallback_without_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        diagnostic = DiagnosticStub()
+        event = CaptureEventStub("普通回复")
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(session=session(), user_text="普通问题")
+
+        assert decision.intent.gesture.value == "talk"
+        assert diagnostic.events[0][1]["status"] == "fallback"
+        assert diagnostic.events[0][1]["action_source"] == "default_talk"
+        assert "普通问题" not in repr(diagnostic.events)
+        assert "普通回复" not in repr(diagnostic.events)
 
     asyncio.run(scenario())
 
@@ -372,6 +502,20 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
         user_id="bound-user",
         bot_id="bound-bot",
         group_id="bound-group",
+        protected_context_authorized=True,
+        spatial_context={
+            "schema_version": 1,
+            "revision": 3,
+            "floor_count": 1,
+            "seat_count": 1,
+            "bed_count": 0,
+            "table_count": 1,
+            "wall_count": 4,
+            "door_count": 1,
+            "window_count": 1,
+            "scene_capture_available": True,
+            "occlusion_available": False,
+        },
     )
 
     assert isinstance(message, FakeAstrMessageEvent)
@@ -384,3 +528,7 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert identity["platform_id"] == "trusted-platform"
     assert identity["user_id"] == "bound-user"
     assert identity["trusted"] is True
+    assert (
+        message.get_extra("embodiment_bridge.protected_context_authorized") is True
+    )
+    assert message.get_extra("embodiment_bridge.spatial_context")["revision"] == 3

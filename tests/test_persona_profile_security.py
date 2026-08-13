@@ -1111,6 +1111,86 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
     asyncio.run(scenario())
 
 
+def test_spatial_context_overlay_requires_authorized_bridge_event_and_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "schema_version": 1,
+        "revision": 7,
+        "floor_count": 1,
+        "seat_count": 2,
+        "bed_count": 0,
+        "table_count": 1,
+        "wall_count": 4,
+        "door_count": 1,
+        "window_count": 1,
+        "scene_capture_available": True,
+        "occlusion_available": False,
+    }
+
+    class EventStub:
+        def __init__(
+            self,
+            *,
+            bridge: object,
+            authorized: object,
+            spatial: object,
+        ) -> None:
+            self.message_str = "room question"
+            self.extras = {
+                "embodiment_bridge": bridge,
+                "embodiment_bridge.protected_context_authorized": authorized,
+                "embodiment_bridge.spatial_context": spatial,
+            }
+
+        def get_extra(self, key: str) -> object:
+            return self.extras.get(key)
+
+        def set_extra(self, key: str, value: object) -> None:
+            self.extras[key] = value
+
+    async def scenario() -> None:
+        install_astrbot_stubs(monkeypatch, tmp_path)
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
+        plugin = object.__new__(module.EmbodimentBridgePlugin)
+        plugin.llm = SimpleNamespace(quest_persona_prompt="")
+        plugin.diagnostic_log = DiagnosticCapture()
+
+        for bridge, authorized in ((False, True), (True, False), (True, 1)):
+            request = SimpleNamespace(system_prompt="base", func_tool=None)
+            await plugin.inject_quest_persona(
+                EventStub(
+                    bridge=bridge,
+                    authorized=authorized,
+                    spatial=snapshot,
+                ),
+                request,
+            )
+            assert "embodiment_spatial_context_json" not in request.system_prompt
+
+        malformed = {**snapshot, "room_id": "must-not-pass"}
+        malformed_request = SimpleNamespace(system_prompt="base", func_tool=None)
+        await plugin.inject_quest_persona(
+            EventStub(bridge=True, authorized=True, spatial=malformed),
+            malformed_request,
+        )
+        assert "embodiment_spatial_context_json" not in (
+            malformed_request.system_prompt
+        )
+
+        request = SimpleNamespace(system_prompt="base", func_tool=None)
+        event = EventStub(bridge=True, authorized=True, spatial=snapshot)
+        await plugin.inject_quest_persona(event, request)
+        await plugin.inject_quest_persona(event, request)
+        assert request.system_prompt.count("<embodiment_spatial_context_json>") == 1
+        assert '"revision":7' in request.system_prompt
+        assert '"seat_count":2' in request.system_prompt
+        assert "room_id" not in request.system_prompt
+
+    asyncio.run(scenario())
+
+
 def test_eventbus_hook_preselects_explicit_action_before_persona_without_tool(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1146,6 +1226,7 @@ def test_eventbus_hook_preselects_explicit_action_before_persona_without_tool(
         assert "# 临：具身人格覆盖" in request.system_prompt
         assert [name for name, _fields in diagnostic.events] == [
             "avatar.action.explicit_parse",
+            "avatar.action.catalog_unavailable",
             "avatar.action.accepted",
             "avatar.action.tool_skipped",
             "persona.overlay.injected",

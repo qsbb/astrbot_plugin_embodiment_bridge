@@ -31,7 +31,14 @@ class ExplicitActionResult:
 
 _ZH_PREFIX = (
     r"(?:(?:现在|立刻|马上)\s*)?"
-    r"(?:(?:请|请你|麻烦|麻烦你|给我|请给我|随便|请随便|请你随便|能不能|能否|可不可以)\s*)?"
+    # Keep the subject/request wrappers bounded.  Quest voice turns commonly
+    # phrase an imperative as "让她随便跳个舞" or "帮我跳个舞"; these are
+    # still direct commands, while narrative/reported forms are rejected below.
+    r"(?:(?:请|请你|麻烦|麻烦你|给我|请给我|能不能|能否|可不可以|"
+    r"让(?:她|他|角色|它)?|叫(?:她|他|角色|它)?|帮我|请她|请他|请角色|"
+    r"我让(?:她|他|角色|它)?|我想让(?:她|他|角色|它)?|你|她|他|角色|它|"
+    r"开始|直接|来)\s*)?"
+    r"(?:(?:随便)\s*)?"
 )
 _ZH_SUFFIX = r"\s*(?:(?:一下|一下吧|吧|吗|嘛|可以吗|好不好))?[。！!？?]?"
 _EN_PREFIX = r"(?:(?:please|now|please\s+now|now\s+please)\s+)?"
@@ -39,35 +46,37 @@ _EN_SUFFIX = r"(?:\s+please)?[.!]?"
 
 _ACTION_PATTERNS: dict[ActionName, tuple[str, ...]] = {
     "dance": (
-        rf"{_ZH_PREFIX}(?:跳舞|跳个舞|跳一支舞|跳支舞){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:跳舞|跳个舞|跳一支舞|跳支舞|跳一段舞|跳一下舞|"
+        rf"来个舞|来段舞|跳舞给我看|跳个舞给我看){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:dance|do\s+a\s+dance|dance\s+for\s+me){_EN_SUFFIX}",
     ),
     "dance_next": (
-        rf"{_ZH_PREFIX}(?:下一支舞|跳下一支舞|换一支舞|换支舞|换个舞蹈|换一个舞蹈|换个舞|换一个舞){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:下一支舞|播放下一支舞|跳下一支舞|换一支舞|换支舞|换个舞蹈|"
+        rf"换一个舞蹈|换个舞|换一个舞|再来一个舞|再来一支舞|再跳一个|再跳一支){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:next\s+dance|do\s+the\s+next\s+dance|switch\s+to\s+the\s+next\s+dance){_EN_SUFFIX}",
     ),
     "raise_hand": (
-        rf"{_ZH_PREFIX}(?:举手|举起手|把手举起来|抬起手){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:举手|举起手|把手举起来|把手抬起来|抬起手|抬手){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:raise\s+your\s+hand|put\s+your\s+hand\s+up){_EN_SUFFIX}",
     ),
     "turn_half": (
-        rf"{_ZH_PREFIX}(?:转半圈|旋转半圈){_ZH_SUFFIX}",
-        rf"{_EN_PREFIX}(?:turn\s+halfway|turn\s+half\s+way|turn\s+180\s+degrees|make\s+a\s+half\s+turn){_EN_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:转身|转个身|转过身|转半圈|旋转半圈){_ZH_SUFFIX}",
+        rf"{_EN_PREFIX}(?:turn\s+around|turn\s+halfway|turn\s+half\s+way|turn\s+180\s+degrees|make\s+a\s+half\s+turn){_EN_SUFFIX}",
     ),
     "wave": (
-        rf"{_ZH_PREFIX}(?:挥手|挥挥手|向我挥手){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:挥手|挥挥手|挥一下手|向我挥手|给我挥手){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:wave|wave\s+at\s+me){_EN_SUFFIX}",
     ),
     "bow": (
-        rf"{_ZH_PREFIX}(?:鞠躬|鞠个躬){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:鞠躬|鞠个躬|鞠一下躬){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:bow|take\s+a\s+bow){_EN_SUFFIX}",
     ),
     "sit": (
-        rf"{_ZH_PREFIX}(?:坐下|请坐){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:坐下|请坐|坐一会儿){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:sit|sit\s+down){_EN_SUFFIX}",
     ),
     "lie": (
-        rf"{_ZH_PREFIX}(?:躺下){_ZH_SUFFIX}",
+        rf"{_ZH_PREFIX}(?:躺下|躺一会儿){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:lie\s+down){_EN_SUFFIX}",
     ),
 }
@@ -79,25 +88,29 @@ _COMPILED_ACTIONS = {
 
 _MENTION_PATTERNS: dict[ActionName, re.Pattern[str]] = {
     "dance_next": re.compile(
-        r"跳下一支舞|下一支舞|换一支舞|换支舞|换个舞蹈|换一个舞蹈|换个舞|换一个舞|\bnext\s+dance\b|"
+        r"跳下一支舞|下一支舞|播放下一支舞|换一支舞|换支舞|换个舞蹈|换一个舞蹈|换个舞|换一个舞|"
+        r"再来一个舞|再来一支舞|再跳一个|再跳一支|\bnext\s+dance\b|"
         r"\bswitch\s+to\s+the\s+next\s+dance\b",
         re.IGNORECASE,
     ),
-    "dance": re.compile(r"跳舞|跳个舞|跳一支舞|跳支舞|\bdance\b", re.IGNORECASE),
+    "dance": re.compile(
+        r"跳舞|跳个舞|跳一支舞|跳支舞|跳一段舞|跳一下舞|来个舞|来段舞|\bdance\b",
+        re.IGNORECASE,
+    ),
     "raise_hand": re.compile(
-        r"举手|举起手|把手举起来|抬起手|\braise\s+your\s+hand\b|"
+        r"举手|举起手|把手举起来|把手抬起来|抬起手|抬手|\braise\s+your\s+hand\b|"
         r"\bput\s+your\s+hand\s+up\b",
         re.IGNORECASE,
     ),
     "turn_half": re.compile(
-        r"转半圈|旋转半圈|\bturn\s+half(?:way|\s+way)\b|"
+        r"转身|转个身|转过身|转半圈|旋转半圈|\bturn\s+around\b|\bturn\s+half(?:way|\s+way)\b|"
         r"\bturn\s+180\s+degrees\b|\bhalf\s+turn\b",
         re.IGNORECASE,
     ),
-    "wave": re.compile(r"挥手|挥挥手|\bwave\b", re.IGNORECASE),
-    "bow": re.compile(r"鞠躬|鞠个躬|\bbow\b", re.IGNORECASE),
-    "sit": re.compile(r"坐下|请坐|\bsit(?:\s+down)?\b", re.IGNORECASE),
-    "lie": re.compile(r"躺下|\blie\s+down\b", re.IGNORECASE),
+    "wave": re.compile(r"挥手|挥挥手|挥一下手|向我挥手|给我挥手|\bwave\b", re.IGNORECASE),
+    "bow": re.compile(r"鞠躬|鞠个躬|鞠一下躬|\bbow\b", re.IGNORECASE),
+    "sit": re.compile(r"坐下|请坐|坐一会儿|\bsit(?:\s+down)?\b", re.IGNORECASE),
+    "lie": re.compile(r"躺下|躺一会儿|\blie\s+down\b", re.IGNORECASE),
 }
 
 _QUOTED_RE = re.compile(r"[\"“”‘’「」『』《》〈〉]|(?<![A-Za-z])'|'(?![A-Za-z])")

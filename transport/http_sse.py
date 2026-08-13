@@ -21,6 +21,7 @@ from ..core.models import (
     PROTOCOL_VERSION,
     SessionCloseRequest,
     SessionStartRequest,
+    SpatialContextRequest,
     TurnStartRequest,
 )
 from ..core.plugin_identity import (
@@ -135,6 +136,12 @@ class HttpSseTransport:
                 methods,
                 f"Legacy authenticated alias: {description}",
             )
+        self.context.register_web_api(
+            f"{ROUTE_PREFIX}/spatial/context",
+            self.spatial_context,
+            ["POST"],
+            "Update coarse embodied spatial context",
+        )
 
     async def session_start(self) -> Any:
         async def action(owner: str, payload: SessionStartRequest) -> Any:
@@ -351,6 +358,27 @@ class HttpSseTransport:
             )
 
         return await self._json_endpoint(SessionCloseRequest, action)
+
+    async def spatial_context(self) -> Any:
+        async def action(owner: str, payload: SpatialContextRequest) -> Any:
+            session = await self.sessions.get_owned(payload.session_id, owner)
+            state, snapshot = await self.sessions.update_spatial_context(
+                session,
+                payload,
+            )
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {
+                        "session_id": session.session_id,
+                        "schema_version": snapshot.schema_version,
+                        "revision": snapshot.revision,
+                        "state": state,
+                    },
+                }
+            )
+
+        return await self._json_endpoint(SpatialContextRequest, action)
 
     async def health(self) -> Any:
         started = time.perf_counter()

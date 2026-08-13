@@ -42,10 +42,12 @@ _FIXED_PROXY_ROUTES = {
     ("POST", f"{PUBLIC_API_PATH}/interaction"),
     ("POST", f"{PUBLIC_API_PATH}/interrupt"),
     ("POST", f"{PUBLIC_API_PATH}/session/close"),
+    ("POST", f"{PUBLIC_API_PATH}/spatial/context"),
 }
 _LEGACY_FIXED_PROXY_ROUTES = {
     (method, path.replace(PUBLIC_API_PREFIX, LEGACY_PUBLIC_API_PREFIX, 1))
     for method, path in _FIXED_PROXY_ROUTES
+    if path != f"{PUBLIC_API_PATH}/spatial/context"
 }
 LEGACY_EVENTS_PATH_PREFIX = f"{LEGACY_PUBLIC_API_PREFIX}/events/"
 _FORWARDED_REQUEST_HEADERS = {

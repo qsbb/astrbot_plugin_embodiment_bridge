@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "data": {
+    "session_id": "smoke-session",
+    "schema_version": 1,
+    "revision": 1,
+    "state": "updated"
+  }
+}

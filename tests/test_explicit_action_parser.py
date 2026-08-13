@@ -20,6 +20,8 @@ from astrbot_plugin_embodiment_bridge.core.explicit_action_parser import (
         ("请随便换一个舞", "dance_next"),
         ("把手举起来", "raise_hand"),
         ("现在转半圈", "turn_half"),
+        ("转身", "turn_half"),
+        ("请转个身", "turn_half"),
         ("向我挥手", "wave"),
         ("鞠个躬吧", "bow"),
         ("请坐", "sit"),
@@ -32,6 +34,52 @@ def test_matches_bounded_whole_message_chinese_imperatives(
 ) -> None:
     result = parse_explicit_action(text)
 
+    assert result == ExplicitActionResult(
+        action=action,
+        status="matched",
+        reason="explicit_imperative",
+        allow_model_tool=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "action"),
+    [
+        ("帮我跳个舞", "dance"),
+        ("让她随便跳个舞", "dance"),
+        ("请她挥手", "wave"),
+        ("让角色换个舞蹈", "dance_next"),
+        ("让她转身", "turn_half"),
+    ],
+)
+def test_matches_subject_wrapped_direct_imperatives(text: str, action: str) -> None:
+    result = parse_explicit_action(text)
+    assert result == ExplicitActionResult(
+        action=action,
+        status="matched",
+        reason="explicit_imperative",
+        allow_model_tool=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "action"),
+    [
+        ("她跳个舞", "dance"),
+        ("我让她跳个舞", "dance"),
+        ("开始跳舞", "dance"),
+        ("跳一段舞", "dance"),
+        ("跳个舞给我看", "dance"),
+        ("换个舞蹈", "dance_next"),
+        ("再来一个舞", "dance_next"),
+        ("再跳一支", "dance_next"),
+        ("她挥一下手", "wave"),
+        ("把手抬起来", "raise_hand"),
+        ("鞠一下躬", "bow"),
+    ],
+)
+def test_matches_common_voice_command_variants(text: str, action: str) -> None:
+    result = parse_explicit_action(text)
     assert result == ExplicitActionResult(
         action=action,
         status="matched",
@@ -112,6 +160,7 @@ def test_overlong_input_fails_closed_before_matching() -> None:
         ("switch to the next dance", "dance_next"),
         ("raise your hand", "raise_hand"),
         ("turn 180 degrees", "turn_half"),
+        ("turn around", "turn_half"),
         ("wave at me", "wave"),
         ("take a bow", "bow"),
         ("sit down", "sit"),
@@ -125,3 +174,10 @@ def test_matches_clear_english_imperatives(text: str, action: str) -> None:
     assert result.status == "matched"
     assert result.reason == "explicit_imperative"
     assert result.allow_model_tool is False
+
+
+@pytest.mark.parametrize("text", ["转身", "请转个身", "turn around"])
+def test_turn_around_alias_is_a_single_explicit_action(text: str) -> None:
+    result = parse_explicit_action(text)
+    assert result.action == "turn_half"
+    assert result.status == "matched"
