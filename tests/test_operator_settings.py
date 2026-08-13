@@ -397,6 +397,31 @@ def test_model_and_relationship_selection_persist_before_runtime_switch() -> Non
     asyncio.run(scenario())
 
 
+def test_direct_dialogue_mode_is_explicit_and_does_not_require_identity_fields() -> (
+    None
+):
+    class Orchestrator:
+        allow_direct_provider_fallback = False
+
+    async def scenario() -> None:
+        config = LegacySyncConfigStub({"chat_provider_id": "model-a"})
+        settings = build_settings(config=config, selected="model-a")
+        settings.orchestrator = Orchestrator()
+
+        result = await settings.save_dialogue_mode(True)
+
+        assert result == {
+            "mode": "direct_provider",
+            "direct_mode": True,
+            "eventbus_enabled": False,
+        }
+        assert config["quest_direct_dialogue_mode"] is True
+        assert settings.orchestrator.allow_direct_provider_fallback is True
+        assert settings.message_pipeline.enabled is False
+
+    asyncio.run(scenario())
+
+
 def test_empty_relationship_save_uses_clear_path_and_preserves_base_binding() -> None:
     class ControlPlane:
         def __init__(self) -> None:

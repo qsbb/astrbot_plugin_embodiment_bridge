@@ -54,6 +54,7 @@ class OperatorSettings:
         diagnostic_log: Any | None = None,
         identity: Any | None = None,
         message_pipeline: Any | None = None,
+        orchestrator: Any | None = None,
         identity_control_plane: IdentityControlPlaneAdapter | None = None,
         pairing_manager: Any | None = None,
         transport: Any | None = None,
@@ -70,6 +71,7 @@ class OperatorSettings:
         self.diagnostic_log = diagnostic_log
         self.identity = identity
         self.message_pipeline = message_pipeline
+        self.orchestrator = orchestrator
         self.identity_control_plane = identity_control_plane
         self.pairing_manager = pairing_manager
         self.transport = transport
@@ -96,6 +98,14 @@ class OperatorSettings:
                 getattr(self.relationship, "person_id", "") or ""
             ).strip(),
             "persona": self.persona_snapshot(),
+            "dialogue_mode": {
+                "direct_mode": bool(
+                    self.config.get("quest_direct_dialogue_mode", False)
+                ),
+                "eventbus_enabled": not bool(
+                    self.config.get("quest_direct_dialogue_mode", False)
+                ),
+            },
             "config_writable": config_is_writable(self.config),
         }
 
@@ -408,6 +418,30 @@ class OperatorSettings:
         await self._persist("chat_provider_id", provider_id)
         self.llm.configure_provider(provider_id)
         return self.snapshot()
+
+    async def save_dialogue_mode(self, direct_mode: bool) -> dict[str, Any]:
+        enabled = bool(direct_mode)
+        await self._persist("quest_direct_dialogue_mode", enabled)
+        orchestrator = self.orchestrator
+        if orchestrator is not None:
+            orchestrator.allow_direct_provider_fallback = enabled
+        pipeline = self.message_pipeline
+        if pipeline is not None:
+            pipeline.enabled = not enabled and bool(
+                self.config.get("enable_astrbot_message_pipeline", True)
+            )
+        self._diagnostic(
+            "dialogue.mode_updated",
+            component="dialogue",
+            status="ready",
+            direct_mode=enabled,
+            eventbus_enabled=not enabled,
+        )
+        return {
+            "mode": "direct_provider" if enabled else "astrbot_event_bus",
+            "direct_mode": enabled,
+            "eventbus_enabled": not enabled,
+        }
 
     def list_chat_providers(self) -> list[dict[str, str]]:
         return self._list_chat_providers()
@@ -956,6 +990,7 @@ class OperatorSettings:
             not in {
                 *_PERSONA_KEYS,
                 "chat_provider_id",
+                "quest_direct_dialogue_mode",
                 "astrbot_stt_provider_id",
                 "enable_astrbot_stt",
                 "enable_plugin_mimo_stt",

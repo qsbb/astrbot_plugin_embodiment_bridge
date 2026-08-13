@@ -44,6 +44,7 @@ class ChatProviderSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     chat_provider_id: str = Field(min_length=1, max_length=256)
+    direct_mode: bool | None = None
 
 
 class STTProviderSelectionRequest(BaseModel):
@@ -476,6 +477,15 @@ class PairingHttpApi:
             settings = await self.operator_settings.save_chat_provider_id(
                 payload.chat_provider_id
             )
+            if payload.direct_mode is not None:
+                settings["dialogue_mode"] = await self.operator_settings.save_dialogue_mode(
+                    payload.direct_mode
+                )
+                self.pairing_defaults["direct_dialogue_mode"] = bool(
+                    payload.direct_mode
+                )
+                if payload.direct_mode:
+                    self.pairing_defaults["server_identity_ready"] = True
             return _json_no_store({"success": True, "settings": settings})
         except Exception as exc:
             return self._error(exc, "save_operator_settings")
@@ -1113,7 +1123,10 @@ class PairingHttpApi:
             not str(self.pairing_defaults.get(key) or "").strip() for key in required
         ):
             return False, "quick_pairing_defaults_missing"
-        if self.pairing_defaults.get("server_identity_ready") is not True:
+        if (
+            self.pairing_defaults.get("server_identity_ready") is not True
+            and self.pairing_defaults.get("direct_dialogue_mode") is not True
+        ):
             return False, "quick_pairing_server_identity_missing"
         return True, "ready"
 
@@ -1122,7 +1135,10 @@ class PairingHttpApi:
         payload: PairingCreateRequest,
     ) -> PairingCreateRequest:
         if payload.public_url:
-            if self.pairing_defaults.get("server_identity_ready") is not True:
+            if (
+                self.pairing_defaults.get("server_identity_ready") is not True
+                and self.pairing_defaults.get("direct_dialogue_mode") is not True
+            ):
                 raise PairingError(
                     "quick_pairing_server_identity_missing",
                     503,
@@ -1160,6 +1176,10 @@ class PairingHttpApi:
             ),
             "ttl_seconds": self.pairing_defaults.get("ttl_seconds", 120),
         }
+        if self.pairing_defaults.get("direct_dialogue_mode") is True:
+            values["user_id"] = "quest-direct-user"
+            values["bot_id"] = "quest-direct-bridge"
+            values["group_id"] = ""
         return PairingCreateRequest.model_validate(values)
 
     async def status(self) -> Any:

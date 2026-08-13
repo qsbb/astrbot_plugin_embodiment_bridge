@@ -58,7 +58,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 
 class EmbodimentBridgePlugin(Star):
@@ -282,6 +282,15 @@ class EmbodimentBridgePlugin(Star):
             diagnostic_log=self.diagnostic_log,
             server_timing_enabled=self._bool_config("server_timing_enabled", False),
         )
+        self.quest_direct_dialogue_mode = self._bool_config(
+            "quest_direct_dialogue_mode", False
+        )
+        if self.quest_direct_dialogue_mode:
+            # This mode is deliberately isolated from AstrBot's EventBus. It
+            # allows a local Quest-only setup without inventing Bot/User
+            # identity claims or silently exposing other message plugins.
+            self.orchestrator.allow_direct_provider_fallback = True
+            self.message_pipeline.enabled = False
         self.pairing = PairingManager(
             bridge_api_key=bridge_api_key,
             exchange_url=pairing_exchange_proxy_url,
@@ -355,6 +364,7 @@ class EmbodimentBridgePlugin(Star):
             diagnostic_log=self.diagnostic_log,
             identity=self.identity,
             message_pipeline=self.message_pipeline,
+            orchestrator=self.orchestrator,
             identity_control_plane=self.identity_control_plane,
             pairing_manager=self.pairing,
             transport=self.transport,
@@ -396,7 +406,9 @@ class EmbodimentBridgePlugin(Star):
                 "bot_id": "server-managed-bot",
                 "server_identity_ready": bool(
                     identity_sync_ready and server_identity is not None
-                ),
+                )
+                or self.quest_direct_dialogue_mode,
+                "direct_dialogue_mode": self.quest_direct_dialogue_mode,
                 "group_id": str(config.get("pairing_group_id", "") or ""),
                 "relationship_profile_id": str(
                     config.get("pairing_relationship_profile_id", "") or ""

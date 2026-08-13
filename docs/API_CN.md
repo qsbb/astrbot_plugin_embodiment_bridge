@@ -246,6 +246,12 @@ STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；
 
 `provider_id` 为空字符串表示关闭 STT。非空值必须精确命中当前已实例化 `STTProvider`，否则拒绝保存，运行时选择保持不变。
 
+### 无平台身份的基础对话模式
+
+管理员可以在 Operator Page 开启 `quest_direct_dialogue_mode`。该模式只调用临已选择的 `chat_provider_id`，不创建 AstrBot EventBus 消息，不读取关系/知识/环境上下文，也不触发其他消息插件。因此不需要 Bot ID、主人用户 ID 或“序”。Protocol 1.0 的 `session.start` 仍保持严格字段校验，配对交换由服务端注入隔离的非账号范围值；这些值不代表任何真实 Bot/User，也不能用于平台操作。
+
+关闭该模式后，正式 EventBus 对话恢复原有要求：服务端必须配置可信平台及真实 Bot/User 绑定。基础模式不改变 `voice.audio_output@1.0`、STT、TTS 或动作白名单语义。
+
 平台枚举只返回已加载实例的 `id`、`adapter_type` 和 `display_name`，不返回平台账号、原始配置、Token、Webhook 或错误详情。保存请求只允许：
 
 ```json

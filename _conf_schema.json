@@ -156,6 +156,12 @@
     "hint": "默认关闭。关闭时普通文字/语音只允许进入 AstrBot 正式消息链路；链路未授权或不可用会明确报错，不会静默绕过记忆、知和其他消息插件。触碰交互仍使用受控兼容决策。",
     "default": false
   },
+  "quest_direct_dialogue_mode": {
+    "description": "无平台身份的 Quest 基础对话模式",
+    "type": "bool",
+    "hint": "开启后不进入 AstrBot EventBus，不需要 Bot/User 或“序”；Quest 只使用临已选择的聊天 Provider。关系、记忆和其他消息插件不会注入。默认关闭。",
+    "default": false
+  },
   "persona_source_mode": {
     "description": "具身角色人格来源",
     "type": "string",

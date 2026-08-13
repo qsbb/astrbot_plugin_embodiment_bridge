@@ -421,6 +421,27 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .field-help code { color: #c8e8dc; }
 .field-status { min-height: 48px; font-size: 13px; }
 .inline-actions { display: flex; justify-content: flex-start; }
+.identity-basic-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  border: 1px solid #2f5148;
+  border-radius: 6px;
+  padding: 15px;
+  background: #121e1d;
+}
+.identity-basic-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.identity-basic-heading strong { color: #eef5f2; font-size: 15px; }
+.identity-basic-heading p { margin-top: 4px; }
+.identity-basic-card .field-status { min-height: 0; margin: 0; }
+.identity-advanced { margin-top: 14px; border-top: 1px solid #2c3d3b; padding-top: 12px; }
+.identity-advanced summary { cursor: pointer; color: #c5d5d0; font-weight: 700; }
+.identity-advanced summary span { margin-left: 6px; color: #81948e; font-size: 12px; font-weight: 400; }
+.identity-advanced-body { display: grid; gap: 10px; margin-top: 14px; }
+.identity-advanced-body > .field-help { margin: 0; }
+.identity-advanced[open] { padding-bottom: 2px; }
+.mode-switch { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.mode-switch input { width: 18px; min-height: 18px; accent-color: #55d7aa; }
 .boundary-note {
   display: grid;
   gap: 5px;

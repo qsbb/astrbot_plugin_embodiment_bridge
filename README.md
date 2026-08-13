@@ -60,7 +60,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 1. 将仓库目录安装为 `data/plugins/astrbot_plugin_embodiment_bridge/`，安装 [requirements.txt](requirements.txt) 后重载插件。
 2. 在 AstrBot 管理后台创建并启用平台或会话默认聊天模型；需要语音输入时，再创建一个正式 STT Provider。
 3. 在 AstrBot“设置 → API Key 管理”创建一把具身客户端专用 API Key，至少授予 `plugin` scope。密钥明文通常只显示一次。
-4. 打开插件的“具身服务控制台”Page，选择正式消息平台，并选择触碰/动作决策与显式直连回退使用的 Provider；再填写客户端 ID、Bot、User 与专用 API Key并保存验证。正常 EventBus 对话继续使用 AstrBot 平台或会话的默认 Provider。
+4. 打开插件的“具身服务控制台”Page。若需要正式 EventBus、记忆和其他消息插件，选择平台并完成高级身份验证；如果不想配置 Bot/User 或安装“序”，可开启“基础对话模式”，只选择一个临的聊天 Provider，Quest 对话会隔离直连该 Provider，不进入 EventBus。
 5. 在插件配置中启用内置 listener。私网 Docker 部署的最小示例：
 
    ```text
@@ -92,6 +92,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
+| `quest_direct_dialogue_mode` | `false` | 无平台身份的基础对话模式；不进入 EventBus，不需要 Bot/User 或“序”，关系/记忆/其他消息插件不会注入 |
 | `pairing_listener_enabled` | `false` | 启用严格白名单内置 listener |
 | `pairing_listener_port` | `8520` | listener 监听端口，范围 1024–65535 |
 | `pairing_listener_public_url` | 空 | 客户端可访问的 listener 地址 |

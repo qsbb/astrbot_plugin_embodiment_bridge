@@ -83,6 +83,12 @@ X-Embodiment-Bridge-Key: <bridge_api_key>
 
 两把密钥用途不同，不能只配置其中一个。
 
+### 不安装“序”的最简方案
+
+如果只需要 Quest 与临的聊天模型对话，不需要 AstrBot EventBus、记忆、关系或其他消息插件，可以在“具身服务控制台”开启“基础对话模式”（配置名 `quest_direct_dialogue_mode=true`）。此模式不要求 Bot ID、主人用户 ID、平台实例或“序”，只需选择一个已实例化的聊天 Provider，并完成 Bridge/AstrBot API Key 的正常配对认证。Quest 仍使用 Protocol 1.0 和服务端生成的隔离范围值，但这些值不是任何真实账号，也不会进入 AstrBot 平台事件。
+
+需要正式 EventBus 时再关闭基础模式，并在高级身份设置中配置真实平台与 Bot/User；不要从聊天消息、Quest 自报字段或网络地址猜测这些值。
+
 内置 listener 不需要、不保存也不注入专用 plugin-scope 服务 Key。它只在精确 exchange 路径直接调用共享 `PairingExchangeService`；正常 Bridge 路径仍把 Quest 自己的两层认证原样转发给 AstrBot。推荐私网最小值：
 
 ```text

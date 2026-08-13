@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.0.1-1" />
+  <link rel="stylesheet" href="./style.css?v=1.0.2-1" />
 </head>
 <body>
   <main class="shell">
@@ -129,6 +129,18 @@
         </select>
         <p id="platform-status" class="field-status" role="status">&#23578;&#26410;&#35835;&#21462;</p>
         <button id="save-platform-button" class="primary" type="button" aria-busy="false" disabled>&#20445;&#23384;&#24179;&#21488;</button>
+      </section>
+
+      <section class="setting-panel" aria-labelledby="dialogue-mode-title">
+        <span class="section-label">最简模式</span>
+        <h2 id="dialogue-mode-title">不使用平台身份</h2>
+        <p>不想配置 Bot/User 或安装“序”时，开启此模式。Quest 只使用“临”的聊天 Provider，不进入 AstrBot EventBus，也不会调用记忆、关系和其他消息插件。</p>
+        <label class="mode-switch" for="quest-direct-dialogue-mode">
+          <input id="quest-direct-dialogue-mode" type="checkbox" />
+          <span>启用基础对话模式</span>
+        </label>
+        <p id="quest-dialogue-mode-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-dialogue-mode-button" class="primary" type="button" aria-busy="false" disabled>保存模式</button>
       </section>
 
       <section class="setting-panel persona-panel" aria-labelledby="persona-title">
@@ -289,18 +301,37 @@
       <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">
         <span class="section-label">身份与绑定</span>
         <h2 id="quest-identity-title">Quest 身份</h2>
-        <p>一次填写具身客户端、Bot、用户和专用 API Key。保存时后端通过本机回环调用 AstrBot 官方认证层验证 API Key，再由“序”统一保存主人和精确白名单；未安装“序”时“临”使用同样严格的本地绑定。</p>
-        <label for="quest-client-id">具身客户端 ID</label>
-        <input id="quest-client-id" type="text" maxlength="64" autocomplete="off" placeholder="quest-living-room" />
-        <label for="quest-bot-id">Bot ID</label>
-        <input id="quest-bot-id" type="text" maxlength="128" autocomplete="off" />
-        <label for="quest-user-id">主人用户 ID</label>
-        <input id="quest-user-id" type="text" maxlength="128" autocomplete="off" />
-        <label for="quest-api-key">具身客户端专用 AstrBot API Key</label>
-        <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" aria-describedby="quest-api-key-help" placeholder="已配置时可留空" />
-        <p id="quest-api-key-help" class="field-help">获取途径：AstrBot 管理后台 → 设置 → API Key 管理 → 创建 API Key。至少勾选 <code>plugin</code> 权限；密钥明文只显示一次。若上方显示“已配置”，这里可以留空。</p>
+        <p>先确认设备和平台即可查看状态。首次建立正式消息链路时，服务端会在高级设置中验证一次身份材料；Quest 客户端之后只需使用绑定码。</p>
+        <div class="identity-basic-card" aria-label="基础绑定">
+          <div class="identity-basic-heading">
+            <div>
+              <strong>基础绑定</strong>
+              <p class="field-help">设备名只用于识别这台 Quest，不是权限凭据。</p>
+            </div>
+            <span id="quest-identity-badge" class="status-badge loading">读取中</span>
+          </div>
+          <label for="quest-client-id">设备名</label>
+          <input id="quest-client-id" type="text" maxlength="64" autocomplete="off" placeholder="quest-living-room" aria-describedby="quest-client-help" />
+          <p id="quest-client-help" class="field-help">建议使用容易辨认且不含空格的名称，例如 quest-living-room；它会作为服务端客户端标识参与校验。</p>
+          <p id="quest-identity-basic-status" class="field-status" role="status">正在读取绑定状态</p>
+          <button id="save-quest-identity-button" class="primary" type="button" aria-busy="false" disabled>保存并验证</button>
+        </div>
+        <details id="quest-identity-advanced" class="identity-advanced">
+          <summary id="quest-identity-advanced-toggle">高级身份设置 <span>仅首次绑定或更换身份时需要</span></summary>
+          <div class="identity-advanced-body">
+            <p class="field-help">这些字段对应 AstrBot 的真实消息身份。已由“序”托管时无需重复填写；留空会保留已有值。</p>
+            <label for="quest-bot-id">Bot ID</label>
+            <input id="quest-bot-id" type="text" maxlength="128" autocomplete="off" aria-describedby="quest-bot-help" />
+            <p id="quest-bot-help" class="field-help">只在“序”未托管且当前绑定尚未完成时填写，从 AstrBot 已启用的平台实例设置中获取。</p>
+            <label for="quest-user-id">主人用户 ID</label>
+            <input id="quest-user-id" type="text" maxlength="128" autocomplete="off" aria-describedby="quest-user-help" />
+            <p id="quest-user-help" class="field-help">填写与 Bot 同一私聊绑定的用户 ID；不要填写 Quest 设备编号。</p>
+            <label for="quest-api-key">具身客户端专用 AstrBot API Key</label>
+            <input id="quest-api-key" type="password" maxlength="4096" autocomplete="new-password" aria-describedby="quest-api-key-help" placeholder="已配置时可留空" />
+            <p id="quest-api-key-help" class="field-help">获取途径：AstrBot 管理后台 → 设置 → API Key 管理 → 创建 API Key。至少勾选 <code>plugin</code> 权限；密钥明文只显示一次，仅用于验证，不会回显。</p>
+          </div>
+        </details>
         <p id="quest-identity-status" class="field-status" role="status">尚未读取</p>
-        <button id="save-quest-identity-button" class="primary" type="button" aria-busy="false" disabled>保存并验证身份</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="identity-title">
@@ -347,6 +378,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.0.1-1"></script>
+  <script type="module" src="./app.js?v=1.0.2-1"></script>
 </body>
 </html>

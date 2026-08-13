@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.1-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.1-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.1-1")
+    assert '<script type="module" src="./app.js?v=1.0.2-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.2-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.2-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -84,6 +84,9 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "stt-status",
         "save-stt-button",
         "trusted-platform-id",
+        "quest-direct-dialogue-mode",
+        "quest-dialogue-mode-status",
+        "save-dialogue-mode-button",
         "save-platform-button",
         "persona-source-mode",
         "astrbot-persona-id",
@@ -93,6 +96,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "character-self-description",
         "save-persona-button",
         "quest-client-id",
+        "quest-identity-badge",
+        "quest-identity-basic-status",
+        "quest-identity-advanced",
+        "quest-identity-advanced-toggle",
+        "quest-client-help",
         "quest-bot-id",
         "quest-user-id",
         "quest-api-key",
@@ -126,6 +134,10 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         assert f'data-capability="{capability}"' in html
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
+    assert "direct_mode:" in js
+    assert "function renderDialogueMode" in js
+    assert "不进入 AstrBot EventBus" in html
+    assert "不需要 Bot/User" in html or "不需要 Bot/User" in js
     assert 'apiGet("pairing/stt-settings")' in js
     assert 'apiPost("pairing/stt-settings"' in js
     assert "load: loadSttSettings" in js
@@ -159,6 +171,13 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "已配置，可留空并重新验证" in js
     assert "由“序”统一管理" in js
     assert "本地精确绑定" in js
+    assert "尚未完成基础绑定，请展开高级身份设置补充首次验证材料" in js
+    assert "identity-advanced" in html
+    assert "基础绑定" in html
+    assert "高级身份设置" in html
+    assert "设备名只用于识别这台 Quest" in html
+    assert "Bot/User 由“序”根据自然人映射管理" in js
+    assert "advanced.open = true" in js
     assert 'apiGet("pairing/identity-candidates")' in js
     assert 'apiPost("pairing/identity-selection"' in js
     assert "不使用“情”的关系上下文" in js
@@ -197,6 +216,26 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "API 地址、密钥和原始 Provider 配置" in html
     assert "legacy_private_mimo_disabled" in js
     assert "不会自动切换其他模型" in js
+
+
+def test_operator_page_identity_defaults_to_basic_flow_and_keeps_sensitive_fields_advanced() -> (
+    None
+):
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    advanced_start = html.index('<details id="quest-identity-advanced"')
+    advanced_end = html.index("</details>", advanced_start)
+    basic = html[html.index('class="identity-basic-card"') : advanced_start]
+    advanced = html[advanced_start:advanced_end]
+
+    assert 'id="quest-bot-id"' not in basic
+    assert 'id="quest-user-id"' not in basic
+    assert 'id="quest-api-key"' not in basic
+    assert 'id="quest-client-id"' in basic
+    assert 'id="quest-bot-id"' in advanced
+    assert 'id="quest-user-id"' in advanced
+    assert 'id="quest-api-key"' in advanced
+    assert "<details" in html
+    assert 'type="password"' in advanced
 
 
 def test_operator_page_does_not_expose_secrets_or_private_relationship_storage() -> (

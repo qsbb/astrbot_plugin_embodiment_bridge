@@ -292,6 +292,7 @@ function renderOperatorSettings(settings) {
   }
   document.getElementById("save-model-button").disabled =
     select.disabled || !select.value;
+  renderDialogueMode(settings.dialogue_mode || {});
 
   const selectedPerson = String(operatorSettings.relationship_person_id || "");
   const personSelect = document.getElementById("relationship-person-select");
@@ -302,6 +303,45 @@ function renderOperatorSettings(settings) {
     personSelect.add(new Option("已选择 · " + selectedPerson, selectedPerson));
   }
   personSelect.value = selectedPerson;
+}
+
+function renderDialogueMode(mode) {
+  const direct = mode.direct_mode === true;
+  const checkbox = document.getElementById("quest-direct-dialogue-mode");
+  const button = document.getElementById("save-dialogue-mode-button");
+  const status = document.getElementById("quest-dialogue-mode-status");
+  if (!checkbox || !button || !status) return;
+  checkbox.checked = direct;
+  checkbox.disabled = operatorSettings.config_writable !== true;
+  button.disabled = checkbox.disabled || !String(operatorSettings.selected_id || "");
+  status.textContent = checkbox.disabled
+    ? "当前 AstrBot 配置对象不支持安全保存。"
+    : direct
+      ? "已启用：不需要 Bot/User，不进入 EventBus。"
+      : "未启用：正式 EventBus 模式需要服务端身份绑定。";
+  if (!operatorSettings.selected_available) {
+    status.textContent = "请先选择一个聊天 Provider；基础模式也需要模型。";
+  }
+}
+
+async function saveDialogueMode() {
+  const button = document.getElementById("save-dialogue-mode-button");
+  if (!setButtonBusy(button, true, "保存中…")) return;
+  try {
+    const response = await apiPost("pairing/operator-settings", {
+      chat_provider_id: document.getElementById("chat-provider-id").value,
+      direct_mode: document.getElementById("quest-direct-dialogue-mode").checked
+    });
+    renderDialogueMode(response.settings?.dialogue_mode || {});
+    toast(response.settings?.dialogue_mode?.direct_mode
+      ? "已启用基础对话模式；不进入 EventBus"
+      : "已切回正式 EventBus 模式");
+    await loadQuestIdentitySettings();
+  } catch (error) {
+    toast("模式保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+  }
 }
 
 function sttProviderLabel(provider) {
@@ -1334,6 +1374,9 @@ async function deletePersonaProfile(profile, button) {
 function renderQuestIdentitySettings(identity) {
   questIdentitySettings = identity || {};
   const writable = questIdentitySettings.config_writable === true;
+  const advanced = document.getElementById("quest-identity-advanced");
+  const badge = document.getElementById("quest-identity-badge");
+  const basicStatus = document.getElementById("quest-identity-basic-status");
   document.getElementById("quest-client-id").value =
     String(questIdentitySettings.client_id || "quest-living-room");
   document.getElementById("quest-bot-id").value =
@@ -1380,10 +1423,22 @@ function renderQuestIdentitySettings(identity) {
   }
   const validation = questIdentitySettings.binding_validation;
   const validationText = validation?.authorized === true ? "；保存后授权校验通过" : "";
+  const ready = questIdentitySettings.status === "ready";
+  badge.textContent = ready ? "已绑定" : "待完成";
+  badge.classList.toggle("ready", ready);
+  badge.classList.toggle("loading", !ready);
+  basicStatus.textContent = !writable
+    ? "当前配置对象不支持安全保存"
+    : ready
+      ? (questIdentitySettings.identity_source === "relationship"
+        ? "已绑定；Bot/User 由“序”根据自然人映射管理"
+        : "已绑定；Quest 可使用快速绑定码连接")
+      : "尚未完成基础绑定，请展开高级身份设置补充首次验证材料";
   document.getElementById("quest-identity-status").textContent = writable
     ? source + (missing.length ? `；待补充：${missing.join("、")}` : "；身份配置完整") + validationText
     : "当前 AstrBot 配置对象不支持安全保存";
   document.getElementById("save-quest-identity-button").disabled = !writable;
+  if (!ready && missing.length && advanced) advanced.open = true;
 }
 
 async function loadQuestIdentitySettings() {
@@ -1960,6 +2015,9 @@ function bindEvents() {
   document
     .getElementById("save-model-button")
     .addEventListener("click", saveModelSelection);
+  document
+    .getElementById("save-dialogue-mode-button")
+    .addEventListener("click", saveDialogueMode);
   document
     .getElementById("save-stt-button")
     .addEventListener("click", saveSttSettings);
