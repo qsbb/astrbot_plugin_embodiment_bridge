@@ -1,5 +1,6 @@
 let bridge = null;
 let operatorSettings = null;
+let fastActionSettings = null;
 let sttSettings = null;
 let personaSettings = null;
 let platformSettings = null;
@@ -324,6 +325,72 @@ function renderDialogueMode(mode) {
   }
 }
 
+function renderFastActionSettings(settings) {
+  fastActionSettings = settings || {};
+  const enabled = fastActionSettings.enabled !== false;
+  const writable = fastActionSettings.config_writable === true;
+  const providers = Array.isArray(fastActionSettings.providers)
+    ? fastActionSettings.providers
+    : [];
+  const selected = String(fastActionSettings.selected_id || "");
+  const checkbox = document.getElementById("fast-action-enabled");
+  const select = document.getElementById("fast-action-provider-id");
+  const button = document.getElementById("save-fast-action-button");
+  const status = document.getElementById("fast-action-status");
+
+  checkbox.checked = enabled;
+  checkbox.disabled = !writable;
+  select.replaceChildren(new Option("请选择快速动作模型", ""));
+  providers.forEach((provider) => {
+    const id = String(provider?.id || "");
+    if (id) select.add(new Option(providerLabel(provider), id));
+  });
+  if (selected && !providers.some((provider) => String(provider?.id || "") === selected)) {
+    select.add(new Option("已配置但当前不可用 · " + selected, selected));
+  }
+  select.value = selected;
+  select.disabled = !writable || !providers.length;
+  button.disabled = !writable || (enabled && !select.value);
+
+  const messages = {
+    ready: "快速动作模型已就绪，动作与主回复会并行处理。",
+    disabled: "快速动作已关闭；动作继续由 AstrBot 主回复链路处理。",
+    provider_not_configured: "功能默认开启，请选择一个响应较快的 Provider。",
+    selected_missing: "已选快速模型当前不可用；动作会回退主回复链路，不会自动换模型。",
+    llm_api_unavailable: "当前 AstrBot 版本未提供快速模型调用接口。"
+  };
+  const reason = String(
+    fastActionSettings.availability_reason || fastActionSettings.status || ""
+  );
+  status.textContent = writable
+    ? messages[reason] || (enabled
+      ? "快速动作状态未知，普通回复链路不受影响。"
+      : messages.disabled)
+    : "当前 AstrBot 配置对象不支持安全保存。";
+}
+
+async function saveFastActionSettings() {
+  const button = document.getElementById("save-fast-action-button");
+  if (!setButtonBusy(button, true, "正在保存…")) return;
+  try {
+    const enabled = document.getElementById("fast-action-enabled").checked;
+    const providerId = document.getElementById("fast-action-provider-id").value;
+    const response = await apiPost("pairing/fast-action-settings", {
+      enabled,
+      provider_id: providerId
+    });
+    renderFastActionSettings(response.fast_action);
+    toast(enabled
+      ? "异步快速动作已启用"
+      : "异步快速动作已关闭，动作将走主回复链路");
+  } catch (error) {
+    toast("快速动作设置保存失败：" + error.message, true);
+  } finally {
+    setButtonBusy(button, false);
+    renderFastActionSettings(fastActionSettings || {});
+  }
+}
+
 async function saveDialogueMode() {
   const button = document.getElementById("save-dialogue-mode-button");
   if (!setButtonBusy(button, true, "保存中…")) return;
@@ -501,6 +568,12 @@ function renderPersonaSettings(persona) {
 async function loadOperatorSettings() {
   const response = await apiGet("pairing/operator-settings");
   renderOperatorSettings(response.settings);
+  return true;
+}
+
+async function loadFastActionSettings() {
+  const response = await apiGet("pairing/fast-action-settings");
+  renderFastActionSettings(response.fast_action);
   return true;
 }
 
@@ -1686,6 +1759,15 @@ function diagnosticReasonLabel(code) {
     audio_http_request_failed: "音频上传请求失败",
     turn_failed: "对话生成失败",
     interaction_failed: "触碰交互决策失败",
+    fast_action_disabled: "异步快速动作已关闭",
+    fast_action_provider_not_configured: "尚未选择快速动作模型",
+    fast_action_selected_missing: "已选快速动作模型当前不可用",
+    fast_action_provider_catalog_unavailable: "快速动作模型目录当前不可用",
+    fast_action_timeout: "快速动作模型等待超时，已使用本地说话动作兜底",
+    fast_action_failed: "快速动作决策失败，普通回复不受影响",
+    fast_action_enabled: "已由独立快速动作模型处理",
+    fast_action_selected: "快速动作已先于主回复选定",
+    reply_path_selected: "主回复链路已先选定动作",
     conversion_timeout: "人格转换模型等待超时",
     conversion_first_chunk_timeout: "人格转换模型首个流块等待超时",
     conversion_stream_idle_timeout: "人格转换模型输出流长时间无新数据",
@@ -1719,6 +1801,7 @@ function diagnosticStageLabel(value) {
     microphone: "麦克风",
     stt: "语音识别",
     message_pipeline: "AstrBot/EventBus",
+    action: "角色动作",
     eventbus: "AstrBot/EventBus",
     llm: "模型生成",
     tts: "语音合成",
@@ -1752,6 +1835,13 @@ function diagnosticEventLabel(value) {
     "message_pipeline.completed": "AstrBot EventBus 返回",
     "message_pipeline.blocked": "AstrBot EventBus 被阻止",
     "message_pipeline.fallback": "消息链路发生降级",
+    "fast_action.started": "快速动作模型开始判断",
+    "fast_action.completed": "快速动作判断完成",
+    "fast_action.skipped": "快速动作已回退或跳过",
+    "fast_action.error": "快速动作判断失败",
+    "fast_action.settings_updated": "快速动作设置已更新",
+    "avatar.action.tool_skipped": "主回复动作工具已切换",
+    "avatar.intent.skipped": "重复动作意图已抑制",
     "llm.completed": "模型生成完成",
     "llm.error": "模型生成失败",
     "tts.completed": "语音合成完成",
@@ -1807,6 +1897,9 @@ function diagnosticStatusLabel(value) {
     timeout: "超时",
     disconnected: "已断开",
     cancelled: "已取消",
+    no_action: "无需动作",
+    selected: "已选择",
+    superseded: "已由更早结果接管",
     closed: "已关闭"
   };
   return labels[String(value || "")] || String(value || "状态未知");
@@ -2016,6 +2109,25 @@ function bindEvents() {
     .getElementById("save-model-button")
     .addEventListener("click", saveModelSelection);
   document
+    .getElementById("fast-action-enabled")
+    .addEventListener("change", () => {
+      const enabled = document.getElementById("fast-action-enabled").checked;
+      document.getElementById("save-fast-action-button").disabled =
+        fastActionSettings?.config_writable !== true ||
+        (enabled && !document.getElementById("fast-action-provider-id").value);
+    });
+  document
+    .getElementById("fast-action-provider-id")
+    .addEventListener("change", () => {
+      const enabled = document.getElementById("fast-action-enabled").checked;
+      document.getElementById("save-fast-action-button").disabled =
+        fastActionSettings?.config_writable !== true ||
+        (enabled && !document.getElementById("fast-action-provider-id").value);
+    });
+  document
+    .getElementById("save-fast-action-button")
+    .addEventListener("click", saveFastActionSettings);
+  document
     .getElementById("save-dialogue-mode-button")
     .addEventListener("click", saveDialogueMode);
   document
@@ -2176,6 +2288,7 @@ function clearStartupError() {
 const INITIAL_DATA_SECTIONS = [
   { key: "service", label: "服务状态", load: () => loadServiceStatus() },
   { key: "operator", label: "聊天模型", load: loadOperatorSettings },
+  { key: "fast-action", label: "快速动作", load: loadFastActionSettings },
   { key: "stt", label: "语音识别", load: loadSttSettings },
   { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
   { key: "persona", label: "实时人格", load: loadPersonaSettings },
@@ -2186,6 +2299,7 @@ const INITIAL_DATA_SECTIONS = [
 function markInitialSectionFailed(key) {
   const messages = {
     operator: ["model-status", "聊天模型读取失败，可单独重试。"],
+    "fast-action": ["fast-action-status", "快速动作设置读取失败，可单独重试。"],
     stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
     persona: ["persona-status", "实时人格读取失败，可单独重试。"],

@@ -503,6 +503,7 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
         bot_id="bound-bot",
         group_id="bound-group",
         protected_context_authorized=True,
+        fast_action_active=True,
         spatial_context={
             "schema_version": 1,
             "revision": 3,
@@ -516,6 +517,14 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
             "scene_capture_available": True,
             "occlusion_available": False,
         },
+        action_facts=[
+            {
+                "action": "wave",
+                "status": "completed",
+                "reason_code": "completed",
+                "duration_ms": 1_250,
+            }
+        ],
     )
 
     assert isinstance(message, FakeAstrMessageEvent)
@@ -531,4 +540,13 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert (
         message.get_extra("embodiment_bridge.protected_context_authorized") is True
     )
+    assert message.get_extra("embodiment_bridge.fast_action_active") is True
     assert message.get_extra("embodiment_bridge.spatial_context")["revision"] == 3
+    assert message.get_extra("embodiment_bridge.action_facts") == [
+        {
+            "action": "wave",
+            "status": "completed",
+            "reason_code": "completed",
+            "duration_ms": 1_250,
+        }
+    ]

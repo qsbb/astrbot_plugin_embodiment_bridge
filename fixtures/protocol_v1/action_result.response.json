@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "data": {
+    "protocol_version": "1.0",
+    "session_id": "smoke-session",
+    "turn_id": "i:e9",
+    "action_id": "a_contract-action",
+    "action": "step_back",
+    "lifecycle_status": "accepted",
+    "terminal": false,
+    "idempotent": false
+  }
+}

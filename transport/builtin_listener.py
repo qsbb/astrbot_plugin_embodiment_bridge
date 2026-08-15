@@ -40,6 +40,7 @@ _FIXED_PROXY_ROUTES = {
     ("POST", f"{PUBLIC_API_PATH}/audio/chunk"),
     ("POST", f"{PUBLIC_API_PATH}/audio/end"),
     ("POST", f"{PUBLIC_API_PATH}/interaction"),
+    ("POST", f"{PUBLIC_API_PATH}/action/result"),
     ("POST", f"{PUBLIC_API_PATH}/interrupt"),
     ("POST", f"{PUBLIC_API_PATH}/session/close"),
     ("POST", f"{PUBLIC_API_PATH}/spatial/context"),

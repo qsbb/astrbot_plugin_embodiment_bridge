@@ -47,6 +47,13 @@ class ChatProviderSelectionRequest(BaseModel):
     direct_mode: bool | None = None
 
 
+class FastActionSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enabled: bool
+    provider_id: str = Field(default="", max_length=256)
+
+
 class STTProviderSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -240,6 +247,18 @@ class PairingHttpApi:
                 self.save_operator_settings,
                 ["POST"],
                 "Save Quest chat model selection",
+            ),
+            (
+                "pairing/fast-action-settings",
+                self.fast_action_settings_overview,
+                ["GET"],
+                "Read safe fast avatar-action model settings",
+            ),
+            (
+                "pairing/fast-action-settings",
+                self.save_fast_action_settings,
+                ["POST"],
+                "Save the optional fast avatar-action model",
             ),
             (
                 "pairing/stt-settings",
@@ -498,6 +517,30 @@ class PairingHttpApi:
             )
         except Exception as exc:
             return self._error(exc, "stt_settings_overview")
+
+    async def fast_action_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "fast_action": self.operator_settings.fast_action_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "fast_action_settings_overview")
+
+    async def save_fast_action_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(FastActionSettingsRequest)
+            settings = await self.operator_settings.save_fast_action_settings(
+                enabled=payload.enabled,
+                provider_id=payload.provider_id,
+            )
+            return _json_no_store({"success": True, "fast_action": settings})
+        except Exception as exc:
+            return self._error(exc, "save_fast_action_settings")
 
     async def save_stt_settings(self) -> Any:
         try:

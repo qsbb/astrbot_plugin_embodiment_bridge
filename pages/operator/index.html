@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.0.3-1" />
+  <link rel="stylesheet" href="./style.css?v=1.0.4-1" />
 </head>
 <body>
   <main class="shell">
@@ -104,6 +104,22 @@
         </select>
         <p id="model-status" class="field-status" role="status">尚未读取</p>
         <button id="save-model-button" class="primary" type="button" aria-busy="false" disabled>保存决策模型</button>
+      </section>
+
+      <section class="setting-panel" aria-labelledby="fast-action-title">
+        <span class="section-label">异步动作</span>
+        <h2 id="fast-action-title">快速动作决策</h2>
+        <p>使用独立的快速 Provider 并行判断角色动作，不等待主回复链路。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由原有 AstrBot 主回复链路处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地 talk/idle，避免两个模型重复决策。</p>
+        <label class="mode-switch" for="fast-action-enabled">
+          <input id="fast-action-enabled" type="checkbox" checked />
+          <span>启用异步快速动作</span>
+        </label>
+        <label for="fast-action-provider-id">快速 Provider</label>
+        <select id="fast-action-provider-id" disabled>
+          <option value="">正在读取可用模型</option>
+        </select>
+        <p id="fast-action-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-fast-action-button" class="primary" type="button" aria-busy="false" disabled>保存快速动作设置</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="stt-provider-title">
@@ -378,6 +394,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.0.3-1"></script>
+  <script type="module" src="./app.js?v=1.0.4-1"></script>
 </body>
 </html>

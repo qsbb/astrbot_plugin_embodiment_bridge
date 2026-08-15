@@ -14,6 +14,7 @@ from ..adapters.astrbot_pipeline import (
     MessagePipelineUnavailable,
 )
 from ..adapters.environment import CachedEnvironmentAdapter
+from ..adapters.fast_action import FastActionDecisionAdapter, FastActionUnavailable
 from ..adapters.identity import (
     ProtectedContextDecision,
     QuestSessionAuthorizationAdapter,
@@ -32,8 +33,13 @@ from ..adapters.voice_hub_tts import VoiceHubTTSAdapter
 from .interaction_policy import InteractionPolicy
 from .models import (
     PROTOCOL_VERSION,
+    AvatarIntent,
+    Emotion,
+    Gesture,
     InteractionEvent,
+    LookAt,
     ModelDecision,
+    ProposedIntent,
     SessionStartRequest,
     TurnStartRequest,
 )
@@ -103,6 +109,7 @@ class TurnOrchestrator:
         runtime: SeriesRuntimeAdapter | None = None,
         voice_audio: VoiceHubTTSAdapter | None = None,
         message_pipeline: AstrBotMessagePipelineAdapter | None = None,
+        fast_action: FastActionDecisionAdapter | None = None,
         allow_direct_provider_fallback: bool = True,
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
@@ -121,6 +128,7 @@ class TurnOrchestrator:
         self.runtime = runtime
         self.voice_audio = voice_audio
         self.message_pipeline = message_pipeline
+        self.fast_action = fast_action
         self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
         self.server_timing_enabled = bool(server_timing_enabled)
@@ -292,7 +300,14 @@ class TurnOrchestrator:
             )
             if not emitted:
                 return
-            await self._decide_and_deliver(session, turn, text, interaction=None)
+            await self._run_reply_with_fast_action(
+                session,
+                turn,
+                text,
+                lambda: self._decide_and_deliver(
+                    session, turn, text, interaction=None
+                ),
+            )
         except asyncio.CancelledError:
             turn.server_timing.finish_stt()
             raise
@@ -351,7 +366,14 @@ class TurnOrchestrator:
         text: str,
     ) -> None:
         try:
-            await self._decide_and_deliver(session, turn, text, interaction=None)
+            await self._run_reply_with_fast_action(
+                session,
+                turn,
+                text,
+                lambda: self._decide_and_deliver(
+                    session, turn, text, interaction=None
+                ),
+            )
         except asyncio.CancelledError:
             raise
         except MessagePipelineEmpty as exc:
@@ -422,6 +444,159 @@ class TurnOrchestrator:
                 turn,
                 "interaction_failed",
                 "Interaction decision failed",
+            )
+
+    async def _run_reply_with_fast_action(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        user_text: str,
+        operation: Callable[[], Coroutine[Any, Any, None]],
+    ) -> None:
+        """Run the reply path while an optional action-only LLM runs beside it.
+
+        The action task never owns reply text, EventBus dispatch, history, STT,
+        or TTS. When it is active, it is the only model-driven action source;
+        the regular reply path waits for this already-parallel task before
+        emitting a deterministic talk/idle fallback.
+        """
+        fast_task: asyncio.Task[None] | None = None
+        adapter = self.fast_action
+        if adapter is not None and adapter.available:
+            turn.fast_action_active = True
+            fast_task = asyncio.create_task(
+                self._run_fast_action(session, turn, user_text),
+                name=f"embodiment-bridge:fast-action:{session.session_id}:{turn.turn_id}",
+            )
+            turn.fast_action_task = fast_task
+        completed = False
+        try:
+            await operation()
+            completed = True
+        finally:
+            # A failed/cancelled reply must not leave an action behind. On a
+            # successful reply, the detached task is allowed to finish while
+            # the same session remains current; its errors are self-contained.
+            if fast_task is not None and not completed and not fast_task.done():
+                fast_task.cancel()
+                await asyncio.gather(fast_task, return_exceptions=True)
+
+    async def _run_fast_action(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        user_text: str,
+    ) -> None:
+        adapter = self.fast_action
+        if adapter is None or not adapter.available:
+            return
+        started = time.perf_counter()
+        self._diagnostic(
+            "fast_action.started",
+            component="action",
+            phase="parallel",
+            status="processing",
+        )
+        try:
+            history = await self.sessions.history_snapshot(session)
+            proposed = await adapter.decide(user_text=user_text, history=history)
+            duration_ms = (time.perf_counter() - started) * 1000
+            if proposed is None:
+                self._diagnostic(
+                    "fast_action.completed",
+                    component="action",
+                    phase="parallel",
+                    status="no_action",
+                    duration_ms=duration_ms,
+                )
+                return
+            if not self.sessions.is_current(session, turn.turn_id, turn.generation):
+                self._diagnostic(
+                    "fast_action.skipped",
+                    component="action",
+                    phase="parallel",
+                    status="cancelled",
+                    reason_code="turn_not_current",
+                    operation=proposed.gesture.value,
+                    duration_ms=duration_ms,
+                )
+                return
+            if turn.reply_ended:
+                self._diagnostic(
+                    "fast_action.skipped",
+                    component="action",
+                    phase="parallel",
+                    status="superseded",
+                    reason_code="reply_already_completed",
+                    operation=proposed.gesture.value,
+                    duration_ms=duration_ms,
+                )
+                return
+            # The reply path awaits this task before selecting its local
+            # talk/idle fallback, so the fast provider is the sole model-driven
+            # action owner whenever it is active.
+            if turn.intent_emitted:
+                self._diagnostic(
+                    "fast_action.skipped",
+                    component="action",
+                    phase="parallel",
+                    status="superseded",
+                    reason_code="reply_path_selected",
+                    operation=proposed.gesture.value,
+                    duration_ms=duration_ms,
+                )
+                return
+            turn.fast_action_selected = True
+            turn.intent_emitted = True
+            turn.primary_intent_gesture = proposed.gesture.value
+            decision = ModelDecision(
+                should_reply=False,
+                reply_text="",
+                intent=proposed,
+            )
+            intent = self.policy.apply(
+                session_id=session.session_id,
+                turn_id=turn.turn_id,
+                decision=decision,
+                interaction=None,
+                relationship=None,
+            )
+            intent, emitted = await self._emit_avatar_intent(session, turn, intent)
+            turn.fast_action_intent = intent
+            if not emitted:
+                turn.fast_action_selected = False
+                turn.intent_emitted = False
+                turn.fast_action_intent = None
+            self._diagnostic(
+                "fast_action.completed",
+                component="action",
+                phase="parallel",
+                status="selected" if emitted else "dropped",
+                operation=intent.gesture.value,
+                reason_code=intent.reason_code,
+                duration_ms=duration_ms,
+                action_source="fast_provider",
+            )
+        except asyncio.CancelledError:
+            raise
+        except FastActionUnavailable as exc:
+            self._diagnostic(
+                "fast_action.skipped",
+                component="action",
+                phase="parallel",
+                status="unavailable",
+                reason_code=str(exc)[:64] or "fast_action_unavailable",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+        except Exception as exc:
+            self._diagnostic(
+                "fast_action.error",
+                component="action",
+                phase="parallel",
+                status="error",
+                reason_code="fast_action_failed",
+                error_type=type(exc).__name__,
+                duration_ms=(time.perf_counter() - started) * 1000,
             )
 
     async def _decide_and_deliver(
@@ -509,9 +684,15 @@ class TurnOrchestrator:
                         phase="eventbus",
                         status="processing",
                     )
+                    action_facts = await self.sessions.action_facts_snapshot(
+                        session,
+                        exclude_turn_id=turn.turn_id,
+                    )
                     decision = await self.message_pipeline.generate(
                         session=session,
                         user_text=user_text,
+                        fast_action_active=turn.fast_action_active,
+                        action_facts=action_facts,
                     )
                     operation = "astrbot_event_bus"
                     self._diagnostic(
@@ -606,26 +787,64 @@ class TurnOrchestrator:
         interaction: InteractionEvent | None,
         relationship: dict[str, Any] | None,
     ) -> None:
-        intent = self.policy.apply(
-            session_id=session.session_id,
-            turn_id=turn.turn_id,
-            decision=decision,
-            interaction=interaction,
-            relationship=relationship,
-        )
-        intent_emitted = await self._emit(session, turn, intent.model_dump(mode="json"))
-        self._diagnostic(
-            "avatar.intent.emitted" if intent_emitted else "avatar.intent.dropped",
-            component="action",
-            operation=intent.gesture.value,
-            status="completed" if intent_emitted else "cancelled",
-            reason_code=(intent.reason_code if intent_emitted else "turn_not_current"),
-            emotion=intent.emotion.value,
-            gesture=intent.gesture.value,
-            look_at=intent.look_at.value,
-            intensity=intent.intensity,
-            duration_ms=intent.duration_ms,
-        )
+        fast_task = turn.fast_action_task
+        if turn.fast_action_active and fast_task is not None and not fast_task.done():
+            await fast_task
+        if turn.fast_action_selected and turn.fast_action_intent is not None:
+            # The parallel action task already emitted the only intent event.
+            # Keep the regular model's reply text and TTS, but do not send a
+            # second action that could overwrite the fast selection in Unity.
+            intent = turn.fast_action_intent
+            intent_emitted = True
+            self._diagnostic(
+                "avatar.intent.skipped",
+                component="action",
+                operation="main_reply_action",
+                status="superseded",
+                reason_code="fast_action_selected",
+                action_source="main_reply_suppressed",
+            )
+        else:
+            action_decision = (
+                self._fast_action_reply_fallback(decision)
+                if turn.fast_action_active
+                else decision
+            )
+            intent = self.policy.apply(
+                session_id=session.session_id,
+                turn_id=turn.turn_id,
+                decision=action_decision,
+                interaction=interaction,
+                relationship=relationship,
+            )
+            # The fast task has already completed, so this deterministic
+            # fallback cannot race another intent into the event queue.
+            turn.intent_emitted = True
+            turn.primary_intent_gesture = intent.gesture.value
+            intent, intent_emitted = await self._emit_avatar_intent(
+                session,
+                turn,
+                intent,
+            )
+            self._diagnostic(
+                "avatar.intent.emitted" if intent_emitted else "avatar.intent.dropped",
+                component="action",
+                operation=intent.gesture.value,
+                status="completed" if intent_emitted else "cancelled",
+                reason_code=(
+                    intent.reason_code if intent_emitted else "turn_not_current"
+                ),
+                emotion=intent.emotion.value,
+                gesture=intent.gesture.value,
+                look_at=intent.look_at.value,
+                intensity=intent.intensity,
+                duration_ms=intent.duration_ms,
+                **(
+                    {"action_source": "fast_provider_fallback"}
+                    if turn.fast_action_active
+                    else {}
+                ),
+            )
         if not intent_emitted:
             return
 
@@ -715,6 +934,7 @@ class TurnOrchestrator:
         }
         if self.server_timing_enabled:
             reply_end_payload["server_timing"] = turn.server_timing.snapshot()
+        turn.reply_ended = True
         await self._emit(
             session,
             turn,
@@ -729,6 +949,29 @@ class TurnOrchestrator:
             audio_sent=audio_sent,
             bytes=audio_bytes,
             chunks=audio_chunks,
+        )
+
+    @staticmethod
+    def _fast_action_reply_fallback(decision: ModelDecision) -> ModelDecision:
+        """Build a non-model action when the fast selector chose no action.
+
+        The normal reply text is preserved, but its action fields are never
+        consumed while the dedicated action provider owns the turn.
+        """
+        text = decision.reply_text.strip() if decision.should_reply else ""
+        speaking = bool(text)
+        duration_ms = min(8_000, max(1_200, len(text) * 85)) if speaking else 0
+        return ModelDecision(
+            should_reply=decision.should_reply,
+            reply_text=decision.reply_text,
+            intent=ProposedIntent(
+                emotion=Emotion.NEUTRAL,
+                gesture=Gesture.TALK if speaking else Gesture.IDLE,
+                look_at=LookAt.USER if speaking else LookAt.NONE,
+                intensity=0.38 if speaking else 0.0,
+                duration_ms=duration_ms,
+                reason_code="fast_action_no_action",
+            ),
         )
 
     @staticmethod
@@ -896,6 +1139,7 @@ class TurnOrchestrator:
             "astrbot_message_pipeline": self.message_pipeline.status_snapshot()
             if self.message_pipeline is not None
             else {"enabled": False, "available": False, "status": "disabled"},
+            "fast_action": self._fast_action_status(),
             "runtime": self.runtime.snapshot
             if self.runtime is not None
             else {"status": "disabled"},
@@ -905,6 +1149,31 @@ class TurnOrchestrator:
                 "knowledge_private_scope": True,
                 "environment_realtime_private_methods": True,
             },
+        }
+
+    def _fast_action_status(self) -> dict[str, Any]:
+        adapter = self.fast_action
+        if adapter is None:
+            return {
+                "enabled": False,
+                "available": False,
+                "availability_reason": "adapter_unavailable",
+                "status": "disabled",
+                "model_selected": False,
+                "last_duration_ms": 0,
+            }
+        snapshot = adapter.snapshot()
+        return {
+            "enabled": snapshot.get("enabled") is True,
+            "available": snapshot.get("available") is True,
+            "availability_reason": str(
+                snapshot.get("availability_reason") or "unavailable"
+            )[:64],
+            "status": str(snapshot.get("status") or "unknown")[:32],
+            "model_selected": snapshot.get("selected") is True,
+            "last_duration_ms": max(
+                0, min(15_000, int(snapshot.get("last_duration_ms") or 0))
+            ),
         }
 
     async def _emit(
@@ -925,6 +1194,27 @@ class TurnOrchestrator:
             generation=turn.generation,
             payload=event,
         )
+
+    async def _emit_avatar_intent(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        intent: AvatarIntent,
+    ) -> tuple[AvatarIntent, bool]:
+        action_id = await self.sessions.plan_action(
+            session,
+            turn_id=turn.turn_id,
+            action=intent.gesture,
+        )
+        if action_id is not None:
+            intent = intent.model_copy(update={"action_id": action_id})
+        payload = intent.model_dump(mode="json")
+        if action_id is None:
+            payload.pop("action_id", None)
+        emitted = await self._emit(session, turn, payload)
+        if not emitted:
+            await self.sessions.discard_action_plan(session, action_id)
+        return intent, emitted
 
     async def _emit_error(
         self,
@@ -966,6 +1256,7 @@ class TurnOrchestrator:
         }
         if self.server_timing_enabled:
             reply_end_payload["server_timing"] = turn.server_timing.snapshot()
+        turn.reply_ended = True
         return await self._emit(
             session,
             turn,
@@ -1062,6 +1353,7 @@ class TurnOrchestrator:
                     self.environment,
                     self.runtime,
                     self.message_pipeline,
+                    self.fast_action,
                 )
                 if adapter is not None
             ),

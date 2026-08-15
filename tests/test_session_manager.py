@@ -244,6 +244,63 @@ def test_interaction_turns_are_bounded_and_do_not_replace_primary() -> None:
     asyncio.run(scenario())
 
 
+def test_fast_action_task_is_cancelled_by_every_turn_lifecycle_boundary() -> None:
+    async def blocker(started: asyncio.Event, cancelled: asyncio.Event) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def attach(turn: object) -> tuple[asyncio.Task[None], asyncio.Event]:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        task = asyncio.create_task(blocker(started, cancelled))
+        turn.fast_action_task = task
+        await asyncio.wait_for(started.wait(), timeout=1)
+        return task, cancelled
+
+    async def scenario() -> None:
+        manager = SessionManager(max_sessions=4)
+        session = await manager.start_session(session_request("s1"), "owner")
+
+        replaced = await manager.begin_turn(session, "replace-me", cancel_previous=True)
+        replaced_task, replaced_cancelled = await attach(replaced)
+        current = await manager.begin_turn(session, "cancel-me", cancel_previous=True)
+        await asyncio.wait_for(replaced_cancelled.wait(), timeout=1)
+        await asyncio.gather(replaced_task, return_exceptions=True)
+
+        current_task, current_cancelled = await attach(current)
+        assert await manager.cancel_current(session, current.turn_id) is True
+        await asyncio.wait_for(current_cancelled.wait(), timeout=1)
+        await asyncio.gather(current_task, return_exceptions=True)
+
+        close_session = await manager.start_session(
+            session_request("s2", "quest-b"), "owner-two"
+        )
+        close_turn = await manager.begin_turn(
+            close_session, "close-me", cancel_previous=True
+        )
+        close_task, close_cancelled = await attach(close_turn)
+        await manager.close_session(close_session)
+        assert close_cancelled.is_set()
+        assert close_task.cancelled()
+
+        terminate_session = await manager.start_session(
+            session_request("s3", "quest-c"), "owner-three"
+        )
+        terminate_turn = await manager.begin_turn(
+            terminate_session, "terminate-me", cancel_previous=True
+        )
+        terminate_task, terminate_cancelled = await attach(terminate_turn)
+        await manager.terminate()
+        assert terminate_cancelled.is_set()
+        assert terminate_task.cancelled()
+
+    asyncio.run(scenario())
+
+
 def test_audio_sequence_size_and_format_are_enforced() -> None:
     async def scenario() -> None:
         manager = SessionManager(max_audio_bytes=6_400, max_audio_chunk_bytes=3_200)

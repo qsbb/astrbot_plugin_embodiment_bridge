@@ -16,6 +16,14 @@
       "duration_unit": "milliseconds",
       "duration_minimum": 0,
       "duration_maximum": 86400000
+    },
+    "action_receipts@1.0": {
+      "intent_field": "avatar.intent.action_id",
+      "receipt_route": "/action/result",
+      "passive_gestures_without_receipts": ["idle", "talk"],
+      "terminal_facts": ["completed", "rejected", "interrupted"],
+      "storage": "bounded_session_memory",
+      "grants_permission": false
     }
   },
   "base_path": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge",
@@ -51,6 +59,8 @@
     {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+      {"method": "GET", "path": "/pairing/fast-action-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
+      {"method": "POST", "path": "/pairing/fast-action-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "POST", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
       {"method": "GET", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
@@ -83,6 +93,7 @@
     {"method": "POST", "path": "/audio/chunk", "success_status": 202},
     {"method": "POST", "path": "/audio/end", "success_status": 202},
     {"method": "POST", "path": "/interaction", "success_status": 202},
+    {"method": "POST", "path": "/action/result", "success_status": 200},
     {"method": "POST", "path": "/interrupt", "success_status": 200},
     {"method": "POST", "path": "/session/close", "success_status": 200},
     {"method": "POST", "path": "/spatial/context", "success_status": 200},
@@ -125,7 +136,28 @@
       "speaking"
     ],
     "interaction_phase": ["start", "update", "end", "cancel"],
-    "hand": ["left", "right", "both", "none"]
+    "hand": ["left", "right", "both", "none"],
+    "action_result_status": [
+      "accepted",
+      "started",
+      "completed",
+      "rejected",
+      "interrupted"
+    ],
+    "action_result_reason": [
+      "accepted",
+      "started",
+      "completed",
+      "unsupported",
+      "busy",
+      "blocked",
+      "tracking_lost",
+      "asset_missing",
+      "invalid_state",
+      "superseded",
+      "user_interrupted",
+      "system_interrupted"
+    ]
   },
   "event_order": {
     "speech_success": [
@@ -237,6 +269,22 @@
     "contains_geometry_or_identifiers": false,
     "grants_permission": false
   },
+  "action_result_semantics": {
+    "server_generated_action_id": true,
+    "transitions": {
+      "planned": ["accepted", "rejected", "interrupted"],
+      "accepted": ["started", "rejected", "interrupted"],
+      "started": ["completed", "rejected", "interrupted"],
+      "completed": [],
+      "rejected": [],
+      "interrupted": []
+    },
+    "exact_duplicate_is_idempotent": true,
+    "changed_receipt_replay_is_conflict": true,
+    "terminal_fact_injection_scope": "later_authorized_embodiment_eventbus_turns_only",
+    "planned_is_fact": false,
+    "grants_permission": false
+  },
   "pairing_bootstrap_semantics": {
     "register_web_api_anonymous_supported": false,
     "page_create_authentication": "astrbot_dashboard",
@@ -284,6 +332,10 @@
     {"status": 403, "code": "session_ownership_mismatch"},
     {"status": 404, "code": "session_not_found"},
     {"status": 409, "code": "session_conflict"},
+    {"status": 409, "code": "action_receipt_replay"},
+    {"status": 409, "code": "action_plan_stale"},
+    {"status": 409, "code": "action_mismatch"},
+    {"status": 409, "code": "action_transition_invalid"},
     {"status": 413, "code": "payload_too_large"},
     {"status": 415, "code": "unsupported_media_type"},
     {"status": 422, "code": "schema_validation_failed"},

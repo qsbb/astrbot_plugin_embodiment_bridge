@@ -178,6 +178,38 @@ class SttSettingsStub:
         self.provider_id = provider_id
 
 
+class FastActionSettingsStub:
+    def __init__(self, *, enabled: bool = True, provider_id: str = "") -> None:
+        self.enabled = enabled
+        self.provider_id = provider_id
+
+    def configure(
+        self,
+        *,
+        enabled: bool | None = None,
+        provider_id: str | None = None,
+    ) -> None:
+        if enabled is not None:
+            self.enabled = enabled
+        if provider_id is not None:
+            self.provider_id = provider_id
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "available": bool(self.enabled and self.provider_id),
+            "availability_reason": (
+                "ready"
+                if self.enabled and self.provider_id
+                else "disabled"
+                if not self.enabled
+                else "provider_not_configured"
+            ),
+            "selected": bool(self.provider_id),
+            "selected_id": self.provider_id,
+        }
+
+
 class RelationshipStub:
     def __init__(self, person_id: str = "") -> None:
         self.person_id = person_id
@@ -337,6 +369,56 @@ def test_astrbot_4265_sync_config_enables_all_operator_workflows() -> None:
         saved = await settings.save_chat_provider_id("model-b")
         assert saved["selected_id"] == "model-b"
         assert config.saves == [{"chat_provider_id": "model-b"}]
+
+    asyncio.run(scenario())
+
+
+def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub(
+            {"fast_action_enabled": True, "fast_action_provider_id": "model-a"}
+        )
+        settings = build_settings(config=config, selected="model-a")
+        fast = FastActionSettingsStub(enabled=True, provider_id="model-a")
+        settings.fast_action = fast
+
+        saved = await settings.save_fast_action_settings(
+            enabled=True,
+            provider_id="model-b",
+        )
+        assert saved["enabled"] is True
+        assert saved["selected_id"] == "model-b"
+        assert fast.provider_id == "model-b"
+        assert config.saves[-1] == {
+            "fast_action_enabled": True,
+            "fast_action_provider_id": "model-b",
+        }
+        assert {item["id"] for item in saved["providers"]} == {
+            "model-a",
+            "model-b",
+        }
+
+        disabled = await settings.save_fast_action_settings(
+            enabled=False,
+            provider_id="",
+        )
+        assert disabled["enabled"] is False
+        assert disabled["selected_id"] == ""
+
+        with pytest.raises(
+            OperatorSettingsError,
+            match="快速动作处理前必须选择模型",
+        ):
+            await settings.save_fast_action_settings(enabled=True, provider_id="")
+
+        with pytest.raises(
+            OperatorSettingsError,
+            match="不存在或当前不可用",
+        ):
+            await settings.save_fast_action_settings(
+                enabled=True,
+                provider_id="missing",
+            )
 
     asyncio.run(scenario())
 

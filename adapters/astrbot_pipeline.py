@@ -12,10 +12,13 @@ from ..core.models import (
     LookAt,
     ModelDecision,
     ProposedIntent,
+    VerifiedActionFacts,
 )
 from ..core.avatar_action_tool import read_selected_intent, stage_explicit_action
 from ..core.plugin_identity import (
+    BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
+    BRIDGE_FAST_ACTION_ACTIVE,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
@@ -91,6 +94,8 @@ class AstrBotMessagePipelineAdapter:
         *,
         session: SessionState,
         user_text: str,
+        fast_action_active: bool = False,
+        action_facts: list[dict[str, Any]] | None = None,
     ) -> ModelDecision:
         started = time.perf_counter()
         self.last_error = ""
@@ -137,6 +142,8 @@ class AstrBotMessagePipelineAdapter:
             group_id=session.group_id,
             protected_context_authorized=session.protected_context_authorized,
             spatial_context=_session_spatial_context(session),
+            fast_action_active=fast_action_active,
+            action_facts=action_facts,
         )
         try:
             queue_getter().put_nowait(event)
@@ -289,6 +296,8 @@ def _build_capture_event(
     group_id: str,
     protected_context_authorized: bool = False,
     spatial_context: dict[str, Any] | None = None,
+    fast_action_active: bool = False,
+    action_facts: list[dict[str, Any]] | None = None,
 ) -> Any:
     # Imports stay lazy so plugin discovery still degrades cleanly on older
     # AstrBot builds that do not expose the complete EventBus ABI.
@@ -385,12 +394,25 @@ def _build_capture_event(
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
     event.set_extra(BRIDGE_EVENT_MARKER, True)
+    event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
     event.set_extra(
         BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
         bool(protected_context_authorized),
     )
     if protected_context_authorized and spatial_context is not None:
         event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))
+    if protected_context_authorized and action_facts:
+        try:
+            verified_facts = VerifiedActionFacts.model_validate(
+                {"facts": action_facts}
+            )
+        except (TypeError, ValueError):
+            verified_facts = None
+        if verified_facts is not None and verified_facts.facts:
+            event.set_extra(
+                BRIDGE_ACTION_FACTS,
+                verified_facts.model_dump(mode="json")["facts"],
+            )
     # Deprecated compatibility markers are emitted for one major release so
     # existing series plugins can migrate without losing authorized context.
     event.set_extra(LEGACY_BRIDGE_EVENT_MARKER, True)

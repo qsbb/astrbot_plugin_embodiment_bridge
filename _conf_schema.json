@@ -144,6 +144,27 @@
     "obvious_hint": true,
     "default": ""
   },
+  "fast_action_enabled": {
+    "description": "启用独立的异步快速动作决策",
+    "type": "bool",
+    "hint": "默认开启。它只用来判断是否执行动作，不生成回复，也不绕过 AstrBot EventBus；未选择快速模型时自动保持不可用。",
+    "default": true
+  },
+  "fast_action_provider_id": {
+    "description": "异步快速动作决策使用的 Provider ID",
+    "type": "string",
+    "_special": "select_provider",
+    "hint": "请在具身服务控制台选择一个响应较快的已实例化聊天 Provider。它与普通对话模型独立，留空时快速动作不会调用模型。",
+    "default": ""
+  },
+  "fast_action_timeout_seconds": {
+    "description": "快速动作模型超时秒数",
+    "type": "float",
+    "hint": "仅限制动作决策调用；超时会自动放弃动作，不影响普通回复。",
+    "default": 4.0,
+    "minimum": 0.5,
+    "maximum": 15.0
+  },
   "enable_astrbot_message_pipeline": {
     "description": "普通对话进入 AstrBot 正式消息管线",
     "type": "bool",

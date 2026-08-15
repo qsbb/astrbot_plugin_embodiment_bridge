@@ -88,6 +88,29 @@ class Hand(StrEnum):
     NONE = "none"
 
 
+class ActionResultStatus(StrEnum):
+    ACCEPTED = "accepted"
+    STARTED = "started"
+    COMPLETED = "completed"
+    REJECTED = "rejected"
+    INTERRUPTED = "interrupted"
+
+
+class ActionResultReason(StrEnum):
+    ACCEPTED = "accepted"
+    STARTED = "started"
+    COMPLETED = "completed"
+    UNSUPPORTED = "unsupported"
+    BUSY = "busy"
+    BLOCKED = "blocked"
+    TRACKING_LOST = "tracking_lost"
+    ASSET_MISSING = "asset_missing"
+    INVALID_STATE = "invalid_state"
+    SUPERSEDED = "superseded"
+    USER_INTERRUPTED = "user_interrupted"
+    SYSTEM_INTERRUPTED = "system_interrupted"
+
+
 class SessionStartRequest(StrictModel):
     type: Literal["session.start"] = "session.start"
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
@@ -176,6 +199,108 @@ class SessionCloseRequest(StrictModel):
     type: Literal["session.close"] = "session.close"
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     session_id: Identifier
+
+
+class ActionResultRequest(StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    type: Literal["action.result"] = "action.result"
+    protocol_version: Literal["1.0"] = PROTOCOL_VERSION
+    session_id: Identifier
+    turn_id: Identifier
+    action_id: Identifier
+    receipt_id: Identifier
+    action: Gesture
+    status: ActionResultStatus
+    reason_code: ActionResultReason
+    duration_ms: int = Field(ge=0, le=600_000)
+
+    @field_validator("duration_ms", mode="before")
+    @classmethod
+    def require_exact_duration_type(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("duration_ms must be an integer")
+        return value
+
+    @model_validator(mode="after")
+    def align_status_and_reason(self) -> ActionResultRequest:
+        exact_reasons = {
+            ActionResultStatus.ACCEPTED: ActionResultReason.ACCEPTED,
+            ActionResultStatus.STARTED: ActionResultReason.STARTED,
+            ActionResultStatus.COMPLETED: ActionResultReason.COMPLETED,
+        }
+        exact = exact_reasons.get(self.status)
+        if exact is not None and self.reason_code is not exact:
+            raise ValueError(f"{self.status.value} requires reason_code={exact.value}")
+        rejected_reasons = {
+            ActionResultReason.UNSUPPORTED,
+            ActionResultReason.BUSY,
+            ActionResultReason.BLOCKED,
+            ActionResultReason.TRACKING_LOST,
+            ActionResultReason.ASSET_MISSING,
+            ActionResultReason.INVALID_STATE,
+            ActionResultReason.SUPERSEDED,
+        }
+        interrupted_reasons = {
+            ActionResultReason.TRACKING_LOST,
+            ActionResultReason.SUPERSEDED,
+            ActionResultReason.USER_INTERRUPTED,
+            ActionResultReason.SYSTEM_INTERRUPTED,
+        }
+        if self.status is ActionResultStatus.REJECTED:
+            if self.reason_code not in rejected_reasons:
+                raise ValueError("rejected status requires a rejection reason_code")
+        elif self.status is ActionResultStatus.INTERRUPTED:
+            if self.reason_code not in interrupted_reasons:
+                raise ValueError("interrupted status requires an interruption reason_code")
+        return self
+
+
+class VerifiedActionFact(StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        frozen=True,
+    )
+
+    action: Gesture
+    status: Literal["completed", "rejected", "interrupted"]
+    reason_code: ActionResultReason
+    duration_ms: int = Field(ge=0, le=600_000)
+
+    @model_validator(mode="after")
+    def align_terminal_status_and_reason(self) -> VerifiedActionFact:
+        if self.status == "completed":
+            if self.reason_code is not ActionResultReason.COMPLETED:
+                raise ValueError("completed fact requires reason_code=completed")
+        elif self.status == "rejected":
+            if self.reason_code not in {
+                ActionResultReason.UNSUPPORTED,
+                ActionResultReason.BUSY,
+                ActionResultReason.BLOCKED,
+                ActionResultReason.TRACKING_LOST,
+                ActionResultReason.ASSET_MISSING,
+                ActionResultReason.INVALID_STATE,
+                ActionResultReason.SUPERSEDED,
+            }:
+                raise ValueError("rejected fact requires a rejection reason_code")
+        elif self.reason_code not in {
+            ActionResultReason.TRACKING_LOST,
+            ActionResultReason.SUPERSEDED,
+            ActionResultReason.USER_INTERRUPTED,
+            ActionResultReason.SYSTEM_INTERRUPTED,
+        }:
+            raise ValueError("interrupted fact requires an interruption reason_code")
+        return self
+
+
+class VerifiedActionFacts(StrictModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    facts: tuple[VerifiedActionFact, ...] = Field(max_length=8)
 
 
 class SpatialContextRequest(StrictModel):
@@ -283,6 +408,7 @@ class AvatarIntent(StrictModel):
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     session_id: Identifier
     turn_id: Identifier
+    action_id: Identifier | None = None
     in_reply_to_event_id: Identifier | None = None
     emotion: Emotion
     gesture: Gesture

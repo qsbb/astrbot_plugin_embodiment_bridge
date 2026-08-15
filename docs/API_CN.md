@@ -171,13 +171,14 @@ sequenceDiagram
 | POST | `/audio/chunk` | 202 | 上传一块输入 PCM16 |
 | POST | `/audio/end` | 202 | 结束输入音频 |
 | POST | `/interaction` | 202 | 上报交互事实 |
+| POST | `/action/result` | 200 | 回报动作意图的客户端执行状态 |
 | POST | `/interrupt` | 200 | 打断当前轮次 |
 | POST | `/session/close` | 200 | 关闭会话 |
 | POST | `/spatial/context` | 200 | 更新当前会话的脱敏房间语义快照 |
 | GET | `/health` | 200 | 查询协议和适配器状态 |
 
 
-内置 8520 listener 仅代理上表十个正常接口，并额外直接处理：
+内置 8520 listener 仅代理上表十一个正常接口，并额外直接处理：
 
 `/health` 的 `diagnostic_log` 只返回 `enabled`、`status=disabled|ready|unavailable` 和 `write_failures` 计数，不返回路径、日志正文、身份或密钥。可在启用独立日志后连续调用两次 health，确认第二次仍为 `ready` 且失败数为 0。
 
@@ -189,7 +190,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/listener-port`、`pairing/operator-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-conversion-start`、`pairing/persona-conversion-status`、`pairing/persona-conversion-cancel`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/listener-port`、`pairing/operator-settings`、`pairing/fast-action-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-conversion-start`、`pairing/persona-conversion-status`、`pairing/persona-conversion-cancel`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -209,6 +210,8 @@ sequenceDiagram
 | POST | `/pairing/listener-port` | 200 | 保存并立即应用内置 listener 端口；默认 8520，修改会断开旧端口上的具身会话 |
 | GET | `/pairing/operator-settings` | 200 | 枚举触碰/动作决策及直连回退可用的 Chat Completion Provider，并读取当前选择；正常 EventBus 对话仍使用 AstrBot 平台或会话默认 Provider |
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换临的交互决策与直连回退模型，不覆盖 EventBus 默认 Provider |
+| GET | `/pairing/fast-action-settings` | 200 | 读取快速动作开关、专用 Provider 状态及 Chat Completion Provider 安全摘要 |
+| POST | `/pairing/fast-action-settings` | 200 | 原子保存 `fast_action_enabled` 与 `fast_action_provider_id`，立即更新动作专用异步通道 |
 | GET | `/pairing/stt-settings` | 200 | 枚举已实例化正式 STT Provider 的安全摘要并读取当前选择/降级状态 |
 | POST | `/pairing/stt-settings` | 200 | 验证并持久化 `astrbot_stt_provider_id`；空值关闭 STT，成功后立即更新运行时选择 |
 | GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |
@@ -238,6 +241,14 @@ sequenceDiagram
 ```json
 {"chat_provider_id":"provider-instance-id"}
 ```
+
+快速动作通道与上述普通直连 Provider 分离。启用后，它会在文字识别完成时与 AstrBot EventBus 主回复并行调用所选快速 Provider，只解析严格白名单动作并尽早发送 `avatar.intent`；它不生成回复、不写入对话历史，也不代替记忆、人格、工具或后处理插件。关闭、未配置或所选实例缺失时，继续使用原有请求级动作工具；快速通道已经接管本轮后，主回复请求不再暴露动作工具，调用超时、失败或返回无动作时只生成本地 `talk/idle` 兜底，避免两个模型竞争或重复发送动作。保存请求严格为：
+
+```json
+{"enabled":true,"provider_id":"fast-provider-instance-id"}
+```
+
+启用时 `provider_id` 必须精确命中当前已实例化 Chat Completion Provider；关闭时可以留空。快速调用默认 4 秒超时，失败只记录脱敏状态和耗时，不记录用户正文、Provider ID 或模型输出。
 
 STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；不会代理 AstrBot Dashboard Provider API，也不会读取 Provider 私有配置。保存请求只允许：
 
@@ -537,6 +548,61 @@ hand:  left | right | both | none
 重复 `event_id` 或去抖窗口内的同名同阶段事件返回 `accepted=false` 和 `reason=duplicate_or_debounced`，不是 HTTP 错误。
 
 交互建立独立的 `i:<event_id>` 决策轮次，不替换或取消正常语音/文本轮次。单会话 interaction 并发有界；只有显式 `/interrupt` 才取消其 `turn_id` 指向的轮次。Unity 不得把触碰名称自行固定映射为情绪。
+
+### 11.1 上报动作执行回执
+
+可执行动作的 `avatar.intent` 会携带服务端生成的 `action_id`。客户端不得自行创建、复用其他动作的 ID，也不得把“收到意图”直接报告为完成：
+
+```http
+POST /action/result
+```
+
+```json
+{
+  "type": "action.result",
+  "protocol_version": "1.0",
+  "session_id": "s1",
+  "turn_id": "t3",
+  "action_id": "a_0123456789abcdef01234567",
+  "receipt_id": "client-receipt-1",
+  "action": "wave",
+  "status": "accepted",
+  "reason_code": "accepted",
+  "duration_ms": 0
+}
+```
+
+状态机固定为：
+
+```text
+planned -> accepted -> started -> completed
+       \-> rejected
+       \-> interrupted
+```
+
+`accepted`、`started`、`completed` 的 `reason_code` 必须与状态同名。`rejected` 只接受 `unsupported | busy | blocked | tracking_lost | asset_missing | invalid_state | superseded`；`interrupted` 只接受 `tracking_lost | superseded | user_interrupted | system_interrupted`。`duration_ms` 范围为 0-600000。`idle` 与 `talk` 是被动姿态，不带动作计划，也无需回执。
+
+成功响应：
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "protocol_version": "1.0",
+    "session_id": "s1",
+    "turn_id": "t3",
+    "action_id": "a_0123456789abcdef01234567",
+    "action": "wave",
+    "lifecycle_status": "accepted",
+    "terminal": false,
+    "idempotent": false
+  }
+}
+```
+
+同一 `receipt_id` 与完全相同正文重试会返回 `idempotent=true`，不会重复迁移或重复写入事实；同一 ID 改动任何字段会返回 `409 action_receipt_replay`。未知、过期或因上限被淘汰的计划返回 `action_plan_stale`，轮次/动作不匹配返回 `action_mismatch`，跳过状态或终态后继续迁移返回 `action_transition_invalid`。
+
+服务端只把 `completed`、`rejected`、`interrupted` 保存为最多 8 条、最长 5 分钟的会话内事实，并排除当前轮后注入后续 `protected_context_authorized=true` 的 Bridge EventBus 轮次。`planned`、`accepted`、`started` 从不作为已经发生的事实；回执也不授予身份、管理员、工具、动作或安全权限。普通 QQ、未授权会话、其他会话和直连 Provider 路径不会收到这些事实。会话关闭即全部销毁。
 
 ## 12. 打断
 
@@ -842,6 +908,7 @@ GET /health
   "protocol_version": "1.0",
   "session_id": "s1",
   "turn_id": "i:e9",
+  "action_id": "a_0123456789abcdef01234567",
   "in_reply_to_event_id": "e9",
   "emotion": "uncomfortable",
   "gesture": "refuse",
@@ -860,7 +927,7 @@ gesture: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half 
 look_at: user | hand | away | none
 ```
 
-`in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。
+`in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。除 `idle`、`talk` 外，服务端为可执行意图附加 `action_id`，客户端可用 11.1 节的回执接口报告真实执行结果；旧 Protocol 1.0 客户端可忽略该可选字段。
 
 Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求只允许预选 `dance`、`dance_next`、`raise_hand`、`turn_half`、`wave`、`bow`、`sit`、`lie`，并通过与模型工具相同的 `AvatarSkillRegistry` 和严格 handler 生成 intent；该轮继续经过原有 EventBus 且只调用原有一次模型。预选成功后不再暴露动作工具，避免重复动作。否定、假设、引用、转述和讨论语境不会产生动作或暴露工具；多动作歧义及不完整表达仍可交给请求级 `embodiment_avatar_action`，未调用时维持 `talk`。客户端不参与文本解析，普通 QQ/非具身事件看不到解析器、工具或提示约束。
 
@@ -955,6 +1022,10 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | 403 | `session_ownership_mismatch` | 使用创建会话时的 API Key |
 | 404 | `session_not_found` | 重新创建会话 |
 | 409 | `session_conflict` | 检查重复会话、活动轮次或重复 SSE |
+| 409 | `action_receipt_replay` | 为每个不同回执生成新的 `receipt_id`，仅原样重试才可复用 |
+| 409 | `action_plan_stale` | 丢弃过期/未知动作，不要用客户端生成的 `action_id` 重试 |
+| 409 | `action_mismatch` | 使用原 `avatar.intent` 的 session、turn、action ID 和 gesture |
+| 409 | `action_transition_invalid` | 按 planned/accepted/started/terminal 状态机提交，终态后停止 |
 | 413 | `payload_too_large` | 减小请求或音频块 |
 | 415 | `unsupported_media_type` | 使用 `application/json` |
 | 422 | `schema_validation_failed` | 按本文档修正字段、枚举和范围 |
@@ -973,6 +1044,8 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 - PCM16 Base64 解码后按 24000 Hz、单声道、16 位播放。
 - 嘴型只跟随实际播放缓冲区，不跟随 `reply.text.delta`。
 - 先执行模型能力检查，再映射语义动作；映射表由 Unity 模型适配层持有。
+- 对带 `action_id` 的可执行意图使用唯一 `receipt_id` 依次回报 accepted、started 与终态；网络重试必须原样发送，同一回执 ID 不得改字段。
+- 模型不支持、资源缺失、追踪丢失或用户打断时回报对应 rejected/interrupted 原因，不得把本地降级姿态伪报为原动作 completed。
 - 不根据 `head_pat`、`cheek_pinch` 等输入事件预判情绪。
 - 网络断开时停止本地旧音频和动作，重连 SSE；会话不存在时重新执行 `session/start`。
 - 应用退出、切换用户或切换角色时调用 `session/close`。

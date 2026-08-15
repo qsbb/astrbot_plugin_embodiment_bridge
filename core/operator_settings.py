@@ -55,6 +55,7 @@ class OperatorSettings:
         identity: Any | None = None,
         message_pipeline: Any | None = None,
         orchestrator: Any | None = None,
+        fast_action: Any | None = None,
         identity_control_plane: IdentityControlPlaneAdapter | None = None,
         pairing_manager: Any | None = None,
         transport: Any | None = None,
@@ -72,6 +73,7 @@ class OperatorSettings:
         self.identity = identity
         self.message_pipeline = message_pipeline
         self.orchestrator = orchestrator
+        self.fast_action = fast_action
         self.identity_control_plane = identity_control_plane
         self.pairing_manager = pairing_manager
         self.transport = transport
@@ -106,6 +108,7 @@ class OperatorSettings:
                     self.config.get("quest_direct_dialogue_mode", False)
                 ),
             },
+            "fast_action": self.fast_action_snapshot(),
             "config_writable": config_is_writable(self.config),
         }
 
@@ -442,6 +445,66 @@ class OperatorSettings:
             "direct_mode": enabled,
             "eventbus_enabled": not enabled,
         }
+
+    def fast_action_snapshot(self) -> dict[str, Any]:
+        adapter = self.fast_action
+        if adapter is None:
+            return {
+                "enabled": False,
+                "available": False,
+                "availability_reason": "adapter_unavailable",
+                "selected": False,
+                "selected_id": "",
+                "providers": self._list_chat_providers(),
+                "config_writable": config_is_writable(self.config),
+            }
+        snapshot = dict(adapter.snapshot())
+        snapshot["providers"] = self._list_chat_providers()
+        snapshot["config_writable"] = config_is_writable(self.config)
+        return snapshot
+
+    async def save_fast_action_settings(
+        self,
+        *,
+        enabled: bool,
+        provider_id: str,
+    ) -> dict[str, Any]:
+        normalized = str(provider_id or "").strip()
+        if len(normalized) > 256 or any(ord(char) < 33 for char in normalized):
+            raise OperatorSettingsError(
+                "invalid_fast_action_provider_id",
+                422,
+                "快速动作模型 Provider ID 无效",
+            )
+        available = {item["id"] for item in self._list_chat_providers()}
+        if normalized and normalized not in available:
+            raise OperatorSettingsError(
+                "fast_action_provider_not_available",
+                422,
+                "所选快速动作模型不存在或当前不可用",
+            )
+        if enabled and not normalized:
+            raise OperatorSettingsError(
+                "fast_action_provider_required",
+                422,
+                "启用快速动作处理前必须选择模型",
+            )
+        await self._persist_many(
+            {
+                "fast_action_enabled": bool(enabled),
+                "fast_action_provider_id": normalized,
+            }
+        )
+        if self.fast_action is not None:
+            self.fast_action.configure(enabled=bool(enabled), provider_id=normalized)
+        self._diagnostic(
+            "fast_action.settings_updated",
+            component="action",
+            status="ready" if enabled and normalized else "disabled",
+            enabled=bool(enabled),
+            provider_configured=bool(normalized),
+        )
+        return self.fast_action_snapshot()
 
     def list_chat_providers(self) -> list[dict[str, str]]:
         return self._list_chat_providers()
@@ -990,6 +1053,8 @@ class OperatorSettings:
             not in {
                 *_PERSONA_KEYS,
                 "chat_provider_id",
+                "fast_action_enabled",
+                "fast_action_provider_id",
                 "quest_direct_dialogue_mode",
                 "astrbot_stt_provider_id",
                 "enable_astrbot_stt",

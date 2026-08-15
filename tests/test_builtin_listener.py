@@ -670,6 +670,14 @@ def test_spatial_context_is_not_added_to_legacy_listener_routes() -> None:
         path.endswith("/spatial/context")
         for _method, path in _LEGACY_FIXED_PROXY_ROUTES
     )
+    assert (
+        "POST",
+        f"{PUBLIC_API_PATH}/action/result",
+    ) in _FIXED_PROXY_ROUTES
+    assert any(
+        method == "POST" and path.endswith("/action/result")
+        for method, path in _LEGACY_FIXED_PROXY_ROUTES
+    )
 
 
 def test_sse_is_streamed_before_upstream_completion() -> None:

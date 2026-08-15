@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout
@@ -26,6 +27,30 @@ FIXTURES = PLUGIN_ROOT / "fixtures" / "protocol_v1"
 
 def load_json(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+ACTION_ID_FIXTURE = "a_contract-action"
+ACTION_ID_PATTERN = re.compile(r"a_[0-9a-f]{24}")
+
+
+def normalize_action_id(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    action_id = normalized.get("action_id")
+    assert isinstance(action_id, str)
+    assert ACTION_ID_PATTERN.fullmatch(action_id)
+    normalized["action_id"] = ACTION_ID_FIXTURE
+    return normalized
+
+
+def normalize_sse_action_ids(raw: str) -> str:
+    observed = re.findall(r'"action_id":"(a_[0-9a-f]{24})"', raw)
+    assert observed
+    assert all(ACTION_ID_PATTERN.fullmatch(value) for value in observed)
+    return re.sub(
+        r'"action_id":"a_[0-9a-f]{24}"',
+        f'"action_id":"{ACTION_ID_FIXTURE}"',
+        raw,
+    )
 
 
 def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
@@ -174,7 +199,10 @@ def test_real_http_sse_contract_smoke(monkeypatch: Any, tmp_path: Path) -> None:
 
                 intent = await read_sse_frame(events)
                 assert intent.event == "avatar.intent"
-                assert intent.data == load_json("avatar_intent.event.json")
+                assert intent.data is not None
+                assert normalize_action_id(intent.data) == load_json(
+                    "avatar_intent.event.json"
+                )
                 await asyncio.wait_for(bundle.tts.started.wait(), timeout=1)
 
                 interrupted = await client.post(
@@ -576,9 +604,11 @@ def test_real_http_stt_unavailable_and_tts_failure_orders(
                 )
                 assert started.status == 202
                 frames = [await read_sse_frame(events) for _ in range(4)]
-                assert "".join(frame.raw for frame in frames) == (
+                assert normalize_sse_action_ids(
+                    "".join(frame.raw for frame in frames)
+                ).rstrip("\n") == (
                     FIXTURES / "tts_failure.events.sse"
-                ).read_text(encoding="utf-8")
+                ).read_text(encoding="utf-8").rstrip("\n")
                 assert [frame.event for frame in frames] == load_json(
                     "audio_flow_cases.json"
                 )["sse_event_order"]["tts_failed_after_text"]
@@ -672,7 +702,9 @@ def test_fake_stt_tts_audio_path_matches_sse_fixture(
                 expected_stream = (FIXTURES / "audio_turn.events.sse").read_text(
                     encoding="utf-8"
                 )
-                assert raw_stream == expected_stream
+                assert normalize_sse_action_ids(raw_stream).rstrip(
+                    "\n"
+                ) == expected_stream.rstrip("\n")
                 assert [frame.event for frame in frames] == load_json("manifest.json")[
                     "event_order"
                 ]["speech_success"]

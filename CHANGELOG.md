@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 1.0.4 - 2026-08-15
+
+### Added
+
+- 增加默认开启、可独立选模的异步快速动作通道；动作专用模型与 AstrBot EventBus 主回复并行，只输出严格白名单 `avatar.intent`，不生成回复或改写对话历史。
+- Operator Page 增加快速动作开关、专用 Provider 选择、运行状态与脱敏诊断事件。
+- 增加双层认证的 `POST /action/result` 动作执行回执；可执行 `avatar.intent` 带服务端生成的 `action_id`，并按 `planned -> accepted -> started -> completed/rejected/interrupted` 管理有界会话生命周期。
+- 后续已授权具身 EventBus 轮次可读取最近的客户端确认终态；`planned`、`accepted` 与 `started` 不会被表述为已经发生的身体事实。
+
+### Changed
+
+- 快速动作关闭、未配置或所选 Provider 缺失时，继续使用原有主回复链路动作工具；快速通道已经接管本轮后若超时或失败，则仅发送本地 `talk/idle` 兜底，不让主模型再次选择动作。普通对话、记忆、人格、工具与后处理链路保持不变。
+- Protocol 1.0 客户端可继续忽略新增的可选 `avatar.intent.action_id`，也不强制提交动作回执；原有 SSE 顺序、文字、音频与 `reply.end` 语义保持不变。
+
+### Security
+
+- 动作回执必须同时通过 AstrBot API 与 Bridge Key 认证、会话所有权、服务端动作 ID、轮次和动作匹配校验；严格拒绝重放变体、过期计划、非法跳转及任意附加字段。回执事实只含枚举动作、终态、原因和有界时长，不包含自由文本、身份或权限。
+
 ## 1.0.3 - 2026-08-14
 
 ### Added

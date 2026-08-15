@@ -3,17 +3,23 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import secrets
 from collections import deque
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Callable
 
 from .models import (
+    ActionResultRequest,
+    ActionResultStatus,
     AudioChunkRequest,
+    AvatarIntent,
+    Gesture,
     InteractionEvent,
     SessionStartRequest,
     SpatialContextRequest,
     SpatialContextSnapshot,
+    VerifiedActionFact,
 )
 from .server_timing import ServerTimingState
 
@@ -23,6 +29,20 @@ CRITICAL_EVENT_TYPES = frozenset(
 )
 DROPPABLE_EVENT_TYPES = frozenset({"asr.partial", "reply.text.delta"})
 SPATIAL_CONTEXT_TTL_SECONDS = 30.0
+ACTION_LIFECYCLE_TTL_SECONDS = 300.0
+ACTION_FACT_TTL_SECONDS = 300.0
+MAX_ACTION_LIFECYCLES = 32
+MAX_ACTION_FACTS = 8
+MAX_ACTION_RECEIPTS_PER_LIFECYCLE = 8
+MAX_ACTION_RECEIPTS = MAX_ACTION_LIFECYCLES * MAX_ACTION_RECEIPTS_PER_LIFECYCLE
+PASSIVE_GESTURES = frozenset({Gesture.IDLE, Gesture.TALK})
+TERMINAL_ACTION_STATUSES = frozenset(
+    {
+        ActionResultStatus.COMPLETED,
+        ActionResultStatus.REJECTED,
+        ActionResultStatus.INTERRUPTED,
+    }
+)
 
 
 class BridgeStateError(RuntimeError):
@@ -53,6 +73,26 @@ class AudioValidationError(BridgeStateError):
 class PayloadTooLarge(BridgeStateError):
     code = "payload_too_large"
     status_code = 413
+
+
+class ActionReceiptReplay(BridgeStateError):
+    code = "action_receipt_replay"
+    status_code = 409
+
+
+class ActionPlanStale(BridgeStateError):
+    code = "action_plan_stale"
+    status_code = 409
+
+
+class ActionMismatch(BridgeStateError):
+    code = "action_mismatch"
+    status_code = 409
+
+
+class ActionTransitionInvalid(BridgeStateError):
+    code = "action_transition_invalid"
+    status_code = 409
 
 
 class QueueClosed(RuntimeError):
@@ -157,6 +197,51 @@ class TurnState:
     next_audio_sequence: int = 0
     audio_ended: bool = False
     task: asyncio.Task[None] | None = None
+    # Optional action-only LLM task. It runs in parallel with the normal
+    # reply pipeline and is cancelled with the owning turn.
+    fast_action_task: asyncio.Task[None] | None = None
+    fast_action_active: bool = False
+    fast_action_selected: bool = False
+    fast_action_intent: AvatarIntent | None = None
+    intent_emitted: bool = False
+    primary_intent_gesture: str = ""
+    reply_ended: bool = False
+
+
+@dataclass(slots=True)
+class ActionLifecycleRecord:
+    action_id: str
+    turn_id: str
+    action: Gesture
+    status: str
+    created_at: float
+    updated_at: float
+    receipt_ids: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True, slots=True)
+class ActionReceiptRecord:
+    action_id: str
+    signature: tuple[str, ...]
+    recorded_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class ActionFactRecord:
+    action_id: str
+    turn_id: str
+    fact: VerifiedActionFact
+    recorded_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class ActionResultOutcome:
+    action_id: str
+    turn_id: str
+    action: Gesture
+    lifecycle_status: ActionResultStatus
+    terminal: bool
+    idempotent: bool
 
 
 @dataclass(slots=True)
@@ -187,6 +272,11 @@ class SessionState:
     seen_event_ids: set[str] = field(default_factory=set)
     seen_event_order: deque[str] = field(default_factory=lambda: deque(maxlen=512))
     last_interaction_at: dict[tuple[str, str], float] = field(default_factory=dict)
+    action_lifecycles: dict[str, ActionLifecycleRecord] = field(
+        default_factory=dict
+    )
+    action_receipts: dict[str, ActionReceiptRecord] = field(default_factory=dict)
+    action_facts: deque[ActionFactRecord] = field(default_factory=deque)
 
 
 class SessionManager:
@@ -309,6 +399,8 @@ class SessionManager:
             session.current_turn = turn
             if old_turn is not None and old_turn.task is not None:
                 old_turn.task.cancel()
+            if old_turn is not None and old_turn.fast_action_task is not None:
+                old_turn.fast_action_task.cancel()
         if old_turn is not None:
             await session.queue.discard_turn(old_turn.turn_id)
         return turn
@@ -418,6 +510,136 @@ class SessionManager:
             session.interactions.append(interaction)
             return True
 
+    async def plan_action(
+        self,
+        session: SessionState,
+        *,
+        turn_id: str,
+        action: Gesture,
+    ) -> str | None:
+        if action in PASSIVE_GESTURES:
+            return None
+        now = monotonic()
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            self._prune_action_state_unlocked(session, now)
+            action_id = self._new_action_id(session)
+            session.action_lifecycles[action_id] = ActionLifecycleRecord(
+                action_id=action_id,
+                turn_id=turn_id,
+                action=action,
+                status="planned",
+                created_at=now,
+                updated_at=now,
+            )
+            self._enforce_action_lifecycle_bound_unlocked(session)
+            return action_id
+
+    async def discard_action_plan(
+        self,
+        session: SessionState,
+        action_id: str | None,
+    ) -> None:
+        if not action_id:
+            return
+        async with session.lock:
+            record = session.action_lifecycles.get(action_id)
+            if record is None or record.status != "planned":
+                return
+            self._remove_action_lifecycle_unlocked(session, action_id)
+
+    async def record_action_result(
+        self,
+        session: SessionState,
+        request: ActionResultRequest,
+    ) -> ActionResultOutcome:
+        signature = self._action_receipt_signature(request)
+        now = monotonic()
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            self._prune_action_state_unlocked(session, now)
+            if request.session_id != session.session_id:
+                raise ActionMismatch("action result belongs to another session")
+            previous_receipt = session.action_receipts.get(request.receipt_id)
+            if previous_receipt is not None:
+                if previous_receipt.signature != signature:
+                    raise ActionReceiptReplay("receipt_id was already used")
+                record = session.action_lifecycles.get(previous_receipt.action_id)
+                if record is None:
+                    raise ActionPlanStale("action plan is no longer available")
+                return ActionResultOutcome(
+                    action_id=record.action_id,
+                    turn_id=record.turn_id,
+                    action=record.action,
+                    lifecycle_status=request.status,
+                    terminal=request.status in TERMINAL_ACTION_STATUSES,
+                    idempotent=True,
+                )
+
+            record = session.action_lifecycles.get(request.action_id)
+            if record is None:
+                raise ActionPlanStale("action plan is unknown or expired")
+            if record.turn_id != request.turn_id or record.action is not request.action:
+                raise ActionMismatch("action result does not match the planned action")
+            if len(record.receipt_ids) >= MAX_ACTION_RECEIPTS_PER_LIFECYCLE:
+                raise ActionTransitionInvalid("action receipt limit reached")
+            if not self._action_transition_allowed(record.status, request.status):
+                raise ActionTransitionInvalid("action lifecycle transition is invalid")
+
+            record.status = request.status.value
+            record.updated_at = now
+            record.receipt_ids.add(request.receipt_id)
+            session.action_receipts[request.receipt_id] = ActionReceiptRecord(
+                action_id=request.action_id,
+                signature=signature,
+                recorded_at=now,
+            )
+            self._enforce_action_receipt_bound_unlocked(session)
+            terminal = request.status in TERMINAL_ACTION_STATUSES
+            if terminal:
+                session.action_facts.append(
+                    ActionFactRecord(
+                        action_id=request.action_id,
+                        turn_id=request.turn_id,
+                        fact=VerifiedActionFact(
+                            action=request.action,
+                            status=request.status.value,
+                            reason_code=request.reason_code,
+                            duration_ms=request.duration_ms,
+                        ),
+                        recorded_at=now,
+                    )
+                )
+                while len(session.action_facts) > MAX_ACTION_FACTS:
+                    session.action_facts.popleft()
+            return ActionResultOutcome(
+                action_id=record.action_id,
+                turn_id=record.turn_id,
+                action=record.action,
+                lifecycle_status=request.status,
+                terminal=terminal,
+                idempotent=False,
+            )
+
+    async def action_facts_snapshot(
+        self,
+        session: SessionState,
+        *,
+        exclude_turn_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        now = monotonic()
+        async with session.lock:
+            if session.closed:
+                raise SessionNotFound("session is closed")
+            self._prune_action_state_unlocked(session, now)
+            return [
+                item.fact.model_dump(mode="json")
+                for item in session.action_facts
+                if not exclude_turn_id or item.turn_id != exclude_turn_id
+            ]
+
     async def emit(
         self,
         session: SessionState,
@@ -454,6 +676,8 @@ class SessionManager:
                 return False
             if turn.task is not None:
                 turn.task.cancel()
+            if turn.fast_action_task is not None:
+                turn.fast_action_task.cancel()
             turn.audio.clear()
         await session.queue.discard_turn(turn.turn_id)
         return True
@@ -544,14 +768,23 @@ class SessionManager:
                 task.cancel()
             if turn is not None:
                 turn.audio.clear()
+                if turn.fast_action_task is not None:
+                    turn.fast_action_task.cancel()
+                    tasks.append(turn.fast_action_task)
             for interaction_turn in interaction_turns:
                 interaction_turn.audio.clear()
+                if interaction_turn.fast_action_task is not None:
+                    interaction_turn.fast_action_task.cancel()
+                    tasks.append(interaction_turn.fast_action_task)
             session.history.clear()
             session.spatial_context = None
             session.spatial_context_updated_at = 0.0
             session.interactions.clear()
             session.seen_event_ids.clear()
             session.seen_event_order.clear()
+            session.action_lifecycles.clear()
+            session.action_receipts.clear()
+            session.action_facts.clear()
         await session.queue.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -582,12 +815,21 @@ class SessionManager:
                     tasks.add(task)
                 if turn is not None:
                     turn.audio.clear()
+                    if turn.fast_action_task is not None:
+                        turn.fast_action_task.cancel()
+                        tasks.add(turn.fast_action_task)
                 for interaction_turn in interaction_turns:
                     interaction_turn.audio.clear()
+                    if interaction_turn.fast_action_task is not None:
+                        interaction_turn.fast_action_task.cancel()
+                        tasks.add(interaction_turn.fast_action_task)
                 session.history.clear()
                 session.spatial_context = None
                 session.spatial_context_updated_at = 0.0
                 session.interactions.clear()
+                session.action_lifecycles.clear()
+                session.action_receipts.clear()
+                session.action_facts.clear()
             await session.queue.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -612,6 +854,103 @@ class SessionManager:
             return True
         interaction = session.interaction_turns.get(turn_id)
         return bool(interaction is not None and interaction.generation == generation)
+
+    @staticmethod
+    def _new_action_id(session: SessionState) -> str:
+        while True:
+            action_id = "a_" + secrets.token_hex(12)
+            if action_id not in session.action_lifecycles:
+                return action_id
+
+    @staticmethod
+    def _action_receipt_signature(request: ActionResultRequest) -> tuple[str, ...]:
+        return (
+            request.protocol_version,
+            request.session_id,
+            request.turn_id,
+            request.action_id,
+            request.receipt_id,
+            request.action.value,
+            request.status.value,
+            request.reason_code.value,
+            str(request.duration_ms),
+        )
+
+    @staticmethod
+    def _action_transition_allowed(
+        current: str,
+        requested: ActionResultStatus,
+    ) -> bool:
+        if current == "planned":
+            return requested in {
+                ActionResultStatus.ACCEPTED,
+                ActionResultStatus.REJECTED,
+                ActionResultStatus.INTERRUPTED,
+            }
+        if current == ActionResultStatus.ACCEPTED.value:
+            return requested in {
+                ActionResultStatus.STARTED,
+                ActionResultStatus.REJECTED,
+                ActionResultStatus.INTERRUPTED,
+            }
+        if current == ActionResultStatus.STARTED.value:
+            return requested in TERMINAL_ACTION_STATUSES
+        return False
+
+    def _prune_action_state_unlocked(
+        self,
+        session: SessionState,
+        now: float,
+    ) -> None:
+        stale_ids = [
+            action_id
+            for action_id, record in session.action_lifecycles.items()
+            if now - record.updated_at > ACTION_LIFECYCLE_TTL_SECONDS
+        ]
+        for action_id in stale_ids:
+            self._remove_action_lifecycle_unlocked(session, action_id)
+        stale_receipt_ids = [
+            receipt_id
+            for receipt_id, receipt in session.action_receipts.items()
+            if now - receipt.recorded_at > ACTION_LIFECYCLE_TTL_SECONDS
+        ]
+        for receipt_id in stale_receipt_ids:
+            session.action_receipts.pop(receipt_id, None)
+        session.action_facts = deque(
+            item
+            for item in session.action_facts
+            if now - item.recorded_at <= ACTION_FACT_TTL_SECONDS
+        )
+        while len(session.action_facts) > MAX_ACTION_FACTS:
+            session.action_facts.popleft()
+
+    def _enforce_action_lifecycle_bound_unlocked(
+        self,
+        session: SessionState,
+    ) -> None:
+        while len(session.action_lifecycles) > MAX_ACTION_LIFECYCLES:
+            oldest_action_id = next(iter(session.action_lifecycles))
+            self._remove_action_lifecycle_unlocked(session, oldest_action_id)
+
+    @staticmethod
+    def _enforce_action_receipt_bound_unlocked(session: SessionState) -> None:
+        while len(session.action_receipts) > MAX_ACTION_RECEIPTS:
+            receipt_id = next(
+                (
+                    candidate
+                    for candidate, receipt in session.action_receipts.items()
+                    if receipt.action_id not in session.action_lifecycles
+                ),
+                next(iter(session.action_receipts)),
+            )
+            session.action_receipts.pop(receipt_id, None)
+
+    @staticmethod
+    def _remove_action_lifecycle_unlocked(
+        session: SessionState,
+        action_id: str,
+    ) -> None:
+        session.action_lifecycles.pop(action_id, None)
 
     async def stats(self) -> dict[str, int]:
         async with self._lock:

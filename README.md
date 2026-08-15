@@ -91,6 +91,9 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 |---|---:|---|
 | `bridge_service_enabled` | `true` | 启停具身对话服务；关闭时清理现有会话和 listener |
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
+| `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作；关闭、未配置或 Provider 缺失时才由主回复链路处理 |
+| `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
+| `fast_action_timeout_seconds` | `4.0` | 快速动作调用上限；超时只放弃快速结果，不中断主回复 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
 | `quest_direct_dialogue_mode` | `false` | 无平台身份的基础对话模式；不进入 EventBus，不需要 Bot/User 或“序”，关系/记忆/其他消息插件不会注入 |
@@ -136,6 +139,7 @@ X-Embodiment-Bridge-Key: <bridge_api_key>
 | POST | `/audio/chunk` | 202 | 上传 PCM16 单声道 16 kHz 输入块 |
 | POST | `/audio/end` | 202 | 完成输入并启动 STT 与决策 |
 | POST | `/interaction` | 202 | 上报交互事实 |
+| POST | `/action/result` | 200 | 回报服务端动作意图的客户端执行状态 |
 | POST | `/interrupt` | 200 | 取消轮次并阻止迟到事件 |
 | POST | `/session/close` | 200 | 关闭并清理会话 |
 | POST | `/spatial/context` | 200 | 更新按会话隔离的脱敏房间语义快照 |
@@ -146,6 +150,8 @@ SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.del
 空间快照只包含有界的物体计数与能力布尔值，30 秒未刷新即失效；官方客户端以 15 秒低频续租，并对相同内容去重。图像、网格、坐标、尺寸、锚点和自由文本不会进入该通道。
 
 交互事实只接受 `handshake`、`head_pat`、`cheek_pinch`、`gaze` 和 `speaking`。角色意图只包含受控的 `emotion`、`gesture`、`look_at`、强度和时长；未知字段、枚举或越界值不会透传给客户端。
+
+可执行动作的 `avatar.intent` 会附带服务端生成的 `action_id`。客户端以 `/action/result` 回报 `accepted -> started -> completed`，或回报 `rejected` / `interrupted`；`idle`、`talk` 无需回执。只有经过双层认证且匹配原动作计划的终态，才会作为有界、短时的身体事实注入后续具身 EventBus 轮次；它不授予身份、权限或动作执行许可。不实现回执的既有 Protocol 1.0 客户端仍可继续消费意图和完成对话。
 
 内置 listener 的匿名能力只限新插件 ID 下的精确 `POST .../pairing/exchange`。它接受一次性 token 或 6 位短码，并实施凭据过期、单次消费、正文限制、来源限速和全局限速；其他运行接口仍必须携带双层认证。
 
@@ -164,7 +170,7 @@ SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.del
 - 符号链接、Junction、超限或畸形输入会失败关闭。
 - 旧 URL 中的插件根路径会迁移到新 ID；密钥不会写入日志或管理响应。
 
-已绑定客户端有一个主版本周期的兼容窗口：旧九个运行 API 路径与 `X-Quest-Avatar-Key` 仍可通过双层认证访问。旧插件 ID 下的匿名 `pairing/exchange` 不开放，因此建议升级后重新生成短码并配对。Protocol 1.0 的 QR type、既有配置字段以及跨插件 `identity.quest_*`、`relationship.quest_*` 契约名暂时保持不变。
+已绑定客户端有一个主版本周期的兼容窗口：旧十个运行 API 路径与 `X-Quest-Avatar-Key` 仍可通过双层认证访问。旧插件 ID 下的匿名 `pairing/exchange` 不开放，因此建议升级后重新生成短码并配对。Protocol 1.0 的 QR type、既有配置字段以及跨插件 `identity.quest_*`、`relationship.quest_*` 契约名暂时保持不变。
 
 ## 凝心溯溪系列
 

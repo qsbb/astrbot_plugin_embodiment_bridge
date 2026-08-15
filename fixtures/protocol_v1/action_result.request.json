@@ -1,0 +1,12 @@
+{
+  "type": "action.result",
+  "protocol_version": "1.0",
+  "session_id": "smoke-session",
+  "turn_id": "i:e9",
+  "action_id": "a_contract-action",
+  "receipt_id": "receipt-contract-1",
+  "action": "step_back",
+  "status": "accepted",
+  "reason_code": "accepted",
+  "duration_ms": 0
+}

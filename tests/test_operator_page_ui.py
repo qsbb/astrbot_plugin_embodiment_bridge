@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.3-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.3-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.3-1")
+    assert '<script type="module" src="./app.js?v=1.0.4-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.4-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.4-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -79,6 +79,10 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "queued-event-count",
         "chat-provider-id",
         "save-model-button",
+        "fast-action-enabled",
+        "fast-action-provider-id",
+        "fast-action-status",
+        "save-fast-action-button",
         "stt-provider-id",
         "stt-provider-help",
         "stt-status",
@@ -134,6 +138,15 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         assert f'data-capability="{capability}"' in html
     assert 'apiGet("pairing/operator-settings")' in js
     assert 'apiPost("pairing/operator-settings"' in js
+    assert 'apiGet("pairing/fast-action-settings")' in js
+    assert 'apiPost("pairing/fast-action-settings"' in js
+    assert "load: loadFastActionSettings" in js
+    assert "异步快速动作" in html
+    assert "不等待主回复链路" in html
+    assert "快速通道已经接管本轮后若超时、失败或没有选出动作" in html
+    assert "启动前发现模型缺失时由原有 AstrBot 主回复链路处理" in html
+    assert "fast_action_timeout" in js
+    assert '"fast_action.completed": "快速动作判断完成"' in js
     assert "direct_mode:" in js
     assert "function renderDialogueMode" in js
     assert "不进入 AstrBot EventBus" in html

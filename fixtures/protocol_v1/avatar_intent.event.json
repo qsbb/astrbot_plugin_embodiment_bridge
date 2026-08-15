@@ -3,6 +3,7 @@
   "session_id": "smoke-session",
   "turn_id": "i:e9",
   "type": "avatar.intent",
+  "action_id": "a_contract-action",
   "in_reply_to_event_id": "e9",
   "emotion": "shy",
   "gesture": "step_back",

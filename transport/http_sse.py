@@ -13,6 +13,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ..adapters.stt import AstrBotSTTAdapter
 from ..core.models import (
+    ActionResultRequest,
     AudioChunkRequest,
     AudioEndRequest,
     Identifier,
@@ -113,6 +114,12 @@ class HttpSseTransport:
                 self.interaction,
                 ["POST"],
                 "Submit embodied interaction fact",
+            ),
+            (
+                "action/result",
+                self.action_result,
+                ["POST"],
+                "Report embodied action execution state",
             ),
             ("interrupt", self.interrupt, ["POST"], "Interrupt active client turn"),
             (
@@ -328,6 +335,36 @@ class HttpSseTransport:
             )
 
         return await self._json_endpoint(InteractionEvent, action)
+
+    async def action_result(self) -> Any:
+        async def action(owner: str, payload: ActionResultRequest) -> Any:
+            session = await self.sessions.get_owned(payload.session_id, owner)
+            outcome = await self.sessions.record_action_result(session, payload)
+            self._diagnostic(
+                "avatar.action.receipt",
+                component="action",
+                operation=outcome.action.value,
+                status=outcome.lifecycle_status.value,
+                terminal=outcome.terminal,
+                idempotent=outcome.idempotent,
+            )
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "session_id": session.session_id,
+                        "turn_id": outcome.turn_id,
+                        "action_id": outcome.action_id,
+                        "action": outcome.action.value,
+                        "lifecycle_status": outcome.lifecycle_status.value,
+                        "terminal": outcome.terminal,
+                        "idempotent": outcome.idempotent,
+                    },
+                }
+            )
+
+        return await self._json_endpoint(ActionResultRequest, action)
 
     async def interrupt(self) -> Any:
         async def action(owner: str, payload: InterruptRequest) -> Any:

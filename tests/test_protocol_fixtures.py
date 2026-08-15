@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from astrbot_plugin_embodiment_bridge.core.models import (
+    ActionResultReason,
+    ActionResultRequest,
+    ActionResultStatus,
     Emotion,
     Gesture,
     Hand,
@@ -41,7 +44,15 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
             "duration_unit": "milliseconds",
             "duration_minimum": 0,
             "duration_maximum": 86_400_000,
-        }
+        },
+        "action_receipts@1.0": {
+            "intent_field": "avatar.intent.action_id",
+            "receipt_route": "/action/result",
+            "passive_gestures_without_receipts": ["idle", "talk"],
+            "terminal_facts": ["completed", "rejected", "interrupted"],
+            "storage": "bounded_session_memory",
+            "grants_permission": False,
+        },
     }
     assert manifest["enums"] == {
         "emotion": [item.value for item in Emotion],
@@ -50,6 +61,8 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "interaction_name": [item.value for item in InteractionName],
         "interaction_phase": [item.value for item in InteractionPhase],
         "hand": [item.value for item in Hand],
+        "action_result_status": [item.value for item in ActionResultStatus],
+        "action_result_reason": [item.value for item in ActionResultReason],
     }
 
     manifest_errors = {
@@ -108,6 +121,24 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "injection_scope": "authorized_embodiment_eventbus_turn_only",
         "contains_free_text": False,
         "contains_geometry_or_identifiers": False,
+        "grants_permission": False,
+    }
+    assert manifest["action_result_semantics"] == {
+        "server_generated_action_id": True,
+        "transitions": {
+            "planned": ["accepted", "rejected", "interrupted"],
+            "accepted": ["started", "rejected", "interrupted"],
+            "started": ["completed", "rejected", "interrupted"],
+            "completed": [],
+            "rejected": [],
+            "interrupted": [],
+        },
+        "exact_duplicate_is_idempotent": True,
+        "changed_receipt_replay_is_conflict": True,
+        "terminal_fact_injection_scope": (
+            "later_authorized_embodiment_eventbus_turns_only"
+        ),
+        "planned_is_fact": False,
         "grants_permission": False,
     }
     assert manifest["pairing_bootstrap_semantics"] == {
@@ -193,6 +224,23 @@ def test_json_request_and_event_fixtures_are_protocol_v1() -> None:
 
     unity_audio_start = load_json("unity_audio_turn_start.request.json")
     assert TurnStartRequest.model_validate(unity_audio_start).text is None
+    assert ActionResultRequest.model_validate(
+        load_json("action_result.request.json")
+    ).status is ActionResultStatus.ACCEPTED
+    action_response = load_json("action_result.response.json")
+    assert action_response == {
+        "status": "ok",
+        "data": {
+            "protocol_version": "1.0",
+            "session_id": "smoke-session",
+            "turn_id": "i:e9",
+            "action_id": "a_contract-action",
+            "action": "step_back",
+            "lifecycle_status": "accepted",
+            "terminal": False,
+            "idempotent": False,
+        },
+    }
 
     for path in FIXTURES.glob("*.event.json"):
         payload = json.loads(path.read_text(encoding="utf-8"))

@@ -34,6 +34,22 @@
       "body": {"status": "error", "message": "session already exists", "data": {"code": "session_conflict"}}
     },
     {
+      "status_code": 409,
+      "body": {"status": "error", "message": "receipt_id was already used", "data": {"code": "action_receipt_replay"}}
+    },
+    {
+      "status_code": 409,
+      "body": {"status": "error", "message": "action plan is unknown or expired", "data": {"code": "action_plan_stale"}}
+    },
+    {
+      "status_code": 409,
+      "body": {"status": "error", "message": "action result does not match the planned action", "data": {"code": "action_mismatch"}}
+    },
+    {
+      "status_code": 409,
+      "body": {"status": "error", "message": "action lifecycle transition is invalid", "data": {"code": "action_transition_invalid"}}
+    },
+    {
       "status_code": 413,
       "body": {"status": "error", "message": "Request body is too large", "data": {"code": "payload_too_large"}}
     },

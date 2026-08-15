@@ -610,6 +610,65 @@ def test_stt_provider_settings_are_dashboard_protected_strict_and_redacted(
     asyncio.run(scenario())
 
 
+def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                unauthenticated = await client.get(
+                    server.url("/pairing/fast-action-settings")
+                )
+                assert unauthenticated.status == 401
+
+                overview = await client.get(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert overview.status == 200
+                initial = (await overview.json())["fast_action"]
+                assert initial["enabled"] is True
+                assert initial["selected"] is False
+                assert initial["availability_reason"] == "provider_not_configured"
+                assert {tuple(item) for item in initial["providers"]} == {
+                    ("id", "model", "adapter_type", "provider_type")
+                }
+                assert "secret" not in repr(initial).lower()
+
+                enabled = await client.post(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": True, "provider_id": "fake-provider"},
+                )
+                assert enabled.status == 200
+                saved = (await enabled.json())["fast_action"]
+                assert saved["enabled"] is True
+                assert saved["selected_id"] == "fake-provider"
+                assert bundle.plugin.fast_action.provider_id == "fake-provider"
+
+                invalid = await client.post(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": True, "provider_id": "missing"},
+                )
+                assert invalid.status == 422
+                assert (await invalid.json())["data"]["code"] == (
+                    "fast_action_provider_not_available"
+                )
+
+                disabled = await client.post(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                    json={"enabled": False, "provider_id": ""},
+                )
+                assert disabled.status == 200
+                assert bundle.plugin.fast_action.enabled is False
+
+    asyncio.run(scenario())
+
+
 def test_session_start_uses_server_canonical_identity_not_device_claims(
     monkeypatch: Any,
     tmp_path: Any,

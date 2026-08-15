@@ -16,6 +16,7 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         "/audio/chunk",
         "/audio/end",
         "/interaction",
+        "/action/result",
         "/interrupt",
         "/session/close",
         "/spatial/context",
@@ -55,6 +56,10 @@ def test_frontend_api_document_covers_public_protocol() -> None:
         "turn_failed",
         "interaction_failed",
         "tts_failed",
+        "action_receipt_replay",
+        "action_plan_stale",
+        "action_mismatch",
+        "action_transition_invalid",
     ):
         assert f"`{error_code}`" in document
     for integration_contract in (
@@ -99,3 +104,11 @@ def test_local_integration_document_keeps_security_and_fixture_contract() -> Non
     ).read_text(encoding="utf-8")
     assert "request.client_host" in bootstrap_audit
     assert "register_web_api(..., auth=False)" in bootstrap_audit
+
+    nginx_example = (
+        PLUGIN_ROOT / "docs" / "nginx_8520_pairing.example.conf"
+    ).read_text(encoding="utf-8")
+    assert 'Authorization "ApiKey REPLACE_WITH_DEDICATED_PLUGIN_SCOPE_API_KEY"' in (
+        nginx_example
+    )
+    assert 'Authorization "Bearer ' not in nginx_example
