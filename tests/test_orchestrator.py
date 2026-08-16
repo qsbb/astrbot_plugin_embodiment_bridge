@@ -240,6 +240,30 @@ class FailingFastActionStub:
         return None
 
 
+class UnavailableFastActionStub:
+    enabled = True
+    available = False
+    availability_reason = "selected_missing"
+    provider_id = "configured-provider"
+
+    async def decide(self, **kwargs: Any) -> ProposedIntent:
+        del kwargs
+        raise AssertionError("unavailable provider must not be called")
+
+    async def close(self) -> None:
+        return None
+
+
+class DisabledFastActionStub(UnavailableFastActionStub):
+    enabled = False
+    availability_reason = "disabled"
+
+
+class UnconfiguredFastActionStub(UnavailableFastActionStub):
+    availability_reason = "provider_not_configured"
+    provider_id = ""
+
+
 def decision(
     emotion: Emotion,
     gesture: Gesture,
@@ -795,6 +819,64 @@ def test_eventbus_action_wins_when_fast_selector_has_not_selected() -> None:
             ),
             release=release,
         )
+        reply = LateDecisionStub(
+            decision(
+                Emotion.NEUTRAL,
+                Gesture.CROUCH,
+                LookAt.USER,
+                "skill_crouch",
+                "我现在蹲下。",
+            )
+        )
+        diagnostic = DiagnosticStub()
+        sessions, session, orchestrator = await build_orchestrator(
+            reply,
+            fast_action=fast,
+            supported_actions=("talk", "wave", "crouch"),
+            tts=TTSStub(available=False),
+            diagnostic=diagnostic,
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-arbitration", text="我有点紧张"),
+        )
+        await asyncio.wait_for(fast.started.wait(), timeout=1)
+        await asyncio.wait_for(reply.started.wait(), timeout=1)
+        assert session.current_turn is not None
+        session.current_turn.fast_action_feedback[BRIDGE_FAST_ACTION_EVENT_SELECTED] = (
+            "crouch"
+        )
+        reply.release.set()
+        events = await collect_until_end(session)
+        intents = [event for event in events if event["type"] == "avatar.intent"]
+        assert len(intents) == 1
+        assert intents[0]["gesture"] == "crouch"
+        assert intents[0]["source"] == "eventbus_tool"
+        await asyncio.wait_for(fast.cancelled.wait(), timeout=1)
+        assert any(
+            event == "fast_action.cancelled"
+            and fields["reason_code"] == "eventbus_action_selected"
+            for event, fields in diagnostic.records
+        )
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_action_remains_single_when_fast_selector_finishes_late() -> None:
+    async def scenario() -> None:
+        release = asyncio.Event()
+        fast = FastActionStub(
+            ProposedIntent(
+                emotion=Emotion.HAPPY,
+                gesture=Gesture.WAVE,
+                look_at=LookAt.USER,
+                intensity=0.6,
+                duration_ms=1_800,
+                reason_code="skill_wave",
+            ),
+            release=release,
+        )
         sessions, session, orchestrator = await build_orchestrator(
             DecisionStub(
                 decision(
@@ -890,6 +972,153 @@ def test_fast_action_failure_does_not_guess_negated_or_discussed_action() -> Non
     asyncio.run(scenario())
 
 
+def test_fast_action_timeout_uses_conservative_autonomous_social_fallback() -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticStub()
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.IDLE,
+                    LookAt.NONE,
+                    "main_reply_without_action",
+                    "你好呀。",
+                )
+            ),
+            fast_action=FailingFastActionStub(),
+            diagnostic=diagnostic,
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-autonomous-fallback",
+                text="心夏，你好呀",
+            ),
+        )
+        events = await collect_until_end(session)
+        intents = [event for event in events if event["type"] == "avatar.intent"]
+        assert len(intents) == 1
+        assert intents[0]["gesture"] == "wave"
+        assert intents[0]["reason_code"] == "autonomous_greeting"
+        assert intents[0]["source"] == "fallback"
+        fallback = next(
+            fields
+            for event, fields in diagnostic.records
+            if event == "fast_action.local_fallback_selected"
+        )
+        assert fallback["operation"] == "wave"
+        assert fallback["provider_status"] == "unavailable"
+        assert any(event["type"] == "reply.text.delta" for event in events)
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_unavailable_fast_provider_uses_local_social_fallback_but_disabled_does_not() -> None:
+    async def scenario() -> None:
+        diagnostic = DiagnosticStub()
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "你好。",
+                )
+            ),
+            fast_action=UnavailableFastActionStub(),
+            diagnostic=diagnostic,
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-provider-unavailable",
+                text="你好",
+            ),
+        )
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert intent["gesture"] == "wave"
+        assert intent["reason_code"] == "autonomous_greeting"
+        assert intent["source"] == "fallback"
+        assert any(
+            event == "fast_action.provider_unavailable"
+            and fields["reason_code"] == "fast_action_selected_missing"
+            for event, fields in diagnostic.records
+        )
+        await orchestrator.close()
+
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "你好。",
+                )
+            ),
+            fast_action=DisabledFastActionStub(),
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-provider-disabled",
+                text="你好",
+            ),
+        )
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert intent["gesture"] == "talk"
+        assert intent["reason_code"] == "main_reply"
+        await orchestrator.close()
+
+        unconfigured_diagnostic = DiagnosticStub()
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "你好。",
+                )
+            ),
+            fast_action=UnconfiguredFastActionStub(),
+            tts=TTSStub(available=False),
+            diagnostic=unconfigured_diagnostic,
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-provider-not-configured",
+                text="你好",
+            ),
+        )
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert intent["gesture"] == "talk"
+        assert intent["reason_code"] == "main_reply"
+        assert not any(
+            event in {
+                "fast_action.started",
+                "fast_action.local_fallback_selected",
+            }
+            for event, _fields in unconfigured_diagnostic.records
+        )
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
 def test_fast_action_no_action_ignores_main_reply_action_fields() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -909,7 +1138,11 @@ def test_fast_action_no_action_ignores_main_reply_action_fields() -> None:
         )
         await orchestrator.start_turn(
             session,
-            TurnStartRequest(session_id="s1", turn_id="t-no-action", text="hello"),
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-no-action",
+                text="现在几点",
+            ),
         )
         await asyncio.wait_for(fast.started.wait(), timeout=1)
         release.set()

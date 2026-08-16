@@ -486,6 +486,13 @@ class TurnOrchestrator:
             if explicit.status == "matched" and explicit.action is not None
             else None
         )
+        autonomous_fallback = AvatarSkillRegistry.autonomous_fallback(
+            user_text,
+            session.supported_actions,
+        )
+        fast_provider_configured = bool(
+            str(getattr(adapter, "provider_id", "") or "").strip()
+        )
         if explicit_action is not None:
             turn.fast_action_active = True
             turn.fast_action_feedback["explicit_action"] = True
@@ -519,11 +526,26 @@ class TurnOrchestrator:
                     reason_code="client_action_unsupported",
                     action_source="explicit_request",
                 )
-        elif adapter is not None and adapter.available:
+        elif (
+            adapter is not None
+            and bool(getattr(adapter, "enabled", False))
+            and (
+                adapter.available
+                or (
+                    fast_provider_configured
+                    and autonomous_fallback is not None
+                )
+            )
+        ):
             turn.fast_action_active = True
             self._set_fast_action_feedback(turn, status="processing")
             fast_task = asyncio.create_task(
-                self._run_fast_action(session, turn, user_text),
+                self._run_fast_action(
+                    session,
+                    turn,
+                    user_text,
+                    autonomous_fallback=autonomous_fallback,
+                ),
                 name=f"embodiment-bridge:fast-action:{session.session_id}:{turn.turn_id}",
             )
             turn.fast_action_task = fast_task
@@ -546,9 +568,20 @@ class TurnOrchestrator:
         user_text: str,
         *,
         explicit_action: str | None = None,
+        autonomous_fallback: ProposedIntent | None = None,
     ) -> None:
         adapter = self.fast_action
-        if explicit_action is None and (adapter is None or not adapter.available):
+        fast_provider_configured = bool(
+            str(getattr(adapter, "provider_id", "") or "").strip()
+        )
+        if (
+            explicit_action is None
+            and (adapter is None or not adapter.available)
+            and (
+                autonomous_fallback is None
+                or not fast_provider_configured
+            )
+        ):
             return
         started = time.perf_counter()
         self._diagnostic(
@@ -596,15 +629,12 @@ class TurnOrchestrator:
             else:
                 if adapter is None:
                     return
-                history = await self.sessions.history_snapshot(session)
-                try:
-                    proposed = await adapter.decide(
-                        user_text=user_text,
-                        history=history,
-                        supported_actions=session.supported_actions,
-                    )
-                except FastActionUnavailable as exc:
-                    provider_failure = str(exc)[:64] or "fast_action_unavailable"
+                if not adapter.available:
+                    availability = str(
+                        getattr(adapter, "availability_reason", "unavailable")
+                        or "unavailable"
+                    )[:48]
+                    provider_failure = f"fast_action_{availability}"
                     self._diagnostic(
                         "fast_action.provider_unavailable",
                         component="action",
@@ -614,20 +644,64 @@ class TurnOrchestrator:
                         duration_ms=(time.perf_counter() - started) * 1000,
                     )
                     proposed = None
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    provider_failure = "fast_action_failed"
-                    self._diagnostic(
-                        "fast_action.provider_error",
-                        component="action",
-                        phase="parallel",
-                        status="error",
-                        reason_code=provider_failure,
-                        error_type=type(exc).__name__,
-                        duration_ms=(time.perf_counter() - started) * 1000,
+                else:
+                    history = await self.sessions.history_snapshot(session)
+                    try:
+                        proposed = await adapter.decide(
+                            user_text=user_text,
+                            history=history,
+                            supported_actions=session.supported_actions,
+                        )
+                    except FastActionUnavailable as exc:
+                        provider_failure = (
+                            str(exc)[:64] or "fast_action_unavailable"
+                        )
+                        self._diagnostic(
+                            "fast_action.provider_unavailable",
+                            component="action",
+                            phase="parallel",
+                            status="unavailable",
+                            reason_code=provider_failure,
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                        )
+                        proposed = None
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        provider_failure = "fast_action_failed"
+                        self._diagnostic(
+                            "fast_action.provider_error",
+                            component="action",
+                            phase="parallel",
+                            status="error",
+                            reason_code=provider_failure,
+                            error_type=type(exc).__name__,
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                        )
+                        proposed = None
+                if proposed is None:
+                    local_fallback = autonomous_fallback or (
+                        AvatarSkillRegistry.autonomous_fallback(
+                            user_text,
+                            session.supported_actions,
+                        )
                     )
-                    proposed = None
+                    if local_fallback is not None:
+                        proposed = local_fallback
+                        action_source = "local_context_fallback"
+                        self._diagnostic(
+                            "fast_action.local_fallback_selected",
+                            component="action",
+                            phase="fallback",
+                            status="selected",
+                            operation=proposed.gesture.value,
+                            reason_code=proposed.reason_code,
+                            action_source=action_source,
+                            provider_status=(
+                                "unavailable" if provider_failure else "no_action"
+                            ),
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                        )
             duration_ms = (time.perf_counter() - started) * 1000
             if proposed is None:
                 self._set_fast_action_feedback(
@@ -735,6 +809,8 @@ class TurnOrchestrator:
                 action_source=(
                     ActionSource.EXPLICIT_REQUEST
                     if action_source == "explicit_request"
+                    else ActionSource.FALLBACK
+                    if action_source == "local_context_fallback"
                     else ActionSource.FAST_PROVIDER
                 ),
             )
@@ -1005,6 +1081,21 @@ class TurnOrchestrator:
             turn.fast_action_feedback.get(BRIDGE_FAST_ACTION_EVENT_SELECTED),
             str,
         )
+        if (
+            eventbus_action_selected
+            and fast_task is not None
+            and not fast_task.done()
+        ):
+            fast_task.cancel()
+            fast_task_pending = False
+            self._diagnostic(
+                "fast_action.cancelled",
+                component="action",
+                phase="arbitration",
+                status="superseded",
+                reason_code="eventbus_action_selected",
+                action_source="eventbus_tool",
+            )
         if turn.fast_action_selected and turn.fast_action_intent is not None:
             # The parallel action task already emitted the only intent event.
             # Keep the regular model's reply text and TTS, but do not send a

@@ -24,6 +24,7 @@ class InteractionPolicy:
     max_duration_ms: int = 8_000
     max_continuous_touch_ms: int = 15_000
     gesture_cooldown_seconds: float = 0.35
+    autonomous_gesture_cooldown_seconds: float = 6.0
     _last_gesture_at: dict[tuple[str, Gesture], float] = field(default_factory=dict)
 
     def apply(
@@ -68,13 +69,22 @@ class InteractionPolicy:
         now = monotonic()
         cooldown_key = (session_id, gesture)
         last_at = self._last_gesture_at.get(cooldown_key, 0.0)
+        cooldown_seconds = (
+            self.autonomous_gesture_cooldown_seconds
+            if reason_code.startswith("autonomous_")
+            else self.gesture_cooldown_seconds
+        )
         if (
             gesture not in {Gesture.IDLE, Gesture.TALK}
-            and now - last_at < self.gesture_cooldown_seconds
+            and now - last_at < cooldown_seconds
         ):
             gesture = Gesture.IDLE
             duration_ms = min(duration_ms, 600)
-            reason_code = "gesture_cooldown"
+            reason_code = (
+                "autonomous_gesture_cooldown"
+                if proposed.reason_code.startswith("autonomous_")
+                else "gesture_cooldown"
+            )
             source = ActionSource.INTERACTION_POLICY
         elif gesture not in {Gesture.IDLE, Gesture.TALK}:
             self._last_gesture_at[cooldown_key] = now

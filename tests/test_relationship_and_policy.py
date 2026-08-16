@@ -324,3 +324,54 @@ def test_policy_only_overrides_explicit_high_risk_boundary() -> None:
     )
     assert prolonged.gesture.value == "refuse"
     assert prolonged.reason_code == "continuous_touch_limit"
+
+
+def test_policy_debounces_repeated_autonomous_gesture_without_blocking_explicit() -> None:
+    policy = InteractionPolicy(
+        gesture_cooldown_seconds=0,
+        autonomous_gesture_cooldown_seconds=10,
+    )
+    autonomous = ModelDecision(
+        should_reply=True,
+        reply_text="你好。",
+        intent=ProposedIntent(
+            emotion="neutral",
+            gesture="wave",
+            look_at="user",
+            intensity=0.4,
+            duration_ms=1_800,
+            reason_code="autonomous_greeting",
+        ),
+    )
+    first = policy.apply(
+        session_id="s-autonomous",
+        turn_id="t-first",
+        decision=autonomous,
+        interaction=None,
+        relationship=None,
+    )
+    repeated = policy.apply(
+        session_id="s-autonomous",
+        turn_id="t-repeated",
+        decision=autonomous,
+        interaction=None,
+        relationship=None,
+    )
+    explicit = policy.apply(
+        session_id="s-autonomous",
+        turn_id="t-explicit",
+        decision=autonomous.model_copy(
+            update={
+                "intent": autonomous.intent.model_copy(
+                    update={"reason_code": "explicit_request"}
+                )
+            }
+        ),
+        interaction=None,
+        relationship=None,
+    )
+
+    assert first.gesture.value == "wave"
+    assert repeated.gesture.value == "idle"
+    assert repeated.reason_code == "autonomous_gesture_cooldown"
+    assert explicit.gesture.value == "wave"

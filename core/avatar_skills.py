@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from collections.abc import Iterable
 from typing import Any
@@ -247,6 +248,78 @@ class AvatarSkillRegistry:
         if normalized == "dance_next":
             return "next_imported"
         return "none"
+
+    @classmethod
+    def autonomous_fallback(
+        cls,
+        user_text: Any,
+        supported: Iterable[str | Gesture],
+    ) -> ProposedIntent | None:
+        """Choose one conservative gesture when both model paths choose none.
+
+        This is deliberately narrower than the model prompt. It handles only
+        short, unambiguous social utterances so a provider timeout cannot make
+        the avatar permanently motionless, while factual questions and quoted
+        or meta-language remain inert.
+        """
+        if not isinstance(user_text, str):
+            return None
+        text = re.sub(r"\s+", "", user_text.strip().lower())
+        if not text or len(text) > 64 or any(mark in text for mark in "\"'“”‘’"):
+            return None
+        text = re.sub(r"^(?:心夏|伴夏|kokona)[，,:：、]?", "", text)
+        text = text.strip("，。！？!?~～…")
+        if not text or any(
+            marker in text
+            for marker in ("什么意思", "什么是", "怎么说", "翻译", "为什么")
+        ):
+            return None
+
+        matches = (
+            (
+                "wave",
+                "autonomous_greeting",
+                r"(?:你好|嗨|哈喽|hello|hi|早上好|早安|中午好|下午好|晚上好|晚安|再见|拜拜|bye)(?:呀|啊|啦|哦|噢|喽|呢|了)*",
+            ),
+            (
+                "wave",
+                "autonomous_introduction",
+                r"(?:你是谁|你叫什么(?:名字)?|介绍一下你自己|自我介绍(?:一下)?)",
+            ),
+            (
+                "bow",
+                "autonomous_appreciation",
+                r"(?:谢谢(?:你)?|多谢(?:你)?|辛苦(?:你|了)?|对不起|抱歉|不好意思)(?:呀|啊|啦|哦|了)*",
+            ),
+            (
+                "nod",
+                "autonomous_agreement",
+                r"(?:好|好的|好呀|好啊|可以|行|行呀|没问题|当然|对|是的|嗯嗯|明白了|知道了)",
+            ),
+            (
+                "raise_hand",
+                "autonomous_celebration",
+                r"(?:太好了|好耶|成功了|赢了|搞定了|过关了|完成了)(?:呀|啊|啦|哦|耶)*",
+            ),
+        )
+        for action, reason_code, pattern in matches:
+            if re.fullmatch(pattern, text, flags=re.IGNORECASE) is None:
+                continue
+            if not cls.supports(action, supported):
+                return None
+            intent = cls.invoke(
+                action,
+                {
+                    "intensity": 0.4,
+                    "style": "gentle" if action in {"wave", "bow"} else "natural",
+                },
+            )
+            return (
+                intent.model_copy(update={"reason_code": reason_code})
+                if intent is not None
+                else None
+            )
+        return None
 
     @classmethod
     def prompt_contract(cls) -> str:

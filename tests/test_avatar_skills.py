@@ -33,6 +33,32 @@ def test_unavailable_motion_catalog_is_semantic_only() -> None:
     assert AvatarSkillRegistry.motion_selection("wave") == "none"
 
 
+def test_autonomous_fallback_is_social_conservative_and_capability_bounded() -> None:
+    supported = AvatarSkillRegistry.names()
+    expected = {
+        "心夏，你好呀": ("wave", "autonomous_greeting"),
+        "介绍一下你自己": ("wave", "autonomous_introduction"),
+        "谢谢你啦": ("bow", "autonomous_appreciation"),
+        "好的": ("nod", "autonomous_agreement"),
+        "成功了！": ("raise_hand", "autonomous_celebration"),
+    }
+    for text, (gesture, reason) in expected.items():
+        intent = AvatarSkillRegistry.autonomous_fallback(text, supported)
+        assert intent is not None
+        assert intent.gesture.value == gesture
+        assert intent.reason_code == reason
+
+    for text in (
+        "今天天气怎么样",
+        "为什么要说谢谢",
+        "翻译一下 hello",
+        "他说“你好”是什么意思",
+        "这是一段很长的普通事实描述，不应该因为其中偶然包含你好两个字就触发任何自主动作",
+    ):
+        assert AvatarSkillRegistry.autonomous_fallback(text, supported) is None
+    assert AvatarSkillRegistry.autonomous_fallback("你好", ("talk",)) is None
+
+
 def test_intent_parser_accepts_action_call_without_trusting_animation_paths() -> None:
     parsed = IntentParser().parse(
         '{"should_reply":true,"reply_text":"我来跳舞","action":'

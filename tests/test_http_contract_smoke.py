@@ -10,6 +10,10 @@ from typing import Any
 from aiohttp import ClientSession, ClientTimeout
 import pytest
 
+from astrbot_plugin_embodiment_bridge.adapters.fast_action import (
+    FastActionUnavailable,
+)
+
 from .http_harness import (
     AUTH_HEADERS,
     ASTRBOT_API_KEY_ID,
@@ -31,6 +35,30 @@ def load_json(name: str) -> dict[str, Any]:
 
 ACTION_ID_FIXTURE = "a_contract-action"
 ACTION_ID_PATTERN = re.compile(r"a_[0-9a-f]{24}")
+
+
+class TimeoutFastActionStub:
+    enabled = True
+    available = True
+
+    async def decide(self, **kwargs: Any) -> None:
+        del kwargs
+        raise FastActionUnavailable("fast_action_timeout")
+
+    async def close(self) -> None:
+        return None
+
+
+class GenericTTSStub:
+    available = True
+
+    async def synthesize(self, text: str, *, emotion: str) -> Any:
+        assert text
+        assert emotion
+        yield b"\x00\x00\x01\x00"
+
+    async def close(self) -> None:
+        return None
 
 
 def normalize_action_id(payload: dict[str, Any]) -> dict[str, Any]:
@@ -841,6 +869,81 @@ def test_sse_reconnect_and_late_old_turn_do_not_leak(
                 )
                 assert closed.status == 200
                 second.close()
+
+    asyncio.run(scenario())
+
+
+def test_http_sse_emits_autonomous_social_action_when_fast_model_times_out(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        timeout_action = TimeoutFastActionStub()
+        tts = GenericTTSStub()
+        bundle.plugin.fast_action = timeout_action
+        bundle.plugin.orchestrator.fast_action = timeout_action
+        bundle.plugin.tts = tts
+        bundle.plugin.orchestrator.tts = tts
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession(timeout=ClientTimeout(total=5)) as client:
+                session_request = load_json("session_start.request.json")
+                created = await client.post(
+                    server.url("/session/start"),
+                    headers=AUTH_HEADERS,
+                    json=session_request,
+                )
+                assert created.status == 201
+                events = await client.get(
+                    server.url("/events/smoke-session"),
+                    headers={**AUTH_HEADERS, "Accept": "text/event-stream"},
+                )
+                assert events.status == 200
+                assert (await read_sse_frame(events)).comment == "connected"
+
+                started = await client.post(
+                    server.url("/turn/start"),
+                    headers=AUTH_HEADERS,
+                    json={
+                        "type": "turn.start",
+                        "protocol_version": "1.0",
+                        "session_id": "smoke-session",
+                        "turn_id": "autonomous-greeting-turn",
+                        "text": "心夏，你好呀",
+                        "cancel_previous": True,
+                    },
+                )
+                assert started.status == 202
+
+                frames = []
+                while not frames or frames[-1].event != "reply.end":
+                    frames.append(await read_sse_frame(events, timeout=2))
+                intent = next(frame for frame in frames if frame.event == "avatar.intent")
+                assert intent.data is not None
+                assert intent.data["gesture"] == "wave"
+                assert intent.data["method"] == "wave"
+                assert intent.data["reason_code"] == "autonomous_greeting"
+                assert intent.data["source"] == "fallback"
+                event_types = [frame.event for frame in frames]
+                assert event_types.count("avatar.intent") == 1
+                assert "reply.text.delta" in event_types
+                assert "reply.audio.chunk" in event_types, [
+                    (
+                        (frame.data or {}).get("code"),
+                        (frame.data or {}).get("message"),
+                    )
+                    for frame in frames
+                    if frame.event == "error"
+                ]
+                assert event_types[-1] == "reply.end"
+
+                closed = await client.post(
+                    server.url("/session/close"),
+                    headers=AUTH_HEADERS,
+                    json=load_json("session_close.request.json"),
+                )
+                assert closed.status == 200
+                events.close()
 
     asyncio.run(scenario())
 

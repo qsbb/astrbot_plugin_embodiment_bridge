@@ -1817,11 +1817,17 @@ function diagnosticReasonLabel(code) {
     fast_action_provider_not_configured: "尚未选择快速动作模型",
     fast_action_selected_missing: "已选快速动作模型当前不可用",
     fast_action_provider_catalog_unavailable: "快速动作模型目录当前不可用",
-    fast_action_timeout: "快速动作模型等待超时，已使用本地说话动作兜底",
+    fast_action_timeout: "快速动作模型等待超时，将尝试保守的本地动作兜底",
     fast_action_invalid_output: "快速动作模型返回了不符合动作协议的内容",
     fast_action_failed: "快速动作决策失败，普通回复不受影响",
     fast_action_enabled: "已由独立快速动作模型处理",
     fast_action_selected: "快速动作已先于主回复选定",
+    autonomous_greeting: "根据明确的问候或告别选择自然挥手",
+    autonomous_introduction: "根据自我介绍语境选择自然挥手",
+    autonomous_appreciation: "根据感谢或道歉语境选择轻微鞠躬",
+    autonomous_agreement: "根据明确赞同语境选择自然点头",
+    autonomous_celebration: "根据明确庆祝语境选择自然抬手",
+    autonomous_gesture_cooldown: "短时间内已做过相同自主动作，本轮保持待机",
     reply_path_selected: "主回复链路已先选定动作",
     conversion_timeout: "人格转换模型等待超时",
     conversion_first_chunk_timeout: "人格转换模型首个流块等待超时",
@@ -1903,9 +1909,11 @@ function diagnosticEventLabel(value) {
     "fast_action.timeout": "快速动作模型等待超时",
     "fast_action.provider_error": "快速动作模型调用失败",
     "fast_action.provider_unavailable": "快速动作模型当前不可用",
+    "fast_action.local_fallback_selected": "已选择保守的本地自主动作",
     "fast_action.explicit_selected": "明确动作命令已立即选定",
     "fast_action.explicit_rejected": "不安全或歧义动作命令已拒绝",
     "fast_action.completed": "快速动作判断完成",
+    "fast_action.cancelled": "EventBus 已选动作，快速动作模型已取消",
     "fast_action.skipped": "快速动作已回退或跳过",
     "fast_action.error": "快速动作判断失败",
     "fast_action.settings_updated": "快速动作设置已更新",
@@ -1982,6 +1990,47 @@ function diagnosticStatusLabel(value) {
   return labels[String(value || "")] || String(value || "状态未知");
 }
 
+function diagnosticActionLabel(value) {
+  const labels = {
+    idle: "待机",
+    talk: "说话",
+    wave: "挥手",
+    bow: "鞠躬",
+    dance: "播放选定舞蹈",
+    dance_next: "切换下一支舞蹈",
+    raise_hand: "抬手",
+    turn_half: "转身",
+    sit: "坐下",
+    lie: "躺下",
+    nod: "点头",
+    sway: "轻微摆动",
+    crouch: "下蹲",
+    handshake: "握手反应",
+    head_pat: "摸头反应",
+    cheek_pinch: "捏脸反应",
+    refuse: "拒绝",
+    step_back: "后退"
+  };
+  return labels[String(value || "")] || String(value || "未知动作");
+}
+
+function diagnosticActionSourceLabel(value) {
+  const labels = {
+    explicit_request: "用户明确命令",
+    fast_provider: "快速动作模型",
+    local_context_fallback: "本地社交动作兜底",
+    eventbus_tool: "AstrBot 动作工具",
+    direct_model: "直接回复模型",
+    interaction_policy: "触碰交互策略",
+    fallback: "基础动作兜底",
+    fast_provider_pending: "等待快速动作模型",
+    fast_provider_fallback: "快速动作本地兜底",
+    main_reply_suppressed: "主回复动作已抑制",
+    eventbus_tool_fallback: "EventBus 动作兜底"
+  };
+  return labels[String(value || "")] || String(value || "未知来源");
+}
+
 function diagnosticMeta(event) {
   const parts = [];
   if (
@@ -1995,8 +2044,10 @@ function diagnosticMeta(event) {
   if (Number.isFinite(event.chunks)) parts.push(`${event.chunks} 块`);
   if (Number.isFinite(event.bytes)) parts.push(`${event.bytes} 字节`);
   if (Number.isFinite(event.event_count)) parts.push(`${event.event_count} 个事件`);
-  if (event.operation) parts.push(`动作：${String(event.operation)}`);
-  if (event.action_source) parts.push(`来源：${String(event.action_source)}`);
+  if (event.operation) parts.push(`动作：${diagnosticActionLabel(event.operation)}`);
+  if (event.action_source) {
+    parts.push(`来源：${diagnosticActionSourceLabel(event.action_source)}`);
+  }
   if (event.method) parts.push(`方式：${String(event.method)}`);
   if (event.catalog_status) parts.push(`目录：${String(event.catalog_status)}`);
   if (event.eventbus_tool_called === true) parts.push("EventBus 工具已调用");
