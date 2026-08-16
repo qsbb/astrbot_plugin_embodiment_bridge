@@ -21,6 +21,7 @@ from ..core.avatar_action_tool import (
     read_selected_source,
     stage_explicit_action,
 )
+from ..core.explicit_action_parser import requires_text_reply
 from ..core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
@@ -32,6 +33,7 @@ from ..core.plugin_identity import (
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
     BRIDGE_SUPPORTED_ACTIONS,
+    BRIDGE_TEXT_REPLY_REQUIRED,
     LEGACY_BRIDGE_EVENT_MARKER,
     LEGACY_BRIDGE_IDENTITY_CONTEXT,
 )
@@ -174,6 +176,7 @@ class AstrBotMessagePipelineAdapter:
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
 
         self._record_event_outcome(event)
+        text_reply_required = requires_text_reply(user_text)
         selected_intent = read_selected_intent(event)
         reply = event.captured_text().strip()
         if not reply:
@@ -184,7 +187,12 @@ class AstrBotMessagePipelineAdapter:
             reply = _delivery_plan_text(event).strip()
             if reply:
                 self._record_reply_recovered(source="delivery_plan")
-        # A tool-only action is still a valid turn.  AstrBot may finish after
+        if not reply and text_reply_required:
+            self.status = "empty_reply"
+            self.last_error = "astrbot_pipeline_reply_required_missing"
+            self._record_required_reply_missing()
+            raise MessagePipelineEmpty(self.last_error)
+        # A tool-only action is still a valid turn. AstrBot may finish after
         # executing the action tool without emitting a textual assistant reply;
         # do not discard the selected dance/turn intent as an empty response.
         if not reply and selected_intent is not None:
@@ -281,6 +289,22 @@ class AstrBotMessagePipelineAdapter:
                 phase="eventbus",
                 status="recovered",
                 result=source,
+            )
+        except Exception:
+            return
+
+    def _record_required_reply_missing(self) -> None:
+        recorder = getattr(self.logger, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                "message_pipeline.required_reply_missing",
+                component="message_pipeline",
+                phase="eventbus",
+                status="error",
+                reason_code="astrbot_pipeline_reply_required_missing",
+                reply_required=True,
             )
         except Exception:
             return
@@ -518,6 +542,7 @@ def _build_capture_event(
     if supported_actions is not None:
         event.set_extra(BRIDGE_SUPPORTED_ACTIONS, tuple(supported_actions))
     event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
+    event.set_extra(BRIDGE_TEXT_REPLY_REQUIRED, requires_text_reply(user_text))
     if (
         fast_action_active
         and isinstance(fast_action_feedback, dict)

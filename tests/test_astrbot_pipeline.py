@@ -189,7 +189,7 @@ def test_stopped_eventbus_result_preserves_postprocessed_reply(
 
         decision = await adapter.generate(
             session=session(),
-            user_text="向我挥挥手",
+            user_text="请自然地挥挥手，并同时简短回复我。",
             fast_action_active=True,
             fast_action_feedback={
                 "explicit_action": True,
@@ -208,6 +208,48 @@ def test_stopped_eventbus_result_preserves_postprocessed_reply(
                 "phase": "eventbus",
                 "status": "recovered",
                 "result": "event_result",
+            },
+        )
+
+    asyncio.run(scenario())
+
+
+def test_required_reply_cannot_be_silently_downgraded_to_action_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = CaptureEventStub("", stopped=True)
+        diagnostic = DiagnosticStub()
+        feedback = {BRIDGE_FAST_ACTION_SELECTED: "wave"}
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        with pytest.raises(
+            astrbot_pipeline.MessagePipelineEmpty,
+            match="astrbot_pipeline_reply_required_missing",
+        ):
+            await adapter.generate(
+                session=session(),
+                user_text="请自然地挥挥手，并同时简短回复我。",
+                fast_action_active=True,
+                fast_action_feedback=feedback,
+            )
+
+        assert adapter.status == "empty_reply"
+        assert adapter.last_error == "astrbot_pipeline_reply_required_missing"
+        assert diagnostic.events[-1] == (
+            "message_pipeline.required_reply_missing",
+            {
+                "component": "message_pipeline",
+                "phase": "eventbus",
+                "status": "error",
+                "reason_code": "astrbot_pipeline_reply_required_missing",
+                "reply_required": True,
             },
         )
 

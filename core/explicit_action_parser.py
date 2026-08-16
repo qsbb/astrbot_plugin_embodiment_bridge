@@ -39,7 +39,7 @@ _ZH_PREFIX = (
     r"让(?:她|他|角色|它)?|叫(?:她|他|角色|它)?|帮我|请她|请他|请角色|"
     r"我让(?:她|他|角色|它)?|我想让(?:她|他|角色|它)?|你|她|他|角色|它|"
     r"开始|直接|来)\s*)?"
-    r"(?:(?:随便)\s*)?"
+    r"(?:(?:随便|自然(?:地)?|轻轻(?:地)?)\s*)?"
 )
 _ZH_SUFFIX = r"\s*(?:(?:一下|一下吧|吧|吗|嘛|可以吗|好不好))?[。！!？?]?"
 _EN_PREFIX = r"(?:(?:please|now|please\s+now|now\s+please)\s+)?"
@@ -144,6 +144,32 @@ _DISCUSSION_RE = re.compile(
     r"|\b(?:discuss|explain|what\s+does|how\s+to|why|whether|about|example)\b",
     re.IGNORECASE,
 )
+_ZH_REPLY_SUFFIX_RE = re.compile(
+    r"\s*(?=[,，、;；]|并|同时|也|还|顺便)[,，、;；]?\s*"
+    r"(?:并(?:且)?\s*)?(?:(?:同时|也|还|顺便)\s*)?"
+    r"(?:请\s*)?(?:(?:简短|简单)(?:地)?\s*)?"
+    r"(?:回复|回答|回应|答复)(?:我(?:一下|一句|几句)?|一下|一句|几句|这个问题)?"
+    r"[。！!？?]?\s*$",
+    re.IGNORECASE,
+)
+_EN_REPLY_SUFFIX_RE = re.compile(
+    r"\s*,?\s*(?:and|while)\s+(?:also\s+)?(?:briefly\s+)?"
+    r"(?:reply|respond|answer)(?:\s+(?:to\s+)?me)?[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_DIRECT_REPLY_REQUEST_RE = re.compile(
+    r"^(?:请\s*)?(?:(?:简短|简单)(?:地)?\s*)?"
+    r"(?:回复|回答|回应|答复)(?:我(?:一下|一句|几句)?|一下|一句|几句|这个问题)[。！!？?]?$"
+    r"|^(?:please\s+)?(?:briefly\s+)?(?:reply|respond|answer)"
+    r"(?:\s+(?:to\s+)?me|\s+too|\s+as\s+well)[.!?]?$",
+    re.IGNORECASE,
+)
+_NEGATED_REPLY_RE = re.compile(
+    r"(?:不要|别|无需|不用|不必)\s*(?:(?:再|同时|也)\s*)?"
+    r"(?:回复|回答|回应|答复)"
+    r"|\b(?:do\s+not|don't|dont|never)\s+(?:reply|respond|answer)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_explicit_action(text: str) -> ExplicitActionResult:
@@ -160,13 +186,23 @@ def parse_explicit_action(text: str) -> ExplicitActionResult:
     if rejection:
         return ExplicitActionResult(None, "rejected", rejection, False)
 
+    action_text = _strip_required_reply_suffix(normalized)
     matches = [
         action
         for action, patterns in _COMPILED_ACTIONS.items()
-        if any(pattern.fullmatch(normalized) for pattern in patterns)
+        if any(pattern.fullmatch(action_text) for pattern in patterns)
     ]
     if len(matches) == 1:
-        return ExplicitActionResult(matches[0], "matched", "explicit_imperative", False)
+        return ExplicitActionResult(
+            matches[0],
+            "matched",
+            (
+                "explicit_imperative_with_reply"
+                if action_text != normalized
+                else "explicit_imperative"
+            ),
+            False,
+        )
     if len(matches) > 1:
         return ExplicitActionResult(None, "ambiguous", "multiple_actions", False)
 
@@ -181,6 +217,30 @@ def _normalize(text: str) -> str:
     if not isinstance(text, str):
         return ""
     return " ".join(unicodedata.normalize("NFKC", text).strip().split())
+
+
+def requires_text_reply(text: str) -> bool:
+    """Recognize a bounded, explicit request for same-turn reply text."""
+    normalized = _normalize(text)
+    if not normalized or len(normalized) > MAX_COMMAND_CHARS * 2:
+        return False
+    if _NEGATED_REPLY_RE.search(normalized):
+        return False
+    return bool(
+        _ZH_REPLY_SUFFIX_RE.search(normalized)
+        or _EN_REPLY_SUFFIX_RE.search(normalized)
+        or _DIRECT_REPLY_REQUEST_RE.search(normalized)
+    )
+
+
+def _strip_required_reply_suffix(text: str) -> str:
+    if not requires_text_reply(text):
+        return text
+    for pattern in (_ZH_REPLY_SUFFIX_RE, _EN_REPLY_SUFFIX_RE):
+        match = pattern.search(text)
+        if match is not None and match.start() > 0:
+            return text[: match.start()].rstrip(" ,，、;；")
+    return text
 
 
 def _rejection_reason(text: str, *, has_action_mention: bool) -> str:

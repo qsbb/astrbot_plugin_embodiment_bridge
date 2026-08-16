@@ -65,6 +65,7 @@ _PUBLIC_PIPELINE_REASONS = frozenset(
         "astrbot_pipeline_no_response",
         "astrbot_pipeline_not_woken",
         "astrbot_pipeline_reply_capture_empty",
+        "astrbot_pipeline_reply_required_missing",
         "astrbot_pipeline_timeout",
         "authorization_denied",
         "authorization_error",
@@ -1350,6 +1351,8 @@ class TurnOrchestrator:
             return "AstrBot 消息事件未被唤醒规则接受"
         if reason == "astrbot_pipeline_event_stopped":
             return "AstrBot 消息事件在唤醒后被白名单、会话状态或插件中止"
+        if reason == "astrbot_pipeline_reply_required_missing":
+            return "AstrBot 消息链未产生本轮明确要求的文字回复"
         if reason == "astrbot_pipeline_reply_capture_empty":
             return "AstrBot 已执行发送，但临未捕获到可用文字"
         if reason in {

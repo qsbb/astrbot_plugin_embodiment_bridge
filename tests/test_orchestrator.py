@@ -329,6 +329,16 @@ def test_pipeline_error_uses_safe_session_authorization_reason() -> None:
             )
             == "astrbot_message_pipeline_unavailable"
         )
+        assert (
+            orchestrator._public_pipeline_reason(
+                session,
+                MessagePipelineEmpty("astrbot_pipeline_reply_required_missing"),
+            )
+            == "astrbot_pipeline_reply_required_missing"
+        )
+        assert "明确要求的文字回复" in orchestrator._pipeline_error_message(
+            "astrbot_pipeline_reply_required_missing"
+        )
         await sessions.terminate()
 
     asyncio.run(scenario())
@@ -1048,7 +1058,7 @@ def test_finish_audio_preselects_explicit_action_and_orders_one_intent_before_re
             ),
             release=release,
         )
-        stt = STTTextStub("请向我挥手")
+        stt = STTTextStub("请自然地挥挥手，并同时简短回复我。")
         sessions, session, orchestrator = await build_orchestrator(
             DecisionStub(
                 decision(

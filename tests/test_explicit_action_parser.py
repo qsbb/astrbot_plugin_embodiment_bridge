@@ -6,6 +6,7 @@ from astrbot_plugin_embodiment_bridge.core.explicit_action_parser import (
     MAX_COMMAND_CHARS,
     ExplicitActionResult,
     parse_explicit_action,
+    requires_text_reply,
 )
 
 
@@ -185,3 +186,40 @@ def test_turn_around_alias_is_a_single_explicit_action(text: str) -> None:
     result = parse_explicit_action(text)
     assert result.action == "turn_half"
     assert result.status == "matched"
+
+
+@pytest.mark.parametrize(
+    ("text", "action"),
+    [
+        ("请自然地挥挥手，并同时简短回复我。", "wave"),
+        ("请蹲一下，也回答我一句。", "crouch"),
+        ("Please wave at me and briefly reply to me.", "wave"),
+    ],
+)
+def test_action_plus_reply_is_one_explicit_action_with_required_text(
+    text: str,
+    action: str,
+) -> None:
+    result = parse_explicit_action(text)
+
+    assert result == ExplicitActionResult(
+        action=action,
+        status="matched",
+        reason="explicit_imperative_with_reply",
+        allow_model_tool=False,
+    )
+    assert requires_text_reply(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "请挥挥手。",
+        "不要回复我，只挥手。",
+        "她回复我的时候挥了挥手。",
+        "她说晚点会回复",
+        "Do not reply, just wave.",
+    ],
+)
+def test_reply_requirement_does_not_expand_action_only_or_negated_text(text: str) -> None:
+    assert requires_text_reply(text) is False

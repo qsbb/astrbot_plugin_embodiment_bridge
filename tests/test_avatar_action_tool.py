@@ -26,6 +26,7 @@ from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_SUPPORTED_ACTIONS,
+    BRIDGE_TEXT_REPLY_REQUIRED,
 )
 
 
@@ -148,6 +149,70 @@ def test_eventbus_and_fast_action_arbitrate_one_action_without_racing() -> None:
             "code": "fast_action_already_selected",
         }
         assert read_selected_intent(fast_first) is None
+
+    asyncio.run(scenario())
+
+
+def test_fast_selected_action_suppresses_late_eventbus_tool_exposure() -> None:
+    event = EventStub(quest=True)
+    event.set_extra(BRIDGE_SUPPORTED_ACTIONS, ("wave", "crouch"))
+    event.set_extra(
+        BRIDGE_FAST_ACTION_FEEDBACK,
+        {BRIDGE_FAST_ACTION_SELECTED: "wave"},
+    )
+    request = SimpleNamespace(func_tool=None, system_prompt="base")
+    records: list[tuple[str, dict[str, Any]]] = []
+
+    exposed = inject_quest_action_tool(
+        request,
+        event,
+        lambda *_args, **_kwargs: asyncio.sleep(0, result="unused"),
+        lambda name, **fields: records.append((name, fields)),
+    )
+
+    assert exposed is False
+    assert request.func_tool is None
+    assert records == [
+        (
+            "avatar.action.tool_skipped",
+            {
+                "component": "action",
+                "operation": "wave",
+                "status": "skipped",
+                "reason_code": "fast_action_already_selected",
+                "action_source": "fast_provider",
+            },
+        )
+    ]
+
+
+def test_late_tool_race_requires_model_to_continue_explicit_reply() -> None:
+    async def scenario() -> None:
+        event = EventStub(quest=True)
+        event.set_extra(BRIDGE_SUPPORTED_ACTIONS, ("wave", "crouch"))
+        event.set_extra(BRIDGE_TEXT_REPLY_REQUIRED, True)
+        event.set_extra(
+            BRIDGE_FAST_ACTION_FEEDBACK,
+            {BRIDGE_FAST_ACTION_SELECTED: "wave"},
+        )
+        records: list[tuple[str, dict[str, Any]]] = []
+
+        result = json.loads(
+            await execute_quest_action(
+                event,
+                action="crouch",
+                diagnostic=lambda name, **fields: records.append((name, fields)),
+            )
+        )
+
+        assert result == {
+            "status": "superseded",
+            "code": "fast_action_already_selected",
+            "reply_required": True,
+        }
+        assert read_selected_intent(event) is None
+        assert records[-1][0] == "avatar.action.tool_superseded"
+        assert records[-1][1]["reply_required"] is True
 
     asyncio.run(scenario())
 

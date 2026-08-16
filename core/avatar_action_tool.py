@@ -21,6 +21,7 @@ from .plugin_identity import (
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_SUPPORTED_ACTIONS,
+    BRIDGE_TEXT_REPLY_REQUIRED,
     LEGACY_BRIDGE_EVENT_MARKER,
 )
 
@@ -134,6 +135,16 @@ def _fast_action_feedback_holder(event: Any) -> dict[str, object] | None:
     return holder if isinstance(holder, dict) else None
 
 
+def _text_reply_required(event: Any) -> bool:
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return False
+    try:
+        return getter(BRIDGE_TEXT_REPLY_REQUIRED) is True
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def inject_quest_action_tool(
     request: Any,
     event: Any,
@@ -157,6 +168,24 @@ def inject_quest_action_tool(
             status="skipped",
             reason_code="client_has_no_supported_actions",
             action_source=MODEL_TOOL_SOURCE,
+        )
+        return False
+    feedback_holder = _fast_action_feedback_holder(event)
+    fast_selected = (
+        feedback_holder.get(BRIDGE_FAST_ACTION_SELECTED)
+        if feedback_holder is not None
+        else None
+    )
+    if isinstance(fast_selected, str):
+        selected_name = AvatarSkillRegistry.normalize_action_name(fast_selected)
+        _diagnostic(
+            diagnostic,
+            "avatar.action.tool_skipped",
+            component="action",
+            operation=selected_name or "none",
+            status="skipped",
+            reason_code="fast_action_already_selected",
+            action_source="fast_provider",
         )
         return False
     selected = read_selected_intent(event)
@@ -297,7 +326,12 @@ def inject_quest_action_tool(
         get_tool = getattr(tool_set, "get_tool", None)
         existing = get_tool(QUEST_ACTION_TOOL_NAME) if callable(get_tool) else None
         if existing is not None and getattr(existing, "handler", None) == handler:
-            _inject_action_prompt(request, diagnostic, supported_actions)
+            _inject_action_prompt(
+                request,
+                diagnostic,
+                supported_actions,
+                reply_required=_text_reply_required(event),
+            )
             return True
         # Replace a same-name entry rather than trusting a handler supplied by
         # another plugin or a stale plugin instance.
@@ -326,7 +360,12 @@ def inject_quest_action_tool(
         event_count=len(supported_actions),
         action_source=MODEL_TOOL_SOURCE,
     )
-    _inject_action_prompt(request, diagnostic, supported_actions)
+    _inject_action_prompt(
+        request,
+        diagnostic,
+        supported_actions,
+        reply_required=_text_reply_required(event),
+    )
     return True
 
 
@@ -509,17 +548,27 @@ async def execute_quest_action(
                 feedback_holder.get(BRIDGE_FAST_ACTION_SELECTED), str
             )
         ):
+            reply_required = _text_reply_required(event)
             _diagnostic(
                 diagnostic,
-                "avatar.action.rejected",
+                (
+                    "avatar.action.tool_superseded"
+                    if reply_required
+                    else "avatar.action.rejected"
+                ),
                 component="action",
                 operation=normalized_action,
-                status="rejected",
+                status="superseded" if reply_required else "rejected",
                 reason_code="fast_action_already_selected",
                 duration_ms=(time.perf_counter() - started) * 1000,
                 action_source=normalized_source,
+                reply_required=reply_required,
             )
-            return _result("rejected", "fast_action_already_selected")
+            return _result(
+                "superseded" if reply_required else "rejected",
+                "fast_action_already_selected",
+                reply_required=reply_required,
+            )
         arguments: dict[str, Any] = {
             "emotion": emotion,
             "intensity": intensity,
@@ -611,9 +660,12 @@ async def execute_quest_action(
         return _result("failed", "action_store_failed")
 
 
-def _result(status: str, code: str) -> str:
+def _result(status: str, code: str, *, reply_required: bool = False) -> str:
+    payload: dict[str, object] = {"status": status, "code": code}
+    if reply_required:
+        payload["reply_required"] = True
     return json.dumps(
-        {"status": status, "code": code}, ensure_ascii=False, separators=(",", ":")
+        payload, ensure_ascii=False, separators=(",", ":")
     )
 
 
@@ -621,6 +673,8 @@ def _inject_action_prompt(
     request: Any,
     diagnostic: Callable[..., None] | None,
     supported_actions: tuple[str, ...],
+    *,
+    reply_required: bool = False,
 ) -> None:
     current = str(getattr(request, "system_prompt", "") or "")
     if QUEST_ACTION_PROMPT_MARKER in current:
@@ -638,6 +692,7 @@ def _inject_action_prompt(
 普通说话无需调用。不得生成动画路径、文件路径、骨骼名或白名单外动作。
 工具返回 rejected/failed 时，不得声称动作已经成功完成。工具返回 accepted 也只
 表示动作已计划并发给客户端；同轮只能说“我试试/现在开始”，不能说动作已经完成。
+{"用户明确要求同时回复；即使工具返回 superseded，也必须继续生成简短正文。" if reply_required else ""}
 只有后续认证回执中的 completed 才证明身体实际完成。
 """
     request.system_prompt = current + instruction

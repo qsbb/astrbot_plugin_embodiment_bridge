@@ -537,8 +537,13 @@ class FastActionDecisionAdapter:
             "explicitly requested action. For non-command conversation, autonomously "
             "choose one subtle natural action when the user's emotion, greeting, "
             "agreement, hesitation, or shared context gives a clear reason; this does "
-            "not require an explicit action request. Still use null for routine factual "
-            "exchange or when no action adds meaning. Do not answer the user. "
+            "not require an explicit action request. Use wave for a greeting, reunion, "
+            "or farewell; bow for a clear thanks or apology; raise_hand for enthusiastic "
+            "agreement, volunteering, or a strong celebration; and dance only for an "
+            "unmistakably celebratory moment. Keep sit, lie, crouch, turn_half, and "
+            "dance_next explicit-only unless the current utterance directly asks for "
+            "them. Still use null for routine factual exchange or when no action adds "
+            "meaning. Do not answer the user. "
             "Return exactly one compact JSON object and no markdown: "
             '{"action":null} or '
             '{"action":{"name":"<name>","arguments":{"emotion":"neutral",'

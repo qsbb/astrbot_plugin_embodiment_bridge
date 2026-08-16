@@ -54,6 +54,7 @@ from .core.plugin_identity import (
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
+    BRIDGE_TEXT_REPLY_REQUIRED,
     LEGACY_BRIDGE_EVENT_MARKER,
     PLUGIN_ID,
 )
@@ -69,7 +70,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.10"
+__version__ = "1.0.11"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -147,6 +148,7 @@ def _build_fast_action_feedback_overlay(event: Any) -> str:
             return ""
         holder = event.get_extra(BRIDGE_FAST_ACTION_FEEDBACK)
         raw_snapshot = holder.get("snapshot") if isinstance(holder, dict) else None
+        text_reply_required = event.get_extra(BRIDGE_TEXT_REPLY_REQUIRED) is True
     except (AttributeError, RuntimeError, TypeError, ValueError):
         return ""
     try:
@@ -159,6 +161,13 @@ def _build_fast_action_feedback_overlay(event: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+    reply_requirement = (
+        " The user explicitly requested a same-turn verbal reply. You MUST "
+        "finish this EventBus turn with a brief textual reply after action "
+        "arbitration; an action selection or tool result is not the reply."
+        if text_reply_required
+        else ""
+    )
     return (
         "\n\n# Parallel embodied action controller\n"
         "This same-turn controller snapshot is non-blocking and non-authoritative. "
@@ -168,7 +177,9 @@ def _build_fast_action_feedback_overlay(event: Any) -> str:
         "means this client cannot execute that method, so say so plainly. Do not "
         "choose another action and do not claim completion from this snapshot. "
         "Only authenticated terminal outcomes in embodiment_action_facts_json prove "
-        "what the body actually completed, rejected, or interrupted.\n"
+        "what the body actually completed, rejected, or interrupted."
+        + reply_requirement
+        + "\n"
         f"<embodiment_fast_action_feedback_json>{payload}"
         "</embodiment_fast_action_feedback_json>"
     )

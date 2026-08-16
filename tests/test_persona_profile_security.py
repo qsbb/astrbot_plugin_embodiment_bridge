@@ -1162,6 +1162,35 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
             "persona.overlay.injected",
         ]
 
+        reply_required_event = EventStub(
+            True,
+            "请自然地挥挥手，并同时简短回复我。",
+            fast_action_active=True,
+            fast_action_explicit=True,
+        )
+        reply_required_event.extras.update(
+            {
+                "embodiment_bridge.protected_context_authorized": True,
+                "embodiment_bridge.text_reply_required": True,
+                "embodiment_bridge.fast_action_feedback": {
+                    "snapshot": {
+                        "status": "processing",
+                        "action": None,
+                        "execution_confirmed": False,
+                    }
+                },
+            }
+        )
+        feedback_overlay = module._build_fast_action_feedback_overlay(
+            reply_required_event
+        )
+        assert "MUST finish this EventBus turn with a brief textual reply" in (
+            feedback_overlay
+        )
+        assert "an action selection or tool result is not the reply" in (
+            feedback_overlay
+        )
+
     asyncio.run(scenario())
 
 

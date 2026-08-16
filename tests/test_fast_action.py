@@ -372,6 +372,18 @@ def test_fast_action_distinguishes_no_action_from_invalid_output() -> None:
     asyncio.run(scenario())
 
 
+def test_fast_action_prompt_maps_autonomous_contexts_to_bounded_actions() -> None:
+    prompt = FastActionDecisionAdapter._system_prompt(
+        ("wave", "bow", "raise_hand", "dance", "sit", "lie", "crouch", "turn_half")
+    )
+
+    assert "wave for a greeting, reunion, or farewell" in prompt
+    assert "bow for a clear thanks or apology" in prompt
+    assert "raise_hand for enthusiastic agreement" in prompt
+    assert "dance only for an unmistakably celebratory moment" in prompt
+    assert "sit, lie, crouch, turn_half, and dance_next explicit-only" in prompt
+
+
 def test_fast_action_ready_snapshot_does_not_report_stale_not_configured() -> None:
     adapter = FastActionDecisionAdapter(
         ContextStub('{"action":null}'),

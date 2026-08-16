@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.10-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.10-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.10-1")
+    assert '<script type="module" src="./app.js?v=1.0.11-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.11-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.11-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -50,6 +50,9 @@ def test_operator_page_labels_fast_action_and_eventbus_terminal_states() -> None
     assert '"fast_action.parsed_no_action"' in js
     assert '"fast_action.parse_invalid"' in js
     assert '"message_pipeline.stopped_after_fast_action"' in js
+    assert '"message_pipeline.required_reply_missing"' in js
+    assert '"avatar.action.tool_superseded"' in js
+    assert "astrbot_pipeline_reply_required_missing:" in js
     assert "fast_action_invalid_output:" in js
     assert "astrbot_pipeline_event_stopped:" in js
 
