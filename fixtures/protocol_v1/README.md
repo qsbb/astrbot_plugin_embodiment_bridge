@@ -13,6 +13,8 @@
 - `manifest.json` 固定路由、枚举、关键事件、错误响应和成功事件顺序。
 - `spatial_context.payload.json` / `spatial_context.response.json` 固定脱敏房间语义快照的严格字段与 revision 响应；该扩展使用独立整数 `schema_version=1`，不接受通用 `protocol_version` 字段。
 - `action_result.request.json` / `action_result.response.json` 固定客户端动作执行回执；`action_id` 示例仅用于 schema 联调，生产值必须取自服务端 `avatar.intent`，不得由客户端自建。
+- `session_start.request.json` 声明客户端动作能力；服务端响应返回注册表交集。省略该字段表示旧客户端，继续支持原动作但不会收到 `crouch`。
+- `avatar.intent` 的 `method/parameters/transition/source` 是有界动作方法扩展；`method` 必须等于兼容字段 `gesture`。
 - 可执行 `avatar.intent` 样本中的 `action_id` 是规范化占位值。真实 contract tests 会先校验服务端生成值的格式，再规范化比较，避免把随机 token 固化到 fixture。
 - `manifest.json` 同时固定受保护上下文的失败关闭来源规则和系列插件消费边界；Unity 不得提交或覆盖服务端可信 `api_principal/client_id/platform_id`。
 

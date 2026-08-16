@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
 
+from .avatar_skills import AvatarSkillRegistry
 from .models import (
+    ActionSource,
     AvatarIntent,
     Emotion,
     Gesture,
@@ -32,6 +34,7 @@ class InteractionPolicy:
         decision: ModelDecision,
         interaction: InteractionEvent | None,
         relationship: dict[str, Any] | None,
+        action_source: ActionSource | str = ActionSource.DIRECT_MODEL,
     ) -> AvatarIntent:
         proposed = decision.intent
         emotion = proposed.emotion
@@ -40,6 +43,10 @@ class InteractionPolicy:
         intensity = min(max(float(proposed.intensity), 0.0), self.max_intensity)
         duration_ms = min(max(int(proposed.duration_ms), 0), self.max_duration_ms)
         reason_code = proposed.reason_code
+        try:
+            source = ActionSource(action_source)
+        except ValueError:
+            source = ActionSource.FALLBACK
 
         boundary = self._relationship_boundary(relationship)
         continuous_touch_limit = self._exceeds_continuous_touch_limit(interaction)
@@ -56,6 +63,7 @@ class InteractionPolicy:
                 if continuous_touch_limit
                 else "boundary_safety_override"
             )
+            source = ActionSource.INTERACTION_POLICY
 
         now = monotonic()
         cooldown_key = (session_id, gesture)
@@ -67,9 +75,23 @@ class InteractionPolicy:
             gesture = Gesture.IDLE
             duration_ms = min(duration_ms, 600)
             reason_code = "gesture_cooldown"
+            source = ActionSource.INTERACTION_POLICY
         elif gesture not in {Gesture.IDLE, Gesture.TALK}:
             self._last_gesture_at[cooldown_key] = now
 
+        default_parameters, default_transition = AvatarSkillRegistry.defaults_for(
+            gesture
+        )
+        parameters = (
+            proposed.action_parameters
+            if gesture is proposed.gesture and proposed.action_parameters is not None
+            else default_parameters
+        )
+        transition = (
+            proposed.transition
+            if gesture is proposed.gesture and proposed.transition is not None
+            else default_transition
+        )
         return AvatarIntent(
             session_id=session_id,
             turn_id=turn_id,
@@ -80,6 +102,10 @@ class InteractionPolicy:
             intensity=intensity,
             duration_ms=duration_ms,
             reason_code=reason_code,
+            method=gesture,
+            parameters=parameters,
+            transition=transition,
+            source=source,
         )
 
     def _exceeds_continuous_touch_limit(

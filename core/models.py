@@ -57,6 +57,39 @@ class Gesture(StrEnum):
     LIE = "lie"
     NOD = "nod"
     SWAY = "sway"
+    CROUCH = "crouch"
+
+
+class ActionStyle(StrEnum):
+    NATURAL = "natural"
+    GENTLE = "gentle"
+    ENERGETIC = "energetic"
+
+
+class ActionSource(StrEnum):
+    EXPLICIT_REQUEST = "explicit_request"
+    FAST_PROVIDER = "fast_provider"
+    EVENTBUS_TOOL = "eventbus_tool"
+    DIRECT_MODEL = "direct_model"
+    INTERACTION_POLICY = "interaction_policy"
+    FALLBACK = "fallback"
+
+
+class ActionParameters(StrictModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    angle_degrees: float | None = Field(default=None, ge=-180.0, le=180.0)
+    depth: float | None = Field(default=None, ge=0.0, le=1.0)
+    hold_ms: int | None = Field(default=None, ge=0, le=30_000)
+    style: ActionStyle = ActionStyle.NATURAL
+
+
+class ActionTransition(StrictModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    enter_ms: int = Field(default=350, ge=0, le=5_000)
+    exit_ms: int = Field(default=350, ge=0, le=5_000)
+    easing: Literal["smoothstep", "ease_in_out"] = "smoothstep"
 
 
 class LookAt(StrEnum):
@@ -120,6 +153,10 @@ class SessionStartRequest(StrictModel):
     bot_id: OptionalScope
     group_id: OptionalScope = ""
     relationship_profile_id: OptionalScope = ""
+    supported_actions: tuple[Gesture, ...] | None = Field(
+        default=None,
+        max_length=32,
+    )
 
     @field_validator("group_id", mode="before")
     @classmethod
@@ -132,6 +169,10 @@ class SessionStartRequest(StrictModel):
     def require_relationship_scope(self) -> SessionStartRequest:
         if not self.user_id or not self.bot_id:
             raise ValueError("user_id and bot_id are required")
+        if self.supported_actions is not None and len(set(self.supported_actions)) != len(
+            self.supported_actions
+        ):
+            raise ValueError("supported_actions must not contain duplicates")
         return self
 
 
@@ -303,6 +344,39 @@ class VerifiedActionFacts(StrictModel):
     facts: tuple[VerifiedActionFact, ...] = Field(max_length=8)
 
 
+class FastActionFeedback(StrictModel):
+    """Bounded, non-authoritative state shared with the same-turn reply model."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal[
+        "processing",
+        "planned",
+        "unsupported",
+        "no_action",
+        "unavailable",
+        "error",
+    ]
+    action: Gesture | None = None
+    execution_confirmed: bool = False
+
+    @field_validator("execution_confirmed", mode="before")
+    @classmethod
+    def require_unconfirmed(cls, value: Any) -> bool:
+        if value is not False:
+            raise ValueError("same-turn feedback can never confirm execution")
+        return False
+
+    @model_validator(mode="after")
+    def align_status_and_action(self) -> FastActionFeedback:
+        action_statuses = {"planned", "unsupported"}
+        if self.status in action_statuses and self.action is None:
+            raise ValueError("action-bearing feedback requires an action")
+        if self.status not in action_statuses and self.action is not None:
+            raise ValueError("only action-bearing feedback can include an action")
+        return self
+
+
 class SpatialContextRequest(StrictModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -378,6 +452,8 @@ class ProposedIntent(StrictModel):
             pattern=r"^[a-z][a-z0-9_]*$",
         ),
     ] = "model_decision"
+    action_parameters: ActionParameters | None = None
+    transition: ActionTransition | None = None
 
 
 class AvatarActionCall(StrictModel):
@@ -416,6 +492,16 @@ class AvatarIntent(StrictModel):
     intensity: float = Field(ge=0.0, le=1.0)
     duration_ms: int = Field(ge=0, le=30_000)
     reason_code: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    method: Gesture
+    parameters: ActionParameters = Field(default_factory=ActionParameters)
+    transition: ActionTransition = Field(default_factory=ActionTransition)
+    source: ActionSource
+
+    @model_validator(mode="after")
+    def align_method_and_gesture(self) -> AvatarIntent:
+        if self.method is not self.gesture:
+            raise ValueError("method must match gesture")
+        return self
 
 
 def safe_neutral_decision(reason_code: str = "invalid_model_output") -> ModelDecision:

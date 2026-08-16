@@ -38,7 +38,7 @@ from .core.data_migration import prepare_plugin_data_dir
 from .core.config_persistence import config_is_writable, save_config_changes
 from .core.config_migration import load_legacy_config_changes
 from .core.interaction_policy import InteractionPolicy
-from .core.models import SpatialContextSnapshot, VerifiedActionFacts
+from .core.models import FastActionFeedback, SpatialContextSnapshot, VerifiedActionFacts
 from .core.operator_settings import OperatorSettings
 from .core.pairing import PairingExchangeService, PairingManager
 from .core.persona_profiles import PersonaProfileStore
@@ -50,6 +50,7 @@ from .core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
     BRIDGE_FAST_ACTION_ACTIVE,
+    BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
     LEGACY_BRIDGE_EVENT_MARKER,
@@ -67,7 +68,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -131,6 +132,44 @@ def _build_action_facts_overlay(event: Any) -> str:
         "means the action did not complete.\n"
         f"<embodiment_action_facts_json>{facts}"
         "</embodiment_action_facts_json>"
+    )
+
+
+def _build_fast_action_feedback_overlay(event: Any) -> str:
+    """Describe same-turn action-controller state without claiming execution."""
+    try:
+        if event.get_extra(BRIDGE_EVENT_MARKER) is not True:
+            return ""
+        if event.get_extra(BRIDGE_PROTECTED_CONTEXT_AUTHORIZED) is not True:
+            return ""
+        if event.get_extra(BRIDGE_FAST_ACTION_ACTIVE) is not True:
+            return ""
+        holder = event.get_extra(BRIDGE_FAST_ACTION_FEEDBACK)
+        raw_snapshot = holder.get("snapshot") if isinstance(holder, dict) else None
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+    try:
+        feedback = FastActionFeedback.model_validate(raw_snapshot)
+    except (TypeError, ValidationError):
+        return ""
+    payload = json.dumps(
+        feedback.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        "\n\n# Parallel embodied action controller\n"
+        "This same-turn controller snapshot is non-blocking and non-authoritative. "
+        "planned means an allowlisted intent was sent to the client, not that the "
+        "body executed or completed it. execution_confirmed is always false here. "
+        "For planned, describe only starting or attempting the action. unsupported "
+        "means this client cannot execute that method, so say so plainly. Do not "
+        "choose another action and do not claim completion from this snapshot. "
+        "Only authenticated terminal outcomes in embodiment_action_facts_json prove "
+        "what the body actually completed, rejected, or interrupted.\n"
+        f"<embodiment_fast_action_feedback_json>{payload}"
+        "</embodiment_fast_action_feedback_json>"
     )
 
 
@@ -244,6 +283,7 @@ class EmbodimentBridgePlugin(Star):
             timeout_seconds=self._float_config(
                 "fast_action_timeout_seconds", 4.0, 0.5, 15.0
             ),
+            diagnostic_log=self._component_logger,
         )
         self.astrbot_stt = AstrBotSTTAdapter(
             context,
@@ -656,6 +696,11 @@ class EmbodimentBridgePlugin(Star):
                 self._execute_quest_avatar_action,
                 self.diagnostic_log.record,
             )
+        fast_action_feedback_overlay = _build_fast_action_feedback_overlay(event)
+        if fast_action_feedback_overlay:
+            current = str(getattr(req, "system_prompt", "") or "")
+            if "<embodiment_fast_action_feedback_json>" not in current:
+                req.system_prompt = current + fast_action_feedback_overlay
         spatial_overlay = _build_spatial_context_overlay(event)
         if spatial_overlay:
             current = str(getattr(req, "system_prompt", "") or "")

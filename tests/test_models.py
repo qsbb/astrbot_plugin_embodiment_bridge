@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from astrbot_plugin_embodiment_bridge.core.intent_parser import IntentParser
 from astrbot_plugin_embodiment_bridge.core.models import (
+    AvatarIntent,
     AudioChunkRequest,
     Emotion,
     Gesture,
@@ -76,6 +77,17 @@ def test_session_schema_rejects_whitespace_only_group_scope() -> None:
         SessionStartRequest.model_validate(
             {**payload, "persona": {"system_prompt": "client content"}}
         )
+    declared = SessionStartRequest.model_validate(
+        {**payload, "supported_actions": ["talk", "crouch"]}
+    )
+    assert [action.value for action in declared.supported_actions or ()] == [
+        "talk",
+        "crouch",
+    ]
+    with pytest.raises(ValidationError):
+        SessionStartRequest.model_validate(
+            {**payload, "supported_actions": ["crouch", "crouch"]}
+        )
 
 
 def test_turn_start_accepts_unity_text_and_audio_shapes() -> None:
@@ -128,3 +140,25 @@ def test_intent_parser_rejects_markdown_wrapped_json() -> None:
         '```json\n{"should_reply":false,"reply_text":"","intent":{}}\n```'
     )
     assert decision.intent.reason_code == "invalid_model_output"
+
+
+def test_avatar_action_method_must_match_compatibility_gesture() -> None:
+    payload = {
+        "session_id": "s1",
+        "turn_id": "t1",
+        "emotion": "neutral",
+        "gesture": "crouch",
+        "look_at": "user",
+        "intensity": 0.5,
+        "duration_ms": 2100,
+        "reason_code": "explicit_request",
+        "method": "crouch",
+        "parameters": {"depth": 0.55, "hold_ms": 900, "style": "natural"},
+        "transition": {"enter_ms": 550, "exit_ms": 650, "easing": "ease_in_out"},
+        "source": "explicit_request",
+    }
+    intent = AvatarIntent.model_validate(payload)
+    assert intent.method is Gesture.CROUCH
+    assert intent.parameters.depth == 0.55
+    with pytest.raises(ValidationError):
+        AvatarIntent.model_validate({**payload, "method": "wave"})

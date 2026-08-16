@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Callable
 
+from .avatar_skills import AvatarSkillRegistry
 from .models import (
     ActionResultRequest,
     ActionResultStatus,
@@ -203,6 +204,11 @@ class TurnState:
     fast_action_active: bool = False
     fast_action_selected: bool = False
     fast_action_intent: AvatarIntent | None = None
+    fast_action_source: str = "fast_provider"
+    # A mutable one-key holder is attached to the synthetic EventBus event.
+    # Replacing ``snapshot`` is atomic on the event loop and exposes only a
+    # validated action enum/status, never the task, prompt, or user text.
+    fast_action_feedback: dict[str, object] = field(default_factory=dict)
     intent_emitted: bool = False
     primary_intent_gesture: str = ""
     reply_ended: bool = False
@@ -253,6 +259,8 @@ class SessionState:
     bot_id: str
     group_id: str
     relationship_profile_id: str
+    supported_actions: tuple[str, ...]
+    supported_actions_declared: bool
     queue: BoundedEventQueue
     protected_context_authorized: bool = False
     context_authorization_reason: str = "not_checked"
@@ -338,6 +346,10 @@ class SessionManager:
                 bot_id=request.bot_id,
                 group_id=request.group_id,
                 relationship_profile_id=request.relationship_profile_id,
+                supported_actions=AvatarSkillRegistry.supported_names(
+                    request.supported_actions
+                ),
+                supported_actions_declared=request.supported_actions is not None,
                 queue=BoundedEventQueue(self.event_queue_size),
                 protected_context_authorized=protected_context_authorized,
                 context_authorization_reason=str(
@@ -365,7 +377,16 @@ class SessionManager:
             and session.bot_id == request.bot_id
             and session.group_id == request.group_id
             and session.relationship_profile_id == request.relationship_profile_id
+            and session.supported_actions
+            == AvatarSkillRegistry.supported_names(request.supported_actions)
+            and session.supported_actions_declared
+            == (request.supported_actions is not None)
         )
+
+    @staticmethod
+    def supports_action(session: SessionState, action: Gesture | str) -> bool:
+        normalized = AvatarSkillRegistry.normalize_action_name(action)
+        return normalized is not None and normalized in session.supported_actions
 
     async def get_owned(self, session_id: str, owner: str) -> SessionState:
         async with self._lock:

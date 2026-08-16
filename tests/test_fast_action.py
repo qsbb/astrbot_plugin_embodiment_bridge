@@ -31,6 +31,31 @@ class BrokenCatalogContext(ContextStub):
         raise OSError("catalog unavailable")
 
 
+class StreamProvider:
+    class _Meta:
+        id = "fast-model"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def meta(self) -> Any:
+        return self._Meta()
+
+    async def text_chat_stream(self, **kwargs: Any):
+        self.calls.append(dict(kwargs))
+        yield SimpleNamespace(completion_text='{"action":', is_chunk=True)
+        yield SimpleNamespace(completion_text='"wave"}', is_chunk=True)
+
+
+class StreamContext(ContextStub):
+    def __init__(self, provider: StreamProvider) -> None:
+        super().__init__('{"action":null}')
+        self.provider = provider
+
+    def get_all_providers(self) -> list[Any]:
+        return [self.provider]
+
+
 def test_fast_action_selects_only_an_allowlisted_action() -> None:
     async def scenario() -> None:
         context = ContextStub(
@@ -71,6 +96,40 @@ def test_fast_action_selects_only_an_allowlisted_action() -> None:
     asyncio.run(scenario())
 
 
+def test_fast_action_uses_public_provider_stream_and_reports_phases() -> None:
+    async def scenario() -> None:
+        provider = StreamProvider()
+        diagnostic = SimpleNamespace(events=[])
+
+        def record(event: str, **fields: Any) -> None:
+            diagnostic.events.append((event, fields))
+
+        adapter = FastActionDecisionAdapter(
+            StreamContext(provider),
+            enabled=True,
+            provider_id="fast-model",
+            timeout_seconds=1,
+            diagnostic_log=SimpleNamespace(record=record),
+        )
+        intent = await adapter.decide(user_text="hello")
+
+        assert intent is not None
+        assert intent.gesture.value == "wave"
+        assert len(provider.calls) == 1
+        assert provider.calls[0]["request_max_retries"] == 1
+        names = [event for event, _fields in diagnostic.events]
+        assert names == [
+            "fast_action.provider_resolved",
+            "fast_action.request_queued",
+            "fast_action.first_chunk",
+            "fast_action.provider_completed",
+            "fast_action.parsed",
+        ]
+        assert adapter.snapshot()["last_method"] == "direct_stream"
+
+    asyncio.run(scenario())
+
+
 def test_fast_action_fails_closed_for_null_unknown_and_extra_arguments() -> None:
     for completion in (
         '{"action":null}',
@@ -80,6 +139,38 @@ def test_fast_action_fails_closed_for_null_unknown_and_extra_arguments() -> None
         "not-json",
     ):
         assert FastActionDecisionAdapter._parse(completion) is None
+
+
+def test_fast_action_respects_client_action_intersection_and_bounds_crouch() -> None:
+    raw = json.dumps(
+        {
+            "action": {
+                "name": "squat",
+                "arguments": {
+                    "depth": 4,
+                    "hold_ms": 900,
+                    "transition_in_ms": 550,
+                    "transition_out_ms": 650,
+                },
+            }
+        }
+    )
+
+    assert (
+        FastActionDecisionAdapter._parse(raw, allowed_actions=("wave",)) is None
+    )
+    intent = FastActionDecisionAdapter._parse(
+        raw,
+        allowed_actions=("wave", "crouch"),
+    )
+    assert intent is not None
+    assert intent.gesture.value == "crouch"
+    assert intent.action_parameters is not None
+    assert intent.action_parameters.depth == 1
+    assert intent.action_parameters.hold_ms == 900
+    assert intent.transition is not None
+    assert intent.transition.enter_ms == 550
+    assert intent.transition.exit_ms == 650
 
 
 def test_fast_action_timeout_does_not_return_a_stale_action() -> None:

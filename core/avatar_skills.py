@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any
 
-from .models import Emotion, Gesture, LookAt, ProposedIntent
+from .models import (
+    ActionParameters,
+    ActionStyle,
+    ActionTransition,
+    Emotion,
+    Gesture,
+    LookAt,
+    ProposedIntent,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +25,9 @@ class AvatarSkill:
     default_look_at: LookAt = LookAt.USER
     default_intensity: float = 0.45
     default_duration_ms: int = 2_000
+    default_parameters: ActionParameters = ActionParameters()
+    default_transition: ActionTransition = ActionTransition()
+    parameter_names: tuple[str, ...] = ()
 
 
 class AvatarSkillRegistry:
@@ -80,6 +92,9 @@ class AvatarSkillRegistry:
             LookAt.USER,
             0.55,
             2_400,
+            ActionParameters(angle_degrees=180.0),
+            ActionTransition(enter_ms=450, exit_ms=450),
+            ("angle_degrees",),
         ),
         AvatarSkill(
             "sit",
@@ -102,6 +117,17 @@ class AvatarSkillRegistry:
         ),
         AvatarSkill(
             "sway", Gesture.SWAY, "Use a subtle idle sway", LookAt.USER, 0.25, 2_000
+        ),
+        AvatarSkill(
+            "crouch",
+            Gesture.CROUCH,
+            "Crouch naturally while keeping both feet planted",
+            LookAt.USER,
+            0.5,
+            2_100,
+            ActionParameters(depth=0.55, hold_ms=900),
+            ActionTransition(enter_ms=550, exit_ms=650, easing="ease_in_out"),
+            ("depth", "hold_ms"),
         ),
         AvatarSkill(
             "handshake",
@@ -157,11 +183,39 @@ class AvatarSkillRegistry:
         "turn_around": "turn_half",
         "half_turn": "turn_half",
         "raise_hand": "raise_hand",
+        "crouch": "crouch",
+        "squat": "crouch",
     }
+
+    # A Protocol 1.0 client that omits capability negotiation predates crouch.
+    # Preserve every action it could already receive, but never opt it into a
+    # method whose Unity implementation may not exist.
+    _legacy_client_names = tuple(
+        skill.name for skill in _skills if skill.gesture is not Gesture.CROUCH
+    )
 
     @classmethod
     def names(cls) -> tuple[str, ...]:
         return tuple(skill.name for skill in cls._skills)
+
+    @classmethod
+    def legacy_client_names(cls) -> tuple[str, ...]:
+        return cls._legacy_client_names
+
+    @classmethod
+    def supported_names(cls, declared: Iterable[str | Gesture] | None) -> tuple[str, ...]:
+        if declared is None:
+            return cls.legacy_client_names()
+        requested = {
+            item.value if isinstance(item, Gesture) else str(item).strip().lower()
+            for item in declared
+        }
+        return tuple(name for name in cls.names() if name in requested)
+
+    @classmethod
+    def supports(cls, name: Any, supported: Iterable[str | Gesture]) -> bool:
+        normalized = cls.normalize_action_name(name)
+        return normalized is not None and normalized in cls.supported_names(supported)
 
     @classmethod
     def normalize_action_name(cls, value: Any) -> str | None:
@@ -202,13 +256,16 @@ class AvatarSkillRegistry:
         return (
             "Avatar skills are allowlisted methods, not free-form animation commands. "
             "For the direct JSON fallback only, set action to "
-            '{"name":"<skill>","arguments":{"intensity":0.0,"duration_ms":0,"look_at":"user|hand|away|none"}} '
+            '{"name":"<skill>","arguments":{"intensity":0.0,"duration_ms":0,'
+            '"look_at":"user|hand|away|none","style":"natural|gentle|energetic"}} '
             "and keep intent consistent. On an AstrBot Quest EventBus turn, call the "
             "embodiment_avatar_action function tool with its top-level action argument instead. "
             "Available skills: "
             + skills
             + ". Use null action for a normal reply. A tool call is one action decision "
-            "for the turn; do not invent animation names or file paths."
+            "for the turn; do not invent animation names or file paths. turn_half may "
+            "use angle_degrees; crouch may use depth and hold_ms. An accepted or planned "
+            "same-turn action is only starting, never proof that execution completed."
         )
 
     @classmethod
@@ -217,16 +274,67 @@ class AvatarSkillRegistry:
         if skill is None:
             return None
         args = arguments if isinstance(arguments, dict) else {}
-        if any(
-            str(key) not in {"emotion", "intensity", "duration_ms", "look_at"}
-            for key in args
-        ):
+        common = {
+            "emotion",
+            "intensity",
+            "duration_ms",
+            "look_at",
+            "style",
+            "transition_in_ms",
+            "transition_out_ms",
+        }
+        if any(str(key) not in common | set(skill.parameter_names) for key in args):
             return None
         emotion = cls._emotion(args.get("emotion"), Emotion.NEUTRAL)
         look_at = cls._look_at(args.get("look_at"), skill.default_look_at)
         intensity = cls._bounded_float(args.get("intensity"), skill.default_intensity)
         duration_ms = cls._bounded_int(
             args.get("duration_ms"), skill.default_duration_ms
+        )
+        try:
+            style = (
+                ActionStyle(str(args["style"]).strip().lower())
+                if args.get("style") is not None
+                else skill.default_parameters.style
+            )
+        except ValueError:
+            return None
+        parameters = ActionParameters(
+            angle_degrees=(
+                cls._bounded_number(
+                    args.get("angle_degrees"),
+                    skill.default_parameters.angle_degrees,
+                    -180.0,
+                    180.0,
+                )
+                if "angle_degrees" in skill.parameter_names
+                else None
+            ),
+            depth=(
+                cls._bounded_number(
+                    args.get("depth"),
+                    skill.default_parameters.depth,
+                    0.0,
+                    1.0,
+                )
+                if "depth" in skill.parameter_names
+                else None
+            ),
+            hold_ms=(
+                cls._bounded_int(args.get("hold_ms"), skill.default_parameters.hold_ms or 0)
+                if "hold_ms" in skill.parameter_names
+                else None
+            ),
+            style=style,
+        )
+        transition = ActionTransition(
+            enter_ms=cls._bounded_transition(
+                args.get("transition_in_ms"), skill.default_transition.enter_ms
+            ),
+            exit_ms=cls._bounded_transition(
+                args.get("transition_out_ms"), skill.default_transition.exit_ms
+            ),
+            easing=skill.default_transition.easing,
         )
         return ProposedIntent(
             emotion=emotion,
@@ -235,7 +343,16 @@ class AvatarSkillRegistry:
             intensity=intensity,
             duration_ms=duration_ms,
             reason_code=f"skill_{skill.name}",
+            action_parameters=parameters,
+            transition=transition,
         )
+
+    @classmethod
+    def defaults_for(cls, gesture: Gesture) -> tuple[ActionParameters, ActionTransition]:
+        skill = cls._by_name.get(gesture.value)
+        if skill is None:
+            return ActionParameters(), ActionTransition()
+        return skill.default_parameters, skill.default_transition
 
     @staticmethod
     def _bounded_float(value: Any, default: float) -> float:
@@ -252,6 +369,29 @@ class AvatarSkillRegistry:
             return default
         try:
             return max(0, min(30_000, int(value)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _bounded_transition(value: Any, default: int) -> int:
+        if value is None or isinstance(value, bool):
+            return default
+        try:
+            return max(0, min(5_000, int(value)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _bounded_number(
+        value: Any,
+        default: float | None,
+        lower: float,
+        upper: float,
+    ) -> float | None:
+        if value is None or isinstance(value, bool):
+            return default
+        try:
+            return max(lower, min(upper, float(value)))
         except (TypeError, ValueError):
             return default
 

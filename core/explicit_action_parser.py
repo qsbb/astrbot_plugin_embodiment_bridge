@@ -15,6 +15,7 @@ ActionName = Literal[
     "bow",
     "sit",
     "lie",
+    "crouch",
 ]
 ParseStatus = Literal["matched", "rejected", "ambiguous", "not_explicit"]
 
@@ -79,6 +80,10 @@ _ACTION_PATTERNS: dict[ActionName, tuple[str, ...]] = {
         rf"{_ZH_PREFIX}(?:躺下|躺一会儿){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:lie\s+down){_EN_SUFFIX}",
     ),
+    "crouch": (
+        rf"{_ZH_PREFIX}(?:下蹲|蹲下|蹲一下|蹲下来){_ZH_SUFFIX}",
+        rf"{_EN_PREFIX}(?:crouch|squat|crouch\s+down|squat\s+down){_EN_SUFFIX}",
+    ),
 }
 
 _COMPILED_ACTIONS = {
@@ -111,6 +116,10 @@ _MENTION_PATTERNS: dict[ActionName, re.Pattern[str]] = {
     "bow": re.compile(r"鞠躬|鞠个躬|鞠一下躬|\bbow\b", re.IGNORECASE),
     "sit": re.compile(r"坐下|请坐|坐一会儿|\bsit(?:\s+down)?\b", re.IGNORECASE),
     "lie": re.compile(r"躺下|躺一会儿|\blie\s+down\b", re.IGNORECASE),
+    "crouch": re.compile(
+        r"下蹲|蹲下|蹲一下|蹲下来|\bcrouch(?:\s+down)?\b|\bsquat(?:\s+down)?\b",
+        re.IGNORECASE,
+    ),
 }
 
 _QUOTED_RE = re.compile(r"[\"“”‘’「」『』《》〈〉]|(?<![A-Za-z])'|'(?![A-Za-z])")
@@ -159,10 +168,10 @@ def parse_explicit_action(text: str) -> ExplicitActionResult:
     if len(matches) == 1:
         return ExplicitActionResult(matches[0], "matched", "explicit_imperative", False)
     if len(matches) > 1:
-        return ExplicitActionResult(None, "ambiguous", "multiple_actions", True)
+        return ExplicitActionResult(None, "ambiguous", "multiple_actions", False)
 
     if len(mentions) > 1:
-        return ExplicitActionResult(None, "ambiguous", "multiple_actions", True)
+        return ExplicitActionResult(None, "ambiguous", "multiple_actions", False)
     if mentions:
         return ExplicitActionResult(None, "not_explicit", "not_full_match", True)
     return ExplicitActionResult(None, "not_explicit", "no_action_mentioned", True)

@@ -21,6 +21,9 @@ from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
     stage_explicit_action,
 )
 from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
+from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_SUPPORTED_ACTIONS,
+)
 
 
 class EventStub:
@@ -299,7 +302,7 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
     assert tool.handler is handler
     assert tool.parameters["additionalProperties"] is False
     assert tool.parameters["properties"]["action"]["enum"] == list(
-        AvatarSkillRegistry.names()
+        AvatarSkillRegistry.legacy_client_names()
     )
     assert QUEST_ACTION_PROMPT_MARKER in quest_request.system_prompt
     assert "dance_next" in quest_request.system_prompt
@@ -338,14 +341,49 @@ def test_tool_is_injected_only_into_quest_request(monkeypatch: Any) -> None:
                 lambda name, **fields: records.append((name, fields)),
             )
         )
-        == "tool_exposed"
+        == "unsafe_context"
     )
-    assert len(ambiguous_request.func_tool.tools) == 1
+    assert ambiguous_request.func_tool is None
     assert read_selected_intent(ambiguous_event) is None
     assert records[0][0] == "avatar.action.explicit_parse"
     assert records[0][1]["status"] == "ambiguous"
-    assert records[-2][0] == "avatar.action.tool_exposed"
-    assert records[-1][0] == "avatar.action.prompt_injected"
+    assert records[-1][0] == "avatar.action.tool_skipped"
+
+
+def test_declared_client_capabilities_expose_crouch_and_bounded_parameters(
+    monkeypatch: Any,
+) -> None:
+    class FakeFunctionTool:
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeToolSet:
+        def __init__(self) -> None:
+            self.tools: list[Any] = []
+
+        def add_tool(self, tool: Any) -> None:
+            self.tools.append(tool)
+
+        def get_tool(self, _name: str) -> None:
+            return None
+
+    tool_module = types.ModuleType("astrbot.core.agent.tool")
+    tool_module.FunctionTool = FakeFunctionTool
+    tool_module.ToolSet = FakeToolSet
+    monkeypatch.setitem(sys.modules, "astrbot.core.agent.tool", tool_module)
+
+    event = EventStub(quest=True)
+    event.set_extra(BRIDGE_SUPPORTED_ACTIONS, ("wave", "crouch"))
+    request = SimpleNamespace(func_tool=None, system_prompt="")
+
+    async def handler(_event: Any, **kwargs: Any) -> str:
+        return await execute_quest_action(_event, diagnostic=None, **kwargs)
+
+    assert inject_quest_action_tool(request, event, handler, None) is True
+    properties = request.func_tool.tools[0].parameters["properties"]
+    assert properties["action"]["enum"] == ["wave", "crouch"]
+    assert properties["depth"]["maximum"] == 1
+    assert properties["hold_ms"]["maximum"] == 30_000
 
 
 def test_action_allowlist_contains_current_protocol_capabilities() -> None:

@@ -81,6 +81,27 @@ def test_session_isolation_and_ownership() -> None:
     asyncio.run(scenario())
 
 
+def test_session_action_capabilities_are_explicit_and_legacy_safe() -> None:
+    async def scenario() -> None:
+        manager = SessionManager(max_sessions=2)
+        legacy = await manager.start_session(session_request("legacy"), "api_key:one")
+        assert manager.supports_action(legacy, "wave") is True
+        assert manager.supports_action(legacy, "crouch") is False
+        assert legacy.supported_actions_declared is False
+
+        declared_request = session_request("declared", "quest-b").model_copy(
+            update={"supported_actions": ("wave", "crouch")}
+        )
+        declared = await manager.start_session(declared_request, "api_key:two")
+        assert declared.supported_actions == ("wave", "crouch")
+        assert declared.supported_actions_declared is True
+        assert manager.supports_action(declared, "crouch") is True
+        assert manager.supports_action(declared, "dance") is False
+        await manager.terminate()
+
+    asyncio.run(scenario())
+
+
 def test_identical_session_start_refreshes_authorization_but_identity_changes_conflict() -> (
     None
 ):

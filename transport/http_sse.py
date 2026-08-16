@@ -170,6 +170,10 @@ class HttpSseTransport:
                 status="ready" if authorization.authorized else "limited",
                 authorized=authorization.authorized,
                 reason_code=authorization.reason,
+                supported_action_count=len(session.supported_actions),
+                action_capability_mode=(
+                    "declared" if session.supported_actions_declared else "legacy"
+                ),
             )
             return json_response(
                 {
@@ -178,6 +182,14 @@ class HttpSseTransport:
                         "protocol_version": PROTOCOL_VERSION,
                         "session_id": session.session_id,
                         "events_url": f"{PUBLIC_API_PREFIX}/events/{session.session_id}",
+                        "capabilities": {
+                            "supported_actions": list(session.supported_actions),
+                            "action_capability_mode": (
+                                "declared"
+                                if session.supported_actions_declared
+                                else "legacy"
+                            ),
+                        },
                         "protected_context": {
                             "authorized": authorization.authorized,
                             "reason": authorization.reason,
@@ -347,6 +359,8 @@ class HttpSseTransport:
                 status=outcome.lifecycle_status.value,
                 terminal=outcome.terminal,
                 idempotent=outcome.idempotent,
+                reason_code=payload.reason_code.value,
+                duration_ms=payload.duration_ms,
             )
             return json_response(
                 {

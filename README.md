@@ -93,7 +93,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
 | `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作；关闭、未配置或 Provider 缺失时才由主回复链路处理 |
 | `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
-| `fast_action_timeout_seconds` | `4.0` | 快速动作调用上限；超时只放弃快速结果，不中断主回复 |
+| `fast_action_timeout_seconds` | `4.0` | 快速动作调用上限；超时不影响主回复，只有严格整句白名单命令可由保守解析器兜底 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
 | `quest_direct_dialogue_mode` | `false` | 无平台身份的基础对话模式；不进入 EventBus，不需要 Bot/User 或“序”，关系/记忆/其他消息插件不会注入 |
@@ -115,6 +115,8 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `active_quest_persona_id` | 空 | 当前启用的具身人格文件；空值表示实时继承 AstrBot |
 
 Provider 下拉列表和管理响应只返回必要的安全摘要，不返回 API Key、Base URL、请求头或原始 Provider 配置。完整配置项和人格边界见 [API 文档](docs/API_CN.md) 与 [人格集成文档](docs/PERSONA_INTEGRATION_CN.md)。
+
+快速动作结果分为两层：同轮回复最多看到“动作计划已发送、尚未确认执行”的有界快照，因此不得声称动作已经完成；客户端通过双重认证回报 `completed/rejected/interrupted` 后，后续同会话 EventBus 轮次才会把该终态作为身体事实读取。明确的整句动作命令（包括“下蹲/蹲下/crouch/squat”）直接由严格解析器选择，不等待快速 Provider；否定、引用、假设、讨论或多动作表达不会猜测执行。
 
 ## Protocol 1.0
 
@@ -149,9 +151,9 @@ SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.del
 
 空间快照只包含有界的物体计数与能力布尔值，30 秒未刷新即失效；官方客户端以 15 秒低频续租，并对相同内容去重。图像、网格、坐标、尺寸、锚点和自由文本不会进入该通道。
 
-交互事实只接受 `handshake`、`head_pat`、`cheek_pinch`、`gaze` 和 `speaking`。角色意图只包含受控的 `emotion`、`gesture`、`look_at`、强度和时长；未知字段、枚举或越界值不会透传给客户端。
+交互事实只接受 `handshake`、`head_pat`、`cheek_pinch`、`gaze` 和 `speaking`。角色意图使用受控的 `action_id + method + parameters + transition + source`，并保留 `gesture` 等旧字段。转身只允许有界角度，下蹲只允许深度与保持时间，未知字段、枚举或越界值不会透传给客户端。
 
-可执行动作的 `avatar.intent` 会附带服务端生成的 `action_id`。客户端以 `/action/result` 回报 `accepted -> started -> completed`，或回报 `rejected` / `interrupted`；`idle`、`talk` 无需回执。只有经过双层认证且匹配原动作计划的终态，才会作为有界、短时的身体事实注入后续具身 EventBus 轮次；它不授予身份、权限或动作执行许可。不实现回执的既有 Protocol 1.0 客户端仍可继续消费意图和完成对话。
+`session.start.supported_actions` 是可选能力声明；服务端和模型只使用声明值与服务端注册动作的交集。省略它的旧客户端继续使用旧动作集，但不会收到新增 `crouch`。可执行动作的 `avatar.intent` 会附带服务端生成的 `action_id`。客户端以 `/action/result` 回报 `accepted -> started -> completed`，或回报 `rejected` / `interrupted`；`idle`、`talk` 无需回执。只有经过双层认证且匹配原动作计划的终态，才会作为有界、短时的身体事实注入后续具身 EventBus 轮次。
 
 内置 listener 的匿名能力只限新插件 ID 下的精确 `POST .../pairing/exchange`。它接受一次性 token 或 6 位短码，并实施凭据过期、单次消费、正文限制、来源限速和全局限速；其他运行接口仍必须携带双层认证。
 

@@ -26,6 +26,8 @@ from astrbot_plugin_embodiment_bridge.core.explicit_action_parser import (
         ("鞠个躬吧", "bow"),
         ("请坐", "sit"),
         ("躺下！", "lie"),
+        ("请蹲一下", "crouch"),
+        ("下蹲", "crouch"),
     ],
 )
 def test_matches_bounded_whole_message_chinese_imperatives(
@@ -111,14 +113,14 @@ def test_rejects_non_command_contexts(text: str, reason: str) -> None:
     assert result.allow_model_tool is False
 
 
-def test_multiple_actions_are_ambiguous_and_left_for_bounded_model_tool() -> None:
+def test_multiple_actions_are_ambiguous_and_fail_closed() -> None:
     result = parse_explicit_action("先跳舞，然后挥手")
 
     assert result == ExplicitActionResult(
         action=None,
         status="ambiguous",
         reason="multiple_actions",
-        allow_model_tool=True,
+        allow_model_tool=False,
     )
 
 
@@ -165,6 +167,8 @@ def test_overlong_input_fails_closed_before_matching() -> None:
         ("take a bow", "bow"),
         ("sit down", "sit"),
         ("lie down", "lie"),
+        ("crouch down", "crouch"),
+        ("squat", "crouch"),
     ],
 )
 def test_matches_clear_english_imperatives(text: str, action: str) -> None:

@@ -1306,6 +1306,96 @@ def test_action_facts_overlay_is_terminal_bounded_and_bridge_authorized_only(
     asyncio.run(scenario())
 
 
+def test_same_turn_fast_action_feedback_is_nonblocking_and_never_execution_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EventStub:
+        def __init__(self, snapshot: object, *, authorized: object = True) -> None:
+            self.message_str = "请挥手"
+            self.extras = {
+                "embodiment_bridge": True,
+                "embodiment_bridge.protected_context_authorized": authorized,
+                "embodiment_bridge.fast_action_active": True,
+                "embodiment_bridge.fast_action_feedback": {"snapshot": snapshot},
+            }
+
+        def get_extra(self, key: str) -> object:
+            return self.extras.get(key)
+
+        def set_extra(self, key: str, value: object) -> None:
+            self.extras[key] = value
+
+    async def scenario() -> None:
+        install_astrbot_stubs(monkeypatch, tmp_path)
+        module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
+        plugin = object.__new__(module.EmbodimentBridgePlugin)
+        plugin.llm = SimpleNamespace(quest_persona_prompt="")
+        plugin.diagnostic_log = DiagnosticCapture()
+
+        for invalid in (
+            {
+                "status": "planned",
+                "action": "run_shell",
+                "execution_confirmed": False,
+            },
+            {
+                "status": "planned",
+                "action": "wave",
+                "execution_confirmed": True,
+            },
+            {
+                "status": "completed",
+                "action": "wave",
+                "execution_confirmed": False,
+            },
+        ):
+            request = SimpleNamespace(system_prompt="base", func_tool=None)
+            await plugin.inject_quest_persona(EventStub(invalid), request)
+            assert "embodiment_fast_action_feedback_json" not in request.system_prompt
+
+        request = SimpleNamespace(system_prompt="base", func_tool=None)
+        event = EventStub(
+            {
+                "status": "processing",
+                "action": None,
+                "execution_confirmed": False,
+            }
+        )
+        # The action task replaces one bounded snapshot without making the
+        # EventBus request await it.
+        event.extras["embodiment_bridge.fast_action_feedback"]["snapshot"] = {
+            "status": "planned",
+            "action": "wave",
+            "execution_confirmed": False,
+        }
+        await plugin.inject_quest_persona(event, request)
+        await plugin.inject_quest_persona(event, request)
+        assert request.system_prompt.count(
+            "<embodiment_fast_action_feedback_json>"
+        ) == 1
+        assert '"action":"wave"' in request.system_prompt
+        assert '"execution_confirmed":false' in request.system_prompt
+        assert "not that the body executed or completed it" in request.system_prompt
+        assert "action_id" not in request.system_prompt
+
+        unauthorized = SimpleNamespace(system_prompt="base", func_tool=None)
+        await plugin.inject_quest_persona(
+            EventStub(
+                {
+                    "status": "planned",
+                    "action": "wave",
+                    "execution_confirmed": False,
+                },
+                authorized=False,
+            ),
+            unauthorized,
+        )
+        assert "embodiment_fast_action_feedback_json" not in unauthorized.system_prompt
+
+    asyncio.run(scenario())
+
+
 def test_eventbus_hook_preselects_explicit_action_before_persona_without_tool(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -12,6 +12,7 @@ from ..core.models import (
     LookAt,
     ModelDecision,
     ProposedIntent,
+    FastActionFeedback,
     VerifiedActionFacts,
 )
 from ..core.avatar_action_tool import read_selected_intent, stage_explicit_action
@@ -19,9 +20,11 @@ from ..core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
     BRIDGE_FAST_ACTION_ACTIVE,
+    BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
+    BRIDGE_SUPPORTED_ACTIONS,
     LEGACY_BRIDGE_EVENT_MARKER,
     LEGACY_BRIDGE_IDENTITY_CONTEXT,
 )
@@ -95,6 +98,7 @@ class AstrBotMessagePipelineAdapter:
         session: SessionState,
         user_text: str,
         fast_action_active: bool = False,
+        fast_action_feedback: dict[str, object] | None = None,
         action_facts: list[dict[str, Any]] | None = None,
     ) -> ModelDecision:
         started = time.perf_counter()
@@ -143,7 +147,9 @@ class AstrBotMessagePipelineAdapter:
             protected_context_authorized=session.protected_context_authorized,
             spatial_context=_session_spatial_context(session),
             fast_action_active=fast_action_active,
+            fast_action_feedback=fast_action_feedback,
             action_facts=action_facts,
+            supported_actions=getattr(session, "supported_actions", None),
         )
         try:
             queue_getter().put_nowait(event)
@@ -297,7 +303,9 @@ def _build_capture_event(
     protected_context_authorized: bool = False,
     spatial_context: dict[str, Any] | None = None,
     fast_action_active: bool = False,
+    fast_action_feedback: dict[str, object] | None = None,
     action_facts: list[dict[str, Any]] | None = None,
+    supported_actions: tuple[str, ...] | None = None,
 ) -> Any:
     # Imports stay lazy so plugin discovery still degrades cleanly on older
     # AstrBot builds that do not expose the complete EventBus ABI.
@@ -394,11 +402,27 @@ def _build_capture_event(
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
     event.set_extra(BRIDGE_EVENT_MARKER, True)
+    if supported_actions is not None:
+        event.set_extra(BRIDGE_SUPPORTED_ACTIONS, tuple(supported_actions))
     event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
     event.set_extra(
         BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
         bool(protected_context_authorized),
     )
+    if (
+        protected_context_authorized
+        and fast_action_active
+        and isinstance(fast_action_feedback, dict)
+    ):
+        snapshot = fast_action_feedback.get("snapshot")
+        try:
+            FastActionFeedback.model_validate(snapshot)
+        except (TypeError, ValueError):
+            pass
+        else:
+            # Keep the bounded holder by reference. The action task replaces
+            # only ``snapshot``; the request hook reads it without awaiting.
+            event.set_extra(BRIDGE_FAST_ACTION_FEEDBACK, fast_action_feedback)
     if protected_context_authorized and spatial_context is not None:
         event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))
     if protected_context_authorized and action_facts:

@@ -266,6 +266,7 @@ async def build_orchestrator(
     tts: Any | None = None,
     diagnostic: Any | None = None,
     fast_action: Any | None = None,
+    supported_actions: tuple[str, ...] | None = None,
 ):
     sessions = SessionManager(event_queue_size=queue_size, interaction_debounce_ms=0)
     session = await sessions.start_session(
@@ -274,6 +275,7 @@ async def build_orchestrator(
             client_id="quest",
             user_id="user",
             bot_id="bot",
+            supported_actions=supported_actions,
         ),
         "owner",
     )
@@ -742,7 +744,7 @@ def test_fast_action_runs_beside_reply_and_emits_at_most_one_intent() -> None:
         )
         await orchestrator.start_turn(
             session,
-            TurnStartRequest(session_id="s1", turn_id="t-fast", text="dance"),
+            TurnStartRequest(session_id="s1", turn_id="t-fast", text="今天真适合跳舞"),
         )
         await asyncio.wait_for(fast.started.wait(), timeout=1)
         await asyncio.wait_for(slow_reply.started.wait(), timeout=1)
@@ -766,7 +768,7 @@ def test_fast_action_runs_beside_reply_and_emits_at_most_one_intent() -> None:
     asyncio.run(scenario())
 
 
-def test_fast_action_failure_uses_local_talk_instead_of_main_reply_action() -> None:
+def test_fast_action_failure_uses_strict_explicit_request_not_main_reply_action() -> None:
     async def scenario() -> None:
         sessions, session, orchestrator = await build_orchestrator(
             DecisionStub(
@@ -787,9 +789,41 @@ def test_fast_action_failure_uses_local_talk_instead_of_main_reply_action() -> N
         events = await collect_until_end(session)
         intents = [event for event in events if event["type"] == "avatar.intent"]
         assert len(intents) == 1
+        assert intents[0]["gesture"] == "wave"
+        assert intents[0]["reason_code"] == "explicit_request"
+        assert any(event["type"] == "reply.text.delta" for event in events)
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_fast_action_failure_does_not_guess_negated_or_discussed_action() -> None:
+    async def scenario() -> None:
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.HAPPY,
+                    Gesture.WAVE,
+                    LookAt.USER,
+                    "main_action_must_be_ignored",
+                    "hello",
+                )
+            ),
+            fast_action=FailingFastActionStub(),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(
+                session_id="s1",
+                turn_id="t-negated-fallback",
+                text="不要挥手，只是讨论一下挥手动作",
+            ),
+        )
+        events = await collect_until_end(session)
+        intents = [event for event in events if event["type"] == "avatar.intent"]
+        assert len(intents) == 1
         assert intents[0]["gesture"] == "talk"
         assert intents[0]["reason_code"] == "fast_action_no_action"
-        assert any(event["type"] == "reply.text.delta" for event in events)
         await orchestrator.close()
 
     asyncio.run(scenario())
@@ -859,7 +893,7 @@ def test_main_reply_waits_for_parallel_fast_action_instead_of_winning_race() -> 
         )
         await orchestrator.start_turn(
             session,
-            TurnStartRequest(session_id="s1", turn_id="t-main-first", text="dance"),
+            TurnStartRequest(session_id="s1", turn_id="t-main-first", text="今天真适合跳舞"),
         )
         reply = orchestrator.llm
         assert isinstance(reply, LateDecisionStub)
@@ -920,7 +954,7 @@ def test_fast_action_stays_before_reply_end_under_critical_queue_backpressure() 
 
         await orchestrator.start_turn(
             session,
-            TurnStartRequest(session_id="s1", turn_id="t-backpressure", text="wave"),
+            TurnStartRequest(session_id="s1", turn_id="t-backpressure", text="今天真适合挥手"),
         )
         await asyncio.wait_for(fast.started.wait(), timeout=1)
         release.set()
@@ -948,7 +982,7 @@ def test_fast_action_stays_before_reply_end_under_critical_queue_backpressure() 
     asyncio.run(scenario())
 
 
-def test_finish_audio_runs_fast_selector_and_orders_one_intent_before_reply() -> None:
+def test_finish_audio_preselects_explicit_action_and_orders_one_intent_before_reply() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
         release.set()
@@ -995,8 +1029,9 @@ def test_finish_audio_runs_fast_selector_and_orders_one_intent_before_reply() ->
         events = await collect_until_end(session)
         event_types = [event["type"] for event in events]
         assert stt.calls == 1
-        assert len(fast.calls) == 1
-        assert fast.calls[0]["user_text"] == "请向我挥手"
+        # A bounded explicit imperative is resolved locally so a configured
+        # fast-action provider cannot add a needless model round trip.
+        assert len(fast.calls) == 0
         assert event_types == [
             "asr.final",
             "avatar.intent",
@@ -1012,6 +1047,125 @@ def test_finish_audio_runs_fast_selector_and_orders_one_intent_before_reply() ->
             intent_index < event_types.index(event_type)
             for event_type in ("reply.text.delta", "reply.audio.chunk", "reply.end")
         )
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_voice_explicit_action_survives_fast_provider_timeout() -> None:
+    async def scenario() -> None:
+        stt = STTTextStub("请转个身")
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "好。",
+                )
+            ),
+            stt=stt,
+            fast_action=FailingFastActionStub(),
+            tts=TTSStub(available=False),
+        )
+        turn = await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-audio-timeout"),
+        )
+        await sessions.add_audio_chunk(
+            session,
+            AudioChunkRequest(
+                session_id="s1",
+                turn_id=turn.turn_id,
+                sequence=0,
+                data="AAAAAA==",
+            ),
+        )
+        await orchestrator.finish_audio(session, turn.turn_id)
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert stt.calls == 1
+        assert intent["gesture"] == "turn_half"
+        assert intent["reason_code"] == "explicit_request"
+        assert sum(event["type"] == "avatar.intent" for event in events) == 1
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_explicit_crouch_bypasses_fast_provider_and_emits_bounded_method() -> None:
+    async def scenario() -> None:
+        release = asyncio.Event()
+        fast = FastActionStub(None, release=release)
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "我现在开始。",
+                )
+            ),
+            fast_action=fast,
+            supported_actions=("talk", "crouch"),
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-crouch", text="请蹲一下"),
+        )
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert fast.calls == []
+        assert intent["gesture"] == "crouch"
+        assert intent["method"] == "crouch"
+        assert intent["parameters"] == {
+            "angle_degrees": None,
+            "depth": 0.55,
+            "hold_ms": 900,
+            "style": "natural",
+        }
+        assert intent["transition"] == {
+            "enter_ms": 550,
+            "exit_ms": 650,
+            "easing": "ease_in_out",
+        }
+        assert intent["source"] == "explicit_request"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_legacy_client_cannot_receive_new_crouch_method() -> None:
+    async def scenario() -> None:
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.CROUCH,
+                    LookAt.USER,
+                    "main_reply",
+                    "这个客户端还不能下蹲。",
+                )
+            ),
+            fast_action=None,
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-legacy", text="请蹲下"),
+        )
+        events = await collect_until_end(session)
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert intent["gesture"] == "talk"
+        assert intent["reason_code"] == "client_action_unsupported"
+        assert "action_id" not in intent
+        text = "".join(
+            event["text"] for event in events if event["type"] == "reply.text.delta"
+        )
+        assert text == "这个动作当前客户端还不支持。"
         await orchestrator.close()
 
     asyncio.run(scenario())

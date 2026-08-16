@@ -203,7 +203,7 @@ class PersonaConverter:
                     # Preserve the total conversion budget as the primary
                     # contract when it expires during a busy stream. The
                     # idle-specific code only describes an inactivity gap.
-                    if total_deadline_wins:
+                    if total_deadline_wins or time.monotonic() >= deadline:
                         code = "conversion_timeout"
                     elif received_any:
                         code = "conversion_stream_idle_timeout"

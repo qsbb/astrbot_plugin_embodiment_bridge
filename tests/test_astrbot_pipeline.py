@@ -495,6 +495,13 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     monkeypatch.setitem(sys.modules, "astrbot.api.platform", platform_module)
     monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
 
+    fast_action_feedback = {
+        "snapshot": {
+            "status": "processing",
+            "action": None,
+            "execution_confirmed": False,
+        }
+    }
     message = astrbot_pipeline._build_capture_event(
         platform=FakePlatform(),
         platform_meta=FakePlatform().meta(),
@@ -504,6 +511,7 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
         group_id="bound-group",
         protected_context_authorized=True,
         fast_action_active=True,
+        fast_action_feedback=fast_action_feedback,
         spatial_context={
             "schema_version": 1,
             "revision": 3,
@@ -541,6 +549,14 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
         message.get_extra("embodiment_bridge.protected_context_authorized") is True
     )
     assert message.get_extra("embodiment_bridge.fast_action_active") is True
+    feedback = message.get_extra("embodiment_bridge.fast_action_feedback")
+    assert feedback is fast_action_feedback
+    fast_action_feedback["snapshot"] = {
+        "status": "planned",
+        "action": "wave",
+        "execution_confirmed": False,
+    }
+    assert feedback["snapshot"]["action"] == "wave"
     assert message.get_extra("embodiment_bridge.spatial_context")["revision"] == 3
     assert message.get_extra("embodiment_bridge.action_facts") == [
         {

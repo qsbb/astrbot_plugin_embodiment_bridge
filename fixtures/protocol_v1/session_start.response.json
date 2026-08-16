@@ -4,6 +4,29 @@
     "protocol_version": "1.0",
     "session_id": "smoke-session",
     "events_url": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/events/smoke-session",
+    "capabilities": {
+      "supported_actions": [
+        "idle",
+        "talk",
+        "wave",
+        "bow",
+        "dance",
+        "dance_next",
+        "raise_hand",
+        "turn_half",
+        "sit",
+        "lie",
+        "nod",
+        "sway",
+        "crouch",
+        "handshake",
+        "head_pat",
+        "cheek_pinch",
+        "refuse",
+        "step_back"
+      ],
+      "action_capability_mode": "declared"
+    },
     "protected_context": {
       "authorized": false,
       "reason": "trusted_client_id_missing"

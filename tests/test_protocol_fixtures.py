@@ -53,6 +53,19 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
             "storage": "bounded_session_memory",
             "grants_permission": False,
         },
+        "action_methods@1.0": {
+            "session_capability_field": "session.start.supported_actions",
+            "intent_fields": [
+                "action_id",
+                "method",
+                "parameters",
+                "transition",
+                "source",
+            ],
+            "selection": "server_client_intersection",
+            "legacy_client_excludes": ["crouch"],
+            "one_full_body_action_per_turn": True,
+        },
     }
     assert manifest["enums"] == {
         "emotion": [item.value for item in Emotion],
@@ -113,6 +126,8 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
         "trusted_client_id_source": "bridge_server_config",
         "trusted_platform_id_source": "bridge_server_config",
         "unity_trusted_source_fields": False,
+        "supported_actions_optional": True,
+        "omitted_supported_actions_mode": "legacy",
     }
     assert manifest["spatial_context_semantics"] == {
         "schema_version": 1,

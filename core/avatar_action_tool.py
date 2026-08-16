@@ -15,7 +15,11 @@ from typing import Any
 from .avatar_skills import AvatarSkillRegistry
 from .explicit_action_parser import ExplicitActionResult, parse_explicit_action
 from .models import ProposedIntent
-from .plugin_identity import BRIDGE_EVENT_MARKER, LEGACY_BRIDGE_EVENT_MARKER
+from .plugin_identity import (
+    BRIDGE_EVENT_MARKER,
+    BRIDGE_SUPPORTED_ACTIONS,
+    LEGACY_BRIDGE_EVENT_MARKER,
+)
 
 
 QUEST_EVENT_MARKER = BRIDGE_EVENT_MARKER
@@ -103,6 +107,19 @@ def _read_staged_parse(event: Any) -> ExplicitActionResult | None:
     return value if isinstance(value, ExplicitActionResult) else None
 
 
+def _supported_action_names(event: Any) -> tuple[str, ...]:
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return AvatarSkillRegistry.legacy_client_names()
+    try:
+        declared = getter(BRIDGE_SUPPORTED_ACTIONS)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        declared = None
+    if not isinstance(declared, (list, tuple, set, frozenset)):
+        return AvatarSkillRegistry.legacy_client_names()
+    return AvatarSkillRegistry.supported_names(declared)
+
+
 def inject_quest_action_tool(
     request: Any,
     event: Any,
@@ -115,6 +132,18 @@ def inject_quest_action_tool(
     lazily keeps plugin discovery compatible with older AstrBot builds.
     """
     if not _is_quest_event(event):
+        return False
+    supported_actions = _supported_action_names(event)
+    if not supported_actions:
+        _diagnostic(
+            diagnostic,
+            "avatar.action.tool_skipped",
+            component="action",
+            operation="none",
+            status="skipped",
+            reason_code="client_has_no_supported_actions",
+            action_source=MODEL_TOOL_SOURCE,
+        )
         return False
     selected = read_selected_intent(event)
     if selected is not None:
@@ -160,7 +189,7 @@ def inject_quest_action_tool(
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": list(AvatarSkillRegistry.names()),
+                    "enum": list(supported_actions),
                     "description": "动作名称，必须来自枚举",
                 },
                 "emotion": {
@@ -195,6 +224,39 @@ def inject_quest_action_tool(
                     "description": "动作期间视线目标",
                     "default": "user",
                 },
+                "angle_degrees": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "仅 turn_half 使用的转身角度",
+                },
+                "depth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "仅 crouch 使用的下蹲深度",
+                },
+                "hold_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 30000,
+                    "description": "仅 crouch 使用的保持时间",
+                },
+                "style": {
+                    "type": "string",
+                    "enum": ["natural", "gentle", "energetic"],
+                    "default": "natural",
+                },
+                "transition_in_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5000,
+                },
+                "transition_out_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5000,
+                },
             },
             "required": ["action"],
             "additionalProperties": False,
@@ -221,7 +283,7 @@ def inject_quest_action_tool(
         get_tool = getattr(tool_set, "get_tool", None)
         existing = get_tool(QUEST_ACTION_TOOL_NAME) if callable(get_tool) else None
         if existing is not None and getattr(existing, "handler", None) == handler:
-            _inject_action_prompt(request, diagnostic)
+            _inject_action_prompt(request, diagnostic, supported_actions)
             return True
         # Replace a same-name entry rather than trusting a handler supplied by
         # another plugin or a stale plugin instance.
@@ -247,10 +309,10 @@ def inject_quest_action_tool(
         component="action",
         operation=QUEST_ACTION_TOOL_NAME,
         status="ready",
-        event_count=len(AvatarSkillRegistry.names()),
+        event_count=len(supported_actions),
         action_source=MODEL_TOOL_SOURCE,
     )
-    _inject_action_prompt(request, diagnostic)
+    _inject_action_prompt(request, diagnostic, supported_actions)
     return True
 
 
@@ -327,6 +389,12 @@ async def execute_quest_action(
     intensity: float = 0.45,
     duration_ms: int | None = None,
     look_at: str = "user",
+    angle_degrees: float | None = None,
+    depth: float | None = None,
+    hold_ms: int | None = None,
+    style: str = "natural",
+    transition_in_ms: int | None = None,
+    transition_out_ms: int | None = None,
     *,
     diagnostic: Callable[..., None] | None = None,
     selection_source: str = MODEL_TOOL_SOURCE,
@@ -368,6 +436,30 @@ async def execute_quest_action(
                 action_source=normalized_source,
             )
             return _result("rejected", "unknown_argument")
+        if AvatarSkillRegistry.normalize_action_name(normalized_action) is None:
+            _diagnostic(
+                diagnostic,
+                "avatar.action.rejected",
+                component="action",
+                operation=normalized_action or "unknown",
+                status="rejected",
+                reason_code="unknown_action",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
+            )
+            return _result("rejected", "unknown_action")
+        if normalized_action not in _supported_action_names(event):
+            _diagnostic(
+                diagnostic,
+                "avatar.action.rejected",
+                component="action",
+                operation=normalized_action or "unknown",
+                status="rejected",
+                reason_code="client_action_unsupported",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
+            )
+            return _result("rejected", "client_action_unsupported")
         if read_selected_intent(event) is not None:
             existing_source = read_selected_source(event)
             model_override_rejected = bool(
@@ -394,15 +486,23 @@ async def execute_quest_action(
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return _result("rejected", "action_already_selected")
-        intent = AvatarSkillRegistry.invoke(
-            normalized_action,
-            {
-                "emotion": emotion,
-                "intensity": intensity,
-                "duration_ms": duration_ms,
-                "look_at": look_at,
-            },
-        )
+        arguments: dict[str, Any] = {
+            "emotion": emotion,
+            "intensity": intensity,
+            "duration_ms": duration_ms,
+            "look_at": look_at,
+            "style": style,
+        }
+        for key, value in (
+            ("angle_degrees", angle_degrees),
+            ("depth", depth),
+            ("hold_ms", hold_ms),
+            ("transition_in_ms", transition_in_ms),
+            ("transition_out_ms", transition_out_ms),
+        ):
+            if value is not None:
+                arguments[key] = value
+        intent = AvatarSkillRegistry.invoke(normalized_action, arguments)
         if intent is None:
             _diagnostic(
                 diagnostic,
@@ -476,11 +576,12 @@ def _result(status: str, code: str) -> str:
 def _inject_action_prompt(
     request: Any,
     diagnostic: Callable[..., None] | None,
+    supported_actions: tuple[str, ...],
 ) -> None:
     current = str(getattr(request, "system_prompt", "") or "")
     if QUEST_ACTION_PROMPT_MARKER in current:
         return
-    skills = ", ".join(AvatarSkillRegistry.names())
+    skills = ", ".join(supported_actions)
     instruction = f"""
 
 {QUEST_ACTION_PROMPT_MARKER}
@@ -489,7 +590,9 @@ def _inject_action_prompt(
 `action` 只能从以下白名单选择：{skills}。
 “换一个/另一支舞”使用 dance_next，普通跳舞使用 dance。每轮至多选择一个动作；
 普通说话无需调用。不得生成动画路径、文件路径、骨骼名或白名单外动作。
-工具返回 rejected/failed 时，不得声称动作已经成功完成。
+工具返回 rejected/failed 时，不得声称动作已经成功完成。工具返回 accepted 也只
+表示动作已计划并发给客户端；同轮只能说“我试试/现在开始”，不能说动作已经完成。
+只有后续认证回执中的 completed 才证明身体实际完成。
 """
     request.system_prompt = current + instruction
     _diagnostic(
@@ -498,7 +601,7 @@ def _inject_action_prompt(
         component="action",
         operation=QUEST_ACTION_TOOL_NAME,
         status="ready",
-        event_count=len(AvatarSkillRegistry.names()),
+        event_count=len(supported_actions),
     )
 
 

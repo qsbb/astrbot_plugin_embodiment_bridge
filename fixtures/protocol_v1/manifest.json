@@ -24,6 +24,13 @@
       "terminal_facts": ["completed", "rejected", "interrupted"],
       "storage": "bounded_session_memory",
       "grants_permission": false
+    },
+    "action_methods@1.0": {
+      "session_capability_field": "session.start.supported_actions",
+      "intent_fields": ["action_id", "method", "parameters", "transition", "source"],
+      "selection": "server_client_intersection",
+      "legacy_client_excludes": ["crouch"],
+      "one_full_body_action_per_turn": true
     }
   },
   "base_path": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge",
@@ -125,7 +132,8 @@
       "sit",
       "lie",
       "nod",
-      "sway"
+      "sway",
+      "crouch"
     ],
     "look_at": ["user", "hand", "away", "none"],
     "interaction_name": [
@@ -258,7 +266,9 @@
     "api_principal_source": "astrbot_authenticated_request",
     "trusted_client_id_source": "bridge_server_config",
     "trusted_platform_id_source": "bridge_server_config",
-    "unity_trusted_source_fields": false
+    "unity_trusted_source_fields": false,
+    "supported_actions_optional": true,
+    "omitted_supported_actions_mode": "legacy"
   },
   "spatial_context_semantics": {
     "schema_version": 1,

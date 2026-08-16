@@ -30,9 +30,12 @@ from ..adapters.tts import (
     TTSAdapter,
 )
 from ..adapters.voice_hub_tts import VoiceHubTTSAdapter
+from .avatar_skills import AvatarSkillRegistry
+from .explicit_action_parser import parse_explicit_action
 from .interaction_policy import InteractionPolicy
 from .models import (
     PROTOCOL_VERSION,
+    ActionSource,
     AvatarIntent,
     Emotion,
     Gesture,
@@ -462,8 +465,47 @@ class TurnOrchestrator:
         """
         fast_task: asyncio.Task[None] | None = None
         adapter = self.fast_action
-        if adapter is not None and adapter.available:
+        explicit = parse_explicit_action(user_text)
+        explicit_action = (
+            explicit.action
+            if explicit.status == "matched" and explicit.action is not None
+            else None
+        )
+        if explicit_action is not None:
             turn.fast_action_active = True
+            if self.sessions.supports_action(session, explicit_action):
+                self._set_fast_action_feedback(turn, status="processing")
+                fast_task = asyncio.create_task(
+                    self._run_fast_action(
+                        session,
+                        turn,
+                        user_text,
+                        explicit_action=explicit_action,
+                    ),
+                    name=(
+                        "embodiment-bridge:explicit-action:"
+                        f"{session.session_id}:{turn.turn_id}"
+                    ),
+                )
+                turn.fast_action_task = fast_task
+            else:
+                self._set_fast_action_feedback(
+                    turn,
+                    status="unsupported",
+                    action=Gesture(explicit_action),
+                )
+                self._diagnostic(
+                    "fast_action.explicit_unsupported",
+                    component="action",
+                    phase="capability",
+                    status="rejected",
+                    operation=explicit_action,
+                    reason_code="client_action_unsupported",
+                    action_source="explicit_request",
+                )
+        elif adapter is not None and adapter.available:
+            turn.fast_action_active = True
+            self._set_fast_action_feedback(turn, status="processing")
             fast_task = asyncio.create_task(
                 self._run_fast_action(session, turn, user_text),
                 name=f"embodiment-bridge:fast-action:{session.session_id}:{turn.turn_id}",
@@ -486,9 +528,11 @@ class TurnOrchestrator:
         session: SessionState,
         turn: TurnState,
         user_text: str,
+        *,
+        explicit_action: str | None = None,
     ) -> None:
         adapter = self.fast_action
-        if adapter is None or not adapter.available:
+        if explicit_action is None and (adapter is None or not adapter.available):
             return
         started = time.perf_counter()
         self._diagnostic(
@@ -498,15 +542,104 @@ class TurnOrchestrator:
             status="processing",
         )
         try:
-            history = await self.sessions.history_snapshot(session)
-            proposed = await adapter.decide(user_text=user_text, history=history)
+            explicit = parse_explicit_action(user_text)
+            explicit_intent = (
+                AvatarSkillRegistry.invoke(explicit_action, {})
+                if explicit_action is not None
+                else None
+            )
+            provider_failure = ""
+            action_source = "fast_provider"
+            if explicit_intent is not None:
+                proposed = explicit_intent.model_copy(
+                    update={"reason_code": "explicit_request"}
+                )
+                action_source = "explicit_request"
+                self._diagnostic(
+                    "fast_action.explicit_selected",
+                    component="action",
+                    phase="parallel",
+                    status="selected",
+                    operation=proposed.gesture.value,
+                    reason_code=explicit.reason,
+                    action_source=action_source,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+            elif explicit.status in {"rejected", "ambiguous"}:
+                proposed = None
+                action_source = "none"
+                self._diagnostic(
+                    "fast_action.explicit_rejected",
+                    component="action",
+                    phase="parallel",
+                    status="no_action",
+                    reason_code=explicit.reason,
+                    action_source=action_source,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+            else:
+                if adapter is None:
+                    return
+                history = await self.sessions.history_snapshot(session)
+                try:
+                    proposed = await adapter.decide(
+                        user_text=user_text,
+                        history=history,
+                        supported_actions=session.supported_actions,
+                    )
+                except FastActionUnavailable as exc:
+                    provider_failure = str(exc)[:64] or "fast_action_unavailable"
+                    self._diagnostic(
+                        "fast_action.provider_unavailable",
+                        component="action",
+                        phase="parallel",
+                        status="unavailable",
+                        reason_code=provider_failure,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                    )
+                    proposed = None
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    provider_failure = "fast_action_failed"
+                    self._diagnostic(
+                        "fast_action.provider_error",
+                        component="action",
+                        phase="parallel",
+                        status="error",
+                        reason_code=provider_failure,
+                        error_type=type(exc).__name__,
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                    )
+                    proposed = None
             duration_ms = (time.perf_counter() - started) * 1000
             if proposed is None:
+                self._set_fast_action_feedback(
+                    turn,
+                    status="unavailable" if provider_failure else "no_action",
+                )
                 self._diagnostic(
                     "fast_action.completed",
                     component="action",
                     phase="parallel",
                     status="no_action",
+                    duration_ms=duration_ms,
+                )
+                return
+            if not self.sessions.supports_action(session, proposed.gesture):
+                self._set_fast_action_feedback(
+                    turn,
+                    status="unsupported",
+                    action=proposed.gesture,
+                )
+                self._diagnostic(
+                    "fast_action.unsupported",
+                    component="action",
+                    phase="capability",
+                    status="rejected",
+                    operation=proposed.gesture.value,
+                    reason_code="client_action_unsupported",
+                    action_source=action_source,
                     duration_ms=duration_ms,
                 )
                 return
@@ -547,6 +680,7 @@ class TurnOrchestrator:
                 )
                 return
             turn.fast_action_selected = True
+            turn.fast_action_source = action_source
             turn.intent_emitted = True
             turn.primary_intent_gesture = proposed.gesture.value
             decision = ModelDecision(
@@ -560,6 +694,11 @@ class TurnOrchestrator:
                 decision=decision,
                 interaction=None,
                 relationship=None,
+                action_source=(
+                    ActionSource.EXPLICIT_REQUEST
+                    if action_source == "explicit_request"
+                    else ActionSource.FAST_PROVIDER
+                ),
             )
             intent, emitted = await self._emit_avatar_intent(session, turn, intent)
             turn.fast_action_intent = intent
@@ -567,6 +706,13 @@ class TurnOrchestrator:
                 turn.fast_action_selected = False
                 turn.intent_emitted = False
                 turn.fast_action_intent = None
+                self._set_fast_action_feedback(turn, status="error")
+            else:
+                self._set_fast_action_feedback(
+                    turn,
+                    status="planned",
+                    action=intent.gesture,
+                )
             self._diagnostic(
                 "fast_action.completed",
                 component="action",
@@ -575,20 +721,12 @@ class TurnOrchestrator:
                 operation=intent.gesture.value,
                 reason_code=intent.reason_code,
                 duration_ms=duration_ms,
-                action_source="fast_provider",
+                action_source=action_source,
             )
         except asyncio.CancelledError:
             raise
-        except FastActionUnavailable as exc:
-            self._diagnostic(
-                "fast_action.skipped",
-                component="action",
-                phase="parallel",
-                status="unavailable",
-                reason_code=str(exc)[:64] or "fast_action_unavailable",
-                duration_ms=(time.perf_counter() - started) * 1000,
-            )
         except Exception as exc:
+            self._set_fast_action_feedback(turn, status="error")
             self._diagnostic(
                 "fast_action.error",
                 component="action",
@@ -692,6 +830,7 @@ class TurnOrchestrator:
                         session=session,
                         user_text=user_text,
                         fast_action_active=turn.fast_action_active,
+                        fast_action_feedback=turn.fast_action_feedback,
                         action_facts=action_facts,
                     )
                     operation = "astrbot_event_bus"
@@ -787,6 +926,26 @@ class TurnOrchestrator:
         interaction: InteractionEvent | None,
         relationship: dict[str, Any] | None,
     ) -> None:
+        feedback_snapshot = turn.fast_action_feedback.get("snapshot")
+        if (
+            isinstance(feedback_snapshot, dict)
+            and feedback_snapshot.get("status") == "unsupported"
+        ):
+            decision = decision.model_copy(
+                update={
+                    "should_reply": True,
+                    "reply_text": "这个动作当前客户端还不支持。",
+                }
+            )
+            self._diagnostic(
+                "avatar.action.reply_corrected",
+                component="action",
+                phase="reply",
+                status="corrected",
+                operation=str(feedback_snapshot.get("action") or "unknown"),
+                reason_code="client_action_unsupported",
+                action_source="capability_gate",
+            )
         fast_task = turn.fast_action_task
         if turn.fast_action_active and fast_task is not None and not fast_task.done():
             await fast_task
@@ -806,7 +965,18 @@ class TurnOrchestrator:
             )
         else:
             action_decision = (
-                self._fast_action_reply_fallback(decision)
+                self._fast_action_reply_fallback(
+                    decision,
+                    reason_code=(
+                        "client_action_unsupported"
+                        if isinstance(
+                            turn.fast_action_feedback.get("snapshot"), dict
+                        )
+                        and turn.fast_action_feedback["snapshot"].get("status")
+                        == "unsupported"
+                        else "fast_action_no_action"
+                    ),
+                )
                 if turn.fast_action_active
                 else decision
             )
@@ -816,6 +986,15 @@ class TurnOrchestrator:
                 decision=action_decision,
                 interaction=interaction,
                 relationship=relationship,
+                action_source=(
+                    ActionSource.FALLBACK
+                    if turn.fast_action_active
+                    else ActionSource.INTERACTION_POLICY
+                    if interaction is not None
+                    else ActionSource.EVENTBUS_TOOL
+                    if decision.intent.reason_code.startswith("skill_")
+                    else ActionSource.DIRECT_MODEL
+                ),
             )
             # The fast task has already completed, so this deterministic
             # fallback cannot race another intent into the event queue.
@@ -952,7 +1131,11 @@ class TurnOrchestrator:
         )
 
     @staticmethod
-    def _fast_action_reply_fallback(decision: ModelDecision) -> ModelDecision:
+    def _fast_action_reply_fallback(
+        decision: ModelDecision,
+        *,
+        reason_code: str = "fast_action_no_action",
+    ) -> ModelDecision:
         """Build a non-model action when the fast selector chose no action.
 
         The normal reply text is preserved, but its action fields are never
@@ -970,7 +1153,7 @@ class TurnOrchestrator:
                 look_at=LookAt.USER if speaking else LookAt.NONE,
                 intensity=0.38 if speaking else 0.0,
                 duration_ms=duration_ms,
-                reason_code="fast_action_no_action",
+                reason_code=reason_code,
             ),
         )
 
@@ -1176,6 +1359,19 @@ class TurnOrchestrator:
             ),
         }
 
+    @staticmethod
+    def _set_fast_action_feedback(
+        turn: TurnState,
+        *,
+        status: str,
+        action: Gesture | None = None,
+    ) -> None:
+        turn.fast_action_feedback["snapshot"] = {
+            "status": status,
+            "action": action.value if action is not None else None,
+            "execution_confirmed": False,
+        }
+
     async def _emit(
         self,
         session: SessionState,
@@ -1201,6 +1397,33 @@ class TurnOrchestrator:
         turn: TurnState,
         intent: AvatarIntent,
     ) -> tuple[AvatarIntent, bool]:
+        if (
+            intent.gesture not in {Gesture.IDLE, Gesture.TALK}
+            and not self.sessions.supports_action(session, intent.gesture)
+        ):
+            fallback_gesture = Gesture.TALK
+            parameters, transition = AvatarSkillRegistry.defaults_for(
+                fallback_gesture
+            )
+            self._diagnostic(
+                "avatar.action.unsupported",
+                component="action",
+                phase="capability",
+                status="rejected",
+                operation=intent.gesture.value,
+                reason_code="client_action_unsupported",
+                action_source=intent.source.value,
+            )
+            intent = intent.model_copy(
+                update={
+                    "gesture": fallback_gesture,
+                    "method": fallback_gesture,
+                    "parameters": parameters,
+                    "transition": transition,
+                    "source": ActionSource.FALLBACK,
+                    "reason_code": "client_action_unsupported",
+                }
+            )
         action_id = await self.sessions.plan_action(
             session,
             turn_id=turn.turn_id,

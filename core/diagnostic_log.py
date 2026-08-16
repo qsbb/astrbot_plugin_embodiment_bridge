@@ -107,6 +107,8 @@ _SAFE_PERSONA_ENUM_VALUES = frozenset(
 _SAFE_ACTION_ENUM_VALUES = frozenset(
     {
         "explicit_request",
+        "explicit_request_fallback",
+        "fast_provider",
         "model_tool",
         "none",
         "selected",

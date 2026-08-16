@@ -242,13 +242,15 @@ sequenceDiagram
 {"chat_provider_id":"provider-instance-id"}
 ```
 
-快速动作通道与上述普通直连 Provider 分离。启用后，它会在文字识别完成时与 AstrBot EventBus 主回复并行调用所选快速 Provider，只解析严格白名单动作并尽早发送 `avatar.intent`；它不生成回复、不写入对话历史，也不代替记忆、人格、工具或后处理插件。关闭、未配置或所选实例缺失时，继续使用原有请求级动作工具；快速通道已经接管本轮后，主回复请求不再暴露动作工具，调用超时、失败或返回无动作时只生成本地 `talk/idle` 兜底，避免两个模型竞争或重复发送动作。保存请求严格为：
+快速动作通道与上述普通直连 Provider 分离。启用后，它会在文字识别完成时与 AstrBot EventBus 主回复并行调用所选快速 Provider，只解析严格白名单动作并尽早发送 `avatar.intent`；它不生成回复、不写入对话历史，也不代替记忆、人格、工具或后处理插件。关闭、未配置或所选实例缺失时，继续使用原有请求级动作工具；快速通道已经接管本轮后，主回复请求不再暴露动作工具，避免两个模型竞争或重复发送动作。快速 Provider 超时、失败、返回空动作或与保守整句解析结果冲突时，只有明确、单一、非否定的白名单命令可以由解析器兜底；其他输入生成本地 `talk/idle`。保存请求严格为：
 
 ```json
 {"enabled":true,"provider_id":"fast-provider-instance-id"}
 ```
 
 启用时 `provider_id` 必须精确命中当前已实例化 Chat Completion Provider；关闭时可以留空。快速调用默认 4 秒超时，失败只记录脱敏状态和耗时，不记录用户正文、Provider ID 或模型输出。
+
+同轮 EventBus 请求不会等待快速动作。它只能非阻塞地读取当时已经产生的严格快照：`processing | planned | no_action | unavailable | error`，其中 `planned` 可带一个白名单动作，`execution_confirmed` 永远为 `false`。该快照只让回复模型知道动作控制器的当前计划，不能证明客户端已经执行；如果快照尚未产生，主回复照常继续。实际身体事实只来自下述 `/action/result` 认证终态，并在后续轮次注入。
 
 STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；不会代理 AstrBot Dashboard Provider API，也不会读取 Provider 私有配置。保存请求只允许：
 
@@ -332,6 +334,7 @@ POST /session/start
 | `bot_id` | 是 | 设备占位声明；服务端在授权前用规范 Bot 身份覆盖，最长 128 字符 |
 | `group_id` | 否 | 私聊必须传精确空字符串；空白字符串或非空群值不能获得受保护上下文 |
 | `relationship_profile_id` | 否 | 仅为协议兼容保留；Bridge 不把 Unity 声明值传给受保护关系快照 |
+| `supported_actions` | 否 | 客户端实际实现的动作枚举；服务端只使用与注册表的交集。省略时按旧客户端处理且不下发 `crouch` |
 
 响应：
 
@@ -342,6 +345,10 @@ POST /session/start
     "protocol_version": "1.0",
     "session_id": "s1",
     "events_url": "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/events/s1",
+    "capabilities": {
+      "supported_actions": ["talk", "wave", "crouch"],
+      "action_capability_mode": "declared"
+    },
     "protected_context": {
       "authorized": false,
       "reason": "trusted_client_id_missing"
@@ -350,7 +357,7 @@ POST /session/start
 }
 ```
 
-`protected_context` 只描述服务端只读上下文门控，不影响协议建连。`authorized=false` 时不得自行读取或推断关系数据；常见原因包括可信配置缺失、客户端不匹配、提供方缺失/不兼容、超时、群聊、owner 未配置或五段绑定未命中。相同所有者以完全相同的 client/user/bot/group/profile 字段重复提交同一 `session_id` 时，服务端复用会话并刷新授权结果；任一身份字段变化仍返回 `409 session_conflict`。
+`protected_context` 只描述服务端只读上下文门控，不影响协议建连。`capabilities` 返回实际协商后的动作交集；`action_capability_mode=legacy` 表示请求没有声明能力。`authorized=false` 时不得自行读取或推断关系数据；常见原因包括可信配置缺失、客户端不匹配、提供方缺失/不兼容、超时、群聊、owner 未配置或五段绑定未命中。相同所有者以完全相同的身份与能力字段重复提交同一 `session_id` 时，服务端复用会话并刷新授权结果；任一字段变化仍返回 `409 session_conflict`。
 
 ## 7. SSE 事件流
 
@@ -377,7 +384,7 @@ Accept: text/event-stream
 
 ```text
 event: avatar.intent
-data: {"type":"avatar.intent","protocol_version":"1.0","session_id":"s1","turn_id":"t3","in_reply_to_event_id":"e9","emotion":"shy","gesture":"step_back","look_at":"away","intensity":0.65,"duration_ms":1800,"reason_code":"boundary_soft_refusal"}
+data: {"type":"avatar.intent","protocol_version":"1.0","session_id":"s1","turn_id":"t3","in_reply_to_event_id":"e9","emotion":"shy","gesture":"step_back","look_at":"away","intensity":0.65,"duration_ms":1800,"reason_code":"boundary_soft_refusal","method":"step_back","parameters":{"angle_degrees":null,"depth":null,"hold_ms":null,"style":"natural"},"transition":{"enter_ms":350,"exit_ms":350,"easing":"smoothstep"},"source":"interaction_policy"}
 
 ```
 
@@ -915,7 +922,16 @@ GET /health
   "look_at": "away",
   "intensity": 0.65,
   "duration_ms": 1800,
-  "reason_code": "boundary_soft_refusal"
+  "reason_code": "boundary_soft_refusal",
+  "method": "refuse",
+  "parameters": {
+    "angle_degrees": null,
+    "depth": null,
+    "hold_ms": null,
+    "style": "natural"
+  },
+  "transition": {"enter_ms": 350, "exit_ms": 350, "easing": "smoothstep"},
+  "source": "interaction_policy"
 }
 ```
 
@@ -923,13 +939,13 @@ GET /health
 
 ```text
 emotion: neutral | happy | shy | surprised | concerned | uncomfortable
-gesture: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half | sit | lie | nod | sway | handshake | head_pat | cheek_pinch | refuse | step_back
+gesture/method: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half | sit | lie | nod | sway | crouch | handshake | head_pat | cheek_pinch | refuse | step_back
 look_at: user | hand | away | none
 ```
 
-`in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。除 `idle`、`talk` 外，服务端为可执行意图附加 `action_id`，客户端可用 11.1 节的回执接口报告真实执行结果；旧 Protocol 1.0 客户端可忽略该可选字段。
+`in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。`method` 必须与 `gesture` 一致；`parameters` 只允许受限的 `angle_degrees/depth/hold_ms/style`，`transition` 只允许有界入场、退场时长与缓动。除 `idle`、`talk` 外，服务端为可执行意图附加 `action_id`，客户端可用 11.1 节的回执接口报告真实执行结果。
 
-Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求只允许预选 `dance`、`dance_next`、`raise_hand`、`turn_half`、`wave`、`bow`、`sit`、`lie`，并通过与模型工具相同的 `AvatarSkillRegistry` 和严格 handler 生成 intent；该轮继续经过原有 EventBus 且只调用原有一次模型。预选成功后不再暴露动作工具，避免重复动作。否定、假设、引用、转述和讨论语境不会产生动作或暴露工具；多动作歧义及不完整表达仍可交给请求级 `embodiment_avatar_action`，未调用时维持 `talk`。客户端不参与文本解析，普通 QQ/非具身事件看不到解析器、工具或提示约束。
+Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求允许预选 `dance`、`dance_next`、`raise_hand`、`turn_half`、`wave`、`bow`、`sit`、`lie`、`crouch`；其中下蹲的中英文明确命令不等待快速动作 Provider。所有动作仍通过 `AvatarSkillRegistry`、会话能力交集和发送前门禁，每轮最多一个全身动作。否定、假设、引用、转述、讨论和多动作歧义不会猜测执行。计划或 accepted 只允许回复“开始/尝试”，只有后续认证 `completed` 回执才能声称完成。
 
 Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降级到 `idle`；未知 `emotion` 降级到 `neutral`，未知 `look_at` 降级到 `none`。
 
