@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.7-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.7-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.7-1")
+    assert '<script type="module" src="./app.js?v=1.0.8-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.8-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.8-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -118,6 +118,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "diagnostics-root-cause",
         "diagnostics-summary",
         "diagnostics-events",
+        "diagnostics-auto-scroll",
     ):
         assert f'id="{element_id}"' in html
 
@@ -267,7 +268,6 @@ def test_operator_page_does_not_expose_secrets_or_private_relationship_storage()
         "_page_identities",
         "/astrbot_plugin_relationship/identities",
         "trusted_client_id",
-        "localStorage",
         "console.log",
         "system_prompt",
         "begin_dialogs",
@@ -390,3 +390,6 @@ def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> No
     assert "if (document.hidden || !bridgeReady) return;" in js
     assert "startServiceRefresh()" in js
     assert "每秒自动刷新" in html
+    assert "DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY" in js
+    assert "setDiagnosticAutoScroll" in js
+    assert "if (diagnosticAutoScroll) container.scrollTop = container.scrollHeight;" in js

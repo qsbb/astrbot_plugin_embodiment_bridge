@@ -228,7 +228,18 @@ def test_pipeline_logs_selected_dance_without_raw_text(
                     "motion_selection": "next_imported",
                     "duration_ms": adapter.last_duration_ms,
                 },
-            )
+            ),
+            (
+                "avatar.action.eventbus_outcome",
+                {
+                    "component": "action",
+                    "phase": "eventbus",
+                    "status": "no_action",
+                    "eventbus_tool_called": False,
+                    "action_source": "none",
+                    "operation": "dance_next",
+                },
+            ),
         ]
         assert "换个舞蹈" not in repr(diagnostic.events)
         assert "动作回复" not in repr(diagnostic.events)

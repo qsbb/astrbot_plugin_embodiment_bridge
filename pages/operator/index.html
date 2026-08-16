@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.0.7-1" />
+  <link rel="stylesheet" href="./style.css?v=1.0.8-1" />
 </head>
 <body>
   <main class="shell">
@@ -371,6 +371,10 @@
         <p>每秒自动刷新脱敏后的任务阶段、事件状态、错误码和耗时；模型转换仅显示生成与结构校验状态，不显示隐藏推理内容。</p>
         <div class="inline-actions">
           <button id="load-diagnostics" type="button" aria-busy="false">刷新日志</button>
+          <label class="mode-switch diagnostics-autoscroll-toggle" for="diagnostics-auto-scroll">
+            <input id="diagnostics-auto-scroll" type="checkbox" checked />
+            <span>自动滚动</span>
+          </label>
         </div>
         <p id="diagnostics-status" class="field-status" role="status">尚未读取</p>
         <p id="diagnostics-root-cause" class="diagnostics-root-cause" role="status">当前根因：尚未读取</p>
@@ -394,6 +398,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.0.7-1"></script>
+  <script type="module" src="./app.js?v=1.0.8-1"></script>
 </body>
 </html>

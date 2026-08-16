@@ -392,6 +392,7 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 }
 .diagnostics-summary { display: grid; gap: 4px; }
 .diagnostics-summary p { margin: 0; color: #bdcbc7; font-size: 12px; }
+.diagnostics-autoscroll-toggle { margin-left: auto; }
 .diagnostics-timeline-title { color: #eef5f2; font-size: 13px; }
 .diagnostic-line {
   border-left: 2px solid #60736d;

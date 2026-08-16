@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hmac
 import json
 import time
@@ -85,6 +86,7 @@ class HttpSseTransport:
         self.logger = logger
         self.diagnostic_log = diagnostic_log
         self._identifier_adapter = TypeAdapter(Identifier)
+        self._audio_uploads: dict[tuple[str, str, str], dict[str, float | int]] = {}
 
     def configure_bridge_api_key(self, value: str) -> None:
         self.config = TransportConfig(
@@ -289,6 +291,7 @@ class HttpSseTransport:
         async def action(owner: str, payload: AudioChunkRequest) -> Any:
             session = await self.sessions.get_owned(payload.session_id, owner)
             total_bytes = await self.sessions.add_audio_chunk(session, payload)
+            self._track_audio_chunk(owner, payload, total_bytes)
             return json_response(
                 {
                     "status": "ok",
@@ -312,6 +315,7 @@ class HttpSseTransport:
         async def action(owner: str, payload: AudioEndRequest) -> Any:
             session = await self.sessions.get_owned(payload.session_id, owner)
             turn = await self.orchestrator.finish_audio(session, payload.turn_id)
+            self._finish_audio_upload(owner, payload, status="completed")
             return json_response(
                 {
                     "status": "ok",
@@ -384,6 +388,8 @@ class HttpSseTransport:
         async def action(owner: str, payload: InterruptRequest) -> Any:
             session = await self.sessions.get_owned(payload.session_id, owner)
             cancelled = await self.sessions.cancel_current(session, payload.turn_id)
+            if cancelled and payload.turn_id:
+                self._clear_audio_uploads(owner, payload.session_id, payload.turn_id)
             return json_response(
                 {
                     "status": "ok",
@@ -401,6 +407,7 @@ class HttpSseTransport:
         async def action(owner: str, payload: SessionCloseRequest) -> Any:
             session = await self.sessions.get_owned(payload.session_id, owner)
             await self.sessions.close_session(session)
+            self._clear_audio_uploads(owner, payload.session_id)
             return json_response(
                 {
                     "status": "ok",
@@ -523,6 +530,8 @@ class HttpSseTransport:
     ) -> Any:
         started = time.perf_counter()
         operation = model.__name__.removesuffix("Request").lower()
+        payload: BaseModel | None = None
+        owner = ""
         try:
             owner = self._authenticate()
             self.service.require_enabled()
@@ -531,16 +540,20 @@ class HttpSseTransport:
                 body_limit or self.config.max_json_body_bytes,
             )
             response = await action(owner, payload)
-            self._diagnostic(
-                "http.request",
-                component="transport",
-                operation=operation,
-                status=getattr(response, "status_code", 200),
-                http_status=getattr(response, "status_code", 200),
-                duration_ms=(time.perf_counter() - started) * 1000,
-            )
+            status_code = getattr(response, "status_code", 200)
+            if model not in {AudioChunkRequest, AudioEndRequest}:
+                self._diagnostic(
+                    "http.request",
+                    component="transport",
+                    operation=operation,
+                    status=status_code,
+                    http_status=status_code,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
             return response
         except Exception as exc:
+            if isinstance(payload, AudioEndRequest) and owner:
+                self._finish_audio_upload(owner, payload, status="failed")
             self._diagnostic(
                 "http.error",
                 component="transport",
@@ -551,6 +564,61 @@ class HttpSseTransport:
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return self._error(exc, model.__name__)
+
+    def _clear_audio_uploads(
+        self,
+        owner: str,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> None:
+        prefix = (owner, session_id)
+        for key in tuple(self._audio_uploads):
+            if key[:2] == prefix and (turn_id is None or key[2] == turn_id):
+                self._audio_uploads.pop(key, None)
+
+    def _track_audio_chunk(
+        self,
+        owner: str,
+        payload: AudioChunkRequest,
+        total_bytes: int,
+    ) -> None:
+        key = (owner, payload.session_id, payload.turn_id)
+        now = time.perf_counter()
+        try:
+            chunk_bytes = len(base64.b64decode(payload.data, validate=True))
+        except (ValueError, TypeError):
+            chunk_bytes = 0
+        stats = self._audio_uploads.setdefault(
+            key,
+            {"started": now, "chunks": 0, "bytes": 0},
+        )
+        stats["chunks"] = int(stats["chunks"]) + 1
+        stats["bytes"] = int(stats["bytes"]) + chunk_bytes
+        stats["buffered_bytes"] = int(total_bytes)
+
+    def _finish_audio_upload(
+        self,
+        owner: str,
+        payload: AudioEndRequest,
+        *,
+        status: str,
+    ) -> None:
+        key = (owner, payload.session_id, payload.turn_id)
+        stats = self._audio_uploads.pop(key, None) or {
+            "started": time.perf_counter(),
+            "chunks": 0,
+            "bytes": 0,
+        }
+        self._diagnostic(
+            "audio.upload.completed",
+            component="transport",
+            operation="audio_upload",
+            status=status,
+            http_status=202,
+            chunks=int(stats.get("chunks", 0)),
+            bytes=int(stats.get("bytes", 0)),
+            duration_ms=(time.perf_counter() - float(stats["started"])) * 1000,
+        )
 
     def _diagnostic(self, event: str, **fields: Any) -> None:
         if self.diagnostic_log is None:

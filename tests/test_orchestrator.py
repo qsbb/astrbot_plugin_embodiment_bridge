@@ -915,7 +915,7 @@ def test_fast_action_no_action_ignores_main_reply_action_fields() -> None:
     asyncio.run(scenario())
 
 
-def test_main_reply_waits_for_parallel_fast_action_instead_of_winning_race() -> None:
+def test_main_reply_delivers_text_while_fast_action_is_pending() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
         fast = FastActionStub(
@@ -952,7 +952,7 @@ def test_main_reply_waits_for_parallel_fast_action_instead_of_winning_race() -> 
         await asyncio.wait_for(fast.started.wait(), timeout=1)
         reply.release.set()
         await asyncio.sleep(0)
-        assert session.queue.size == 0
+        assert session.queue.size >= 1
 
         release.set()
         events = await collect_until_end(session)

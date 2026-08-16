@@ -15,7 +15,12 @@ from ..core.models import (
     FastActionFeedback,
     VerifiedActionFacts,
 )
-from ..core.avatar_action_tool import read_selected_intent, stage_explicit_action
+from ..core.avatar_action_tool import (
+    MODEL_TOOL_SOURCE,
+    read_selected_intent,
+    read_selected_source,
+    stage_explicit_action,
+)
 from ..core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
@@ -184,6 +189,7 @@ class AstrBotMessagePipelineAdapter:
                 source="selected",
                 duration_ms=self.last_duration_ms,
             )
+            self._record_eventbus_action_outcome(event, selected_intent)
             return ModelDecision(
                 should_reply=False,
                 reply_text="",
@@ -211,6 +217,7 @@ class AstrBotMessagePipelineAdapter:
             source="selected" if selected_intent is not None else "default_talk",
             duration_ms=self.last_duration_ms,
         )
+        self._record_eventbus_action_outcome(event, selected_intent)
         return ModelDecision(
             should_reply=True,
             reply_text=reply,
@@ -278,6 +285,28 @@ class AstrBotMessagePipelineAdapter:
         except Exception:
             self.last_event_stopped = None
         self.last_send_observed = bool(getattr(event, "_has_send_oper", False))
+
+    def _record_eventbus_action_outcome(
+        self,
+        event: Any,
+        intent: ProposedIntent | None,
+    ) -> None:
+        recorder = getattr(self.logger, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            selected_source = read_selected_source(event)
+            recorder(
+                "avatar.action.eventbus_outcome",
+                component="action",
+                phase="eventbus",
+                status="selected" if selected_source else "no_action",
+                eventbus_tool_called=selected_source == MODEL_TOOL_SOURCE,
+                action_source=selected_source or "none",
+                operation=intent.gesture.value if intent is not None else "none",
+            )
+        except Exception:
+            return
 
     def _empty_reply_reason(self) -> str:
         if self.last_event_stopped is True:

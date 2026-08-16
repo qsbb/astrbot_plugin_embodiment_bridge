@@ -160,8 +160,8 @@
   "fast_action_timeout_seconds": {
     "description": "快速动作模型超时秒数",
     "type": "float",
-    "hint": "仅限制动作决策调用；超时会自动放弃动作，不影响普通回复。",
-    "default": 4.0,
+    "hint": "仅限制动作决策调用；动作与正文/TTS并行，超时不阻塞正文，并在 reply.end 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上。",
+    "default": 6.0,
     "minimum": 0.5,
     "maximum": 15.0
   },

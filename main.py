@@ -69,7 +69,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -282,7 +282,7 @@ class EmbodimentBridgePlugin(Star):
             provider_id=str(config.get("fast_action_provider_id", "") or ""),
             enabled=self._bool_config("fast_action_enabled", True),
             timeout_seconds=self._float_config(
-                "fast_action_timeout_seconds", 4.0, 0.5, 15.0
+                "fast_action_timeout_seconds", 6.0, 0.5, 15.0
             ),
             diagnostic_log=self._component_logger,
         )

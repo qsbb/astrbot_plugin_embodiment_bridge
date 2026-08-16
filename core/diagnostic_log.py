@@ -64,6 +64,7 @@ _SAFE_FIELD_NAMES = frozenset(
         "event_woken",
         "event_stopped",
         "send_observed",
+        "eventbus_tool_called",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
@@ -82,6 +83,7 @@ _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
         "event_woken",
         "event_stopped",
         "send_observed",
+        "eventbus_tool_called",
     }
 )
 _SAFE_AGGREGATE_FIELDS = frozenset({"active_sessions", "attached_streams"})

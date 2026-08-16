@@ -471,6 +471,22 @@ def test_unity_conversation_controller_realtime_chain(
                     },
                 )
                 assert ended.status == 202
+                diagnostic_events = bundle.plugin.diagnostic_log.diagnostic_events()[
+                    "events"
+                ]
+                audio_summaries = [
+                    item
+                    for item in diagnostic_events
+                    if item["code"] == "audio.upload.completed"
+                ]
+                assert audio_summaries
+                assert audio_summaries[-1]["details"]["chunks"] == 1
+                assert audio_summaries[-1]["details"]["bytes"] == len(pcm16)
+                assert not any(
+                    item["code"] == "http.request"
+                    and item["details"].get("operation") in {"audiochunk", "audioend"}
+                    for item in diagnostic_events
+                )
 
                 asr_final = await read_sse_frame(events)
                 avatar_intent = await read_sse_frame(events)

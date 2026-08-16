@@ -27,6 +27,33 @@ const PAGE_REQUEST_TIMEOUT_MS = 10000;
 const PERSONA_CONVERSION_POLL_MS = 1000;
 const DIAGNOSTICS_REFRESH_MS = 1000;
 const PERSONA_CONVERSION_JOB_STORAGE_KEY = "quest-avatar-bridge.persona-conversion-job";
+const DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY = "quest-avatar-bridge.diagnostic-auto-scroll";
+let diagnosticAutoScroll = readDiagnosticAutoScrollPreference();
+
+function readDiagnosticAutoScrollPreference() {
+  try {
+    const stored = window.localStorage.getItem(DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY);
+    return stored === null ? true : stored === "true";
+  } catch (_error) {
+    return true;
+  }
+}
+
+function setDiagnosticAutoScroll(enabled) {
+  diagnosticAutoScroll = enabled === true;
+  try {
+    window.localStorage.setItem(
+      DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY,
+      String(diagnosticAutoScroll),
+    );
+  } catch (_error) {
+    // Browser storage is optional; the page remains usable in private mode.
+  }
+  const container = document.getElementById("diagnostics-events");
+  if (diagnosticAutoScroll && container) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
 
 async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
@@ -1974,7 +2001,7 @@ function renderDiagnosticEvents(events) {
     item.textContent = parts.join(" · ");
     container.append(item);
   });
-  container.scrollTop = container.scrollHeight;
+  if (diagnosticAutoScroll) container.scrollTop = container.scrollHeight;
 }
 
 function renderDiagnosticSummary(events) {
@@ -2253,6 +2280,11 @@ function bindEvents() {
   document
     .getElementById("load-diagnostics")
     .addEventListener("click", () => loadDiagnostics());
+  const autoScroll = document.getElementById("diagnostics-auto-scroll");
+  autoScroll.checked = diagnosticAutoScroll;
+  autoScroll.addEventListener("change", () => {
+    setDiagnosticAutoScroll(autoScroll.checked);
+  });
   document.addEventListener("visibilitychange", handlePageVisibilityChange);
   window.addEventListener("pagehide", clearPageTimers);
   window.addEventListener("pageshow", handlePageVisibilityChange);

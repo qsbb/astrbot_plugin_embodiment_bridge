@@ -4,6 +4,12 @@
 
 本机 AstrBot/Unity 部署步骤、安全配置和 curl 联调命令见 [LOCAL_INTEGRATION_CN.md](LOCAL_INTEGRATION_CN.md)。可执行协议样本位于 [`fixtures/protocol_v1/`](../fixtures/protocol_v1/)。
 
+## 1.0.8 动作与诊断补充
+
+快速动作仍只使用 Protocol 1.0 的模型无关 `avatar.intent`。动作模型和 AstrBot EventBus 工具共享同一轮唯一仲裁：任何一方先取得动作槽，另一方记录为 `deferred`/`superseded`，不会重复下发动作。快速动作任务与正文、TTS 并行；当 Provider 超时或返回空动作时，文字和音频继续发送，并在 `reply.end` 前下发 `talk`/`idle` 安全回退。
+
+临独立诊断会记录 `fast_action.*`、`avatar.action.*` 的阶段、状态、来源、白名单动作、超时/空结果、仲裁胜者和意图下发状态。不会记录用户文本、Provider ID、身份、密钥或音频。`audio/chunk` 的成功 202 不逐块记录；一次 `audio/end` 后输出一条 `audio.upload.completed`，包含块数、字节数、HTTP 状态和耗时。
+
 ## 1. 协议概览
 
 - 协议版本：`1.0`

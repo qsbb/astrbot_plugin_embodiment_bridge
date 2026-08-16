@@ -473,8 +473,9 @@ class TurnOrchestrator:
 
         The action task never owns reply text, EventBus dispatch, history, STT,
         or TTS. When it is active, it races the request-scoped EventBus action
-        tool through a one-action reservation; the regular reply path waits
-        for this task before emitting a deterministic talk/idle fallback.
+        tool through a one-action reservation; the regular reply path keeps
+        streaming while the selector races, then settles one intent before
+        ``reply.end``.
         """
         fast_task: asyncio.Task[None] | None = None
         adapter = self.fast_action
@@ -637,6 +638,7 @@ class TurnOrchestrator:
                     component="action",
                     phase="parallel",
                     status="no_action",
+                    reason_code=provider_failure or "no_action",
                     duration_ms=duration_ms,
                 )
                 return
@@ -679,9 +681,8 @@ class TurnOrchestrator:
                     duration_ms=duration_ms,
                 )
                 return
-            # The reply path awaits this task before selecting its local
-            # talk/idle fallback. EventBus and the fast selector coordinate
-            # through the shared reservation holder below.
+            # Text/TTS may already be streaming. EventBus and the fast selector
+            # coordinate through the shared reservation holder below.
             if turn.intent_emitted:
                 self._diagnostic(
                     "fast_action.skipped",
@@ -738,6 +739,16 @@ class TurnOrchestrator:
             )
             intent, emitted = await self._emit_avatar_intent(session, turn, intent)
             turn.fast_action_intent = intent
+            self._diagnostic(
+                "avatar.intent.emitted" if emitted else "avatar.intent.dropped",
+                component="action",
+                phase="delivery",
+                status="planned" if emitted else "dropped",
+                operation=intent.gesture.value,
+                reason_code=(intent.reason_code if emitted else "turn_not_current"),
+                action_source=action_source,
+                gesture=intent.gesture.value,
+            )
             if not emitted:
                 turn.fast_action_feedback.pop(BRIDGE_FAST_ACTION_SELECTED, None)
                 turn.fast_action_selected = False
@@ -756,7 +767,7 @@ class TurnOrchestrator:
                 phase="parallel",
                 status="selected" if emitted else "dropped",
                 operation=intent.gesture.value,
-                reason_code=intent.reason_code,
+                reason_code=intent.reason_code if emitted else "intent_emit_failed",
                 duration_ms=duration_ms,
                 action_source=action_source,
             )
@@ -984,8 +995,15 @@ class TurnOrchestrator:
                 action_source="capability_gate",
             )
         fast_task = turn.fast_action_task
-        if turn.fast_action_active and fast_task is not None and not fast_task.done():
-            await fast_task
+        fast_task_pending = bool(
+            turn.fast_action_active
+            and fast_task is not None
+            and not fast_task.done()
+        )
+        eventbus_action_selected = isinstance(
+            turn.fast_action_feedback.get(BRIDGE_FAST_ACTION_EVENT_SELECTED),
+            str,
+        )
         if turn.fast_action_selected and turn.fast_action_intent is not None:
             # The parallel action task already emitted the only intent event.
             # Keep the regular model's reply text and TTS, but do not send a
@@ -1001,10 +1019,6 @@ class TurnOrchestrator:
                 action_source="main_reply_suppressed",
             )
         else:
-            eventbus_action_selected = isinstance(
-                turn.fast_action_feedback.get(BRIDGE_FAST_ACTION_EVENT_SELECTED),
-                str,
-            )
             action_decision = (
                 self._fast_action_reply_fallback(
                     decision,
@@ -1038,37 +1052,56 @@ class TurnOrchestrator:
                     else ActionSource.DIRECT_MODEL
                 ),
             )
-            # The fast task has already completed, so this deterministic
-            # fallback cannot race another intent into the event queue.
-            turn.intent_emitted = True
-            turn.primary_intent_gesture = intent.gesture.value
-            intent, intent_emitted = await self._emit_avatar_intent(
-                session,
-                turn,
-                intent,
-            )
-            self._diagnostic(
-                "avatar.intent.emitted" if intent_emitted else "avatar.intent.dropped",
-                component="action",
-                operation=intent.gesture.value,
-                status="planned" if intent_emitted else "cancelled",
-                reason_code=(
-                    intent.reason_code if intent_emitted else "turn_not_current"
-                ),
-                emotion=intent.emotion.value,
-                gesture=intent.gesture.value,
-                look_at=intent.look_at.value,
-                intensity=intent.intensity,
-                duration_ms=intent.duration_ms,
-                **(
-                    {"action_source": "eventbus_tool_fallback"}
-                    if eventbus_action_selected
-                    else {"action_source": "fast_provider_fallback"}
-                    if turn.fast_action_active
-                    else {}
-                ),
-            )
-        if not intent_emitted:
+            # A pending fast selector must not delay text or TTS. Keep this
+            # semantic fallback only as the delivery voice/gesture metadata;
+            # reserve the single avatar.intent slot after the audio pipeline
+            # gives the selector a chance to finish.
+            if fast_task_pending and not eventbus_action_selected:
+                intent_emitted = False
+                self._diagnostic(
+                    "avatar.action.main_delivery_parallel",
+                    component="action",
+                    phase="reply",
+                    status="processing",
+                    reason_code="fast_action_pending",
+                    action_source="fast_provider_pending",
+                )
+            else:
+                turn.intent_emitted = True
+                turn.primary_intent_gesture = intent.gesture.value
+                intent, intent_emitted = await self._emit_avatar_intent(
+                    session,
+                    turn,
+                    intent,
+                )
+                self._diagnostic(
+                    "avatar.intent.emitted"
+                    if intent_emitted
+                    else "avatar.intent.dropped",
+                    component="action",
+                    operation=intent.gesture.value,
+                    status="planned" if intent_emitted else "cancelled",
+                    reason_code=(
+                        intent.reason_code if intent_emitted else "turn_not_current"
+                    ),
+                    emotion=intent.emotion.value,
+                    gesture=intent.gesture.value,
+                    look_at=intent.look_at.value,
+                    intensity=intent.intensity,
+                    duration_ms=intent.duration_ms,
+                    **(
+                        {"action_source": "eventbus_tool_fallback"}
+                        if eventbus_action_selected
+                        else {"action_source": "fast_provider_fallback"}
+                        if turn.fast_action_active
+                        else {}
+                    ),
+                )
+        if not intent_emitted and not (
+            turn.fast_action_active
+            and fast_task is not None
+            and not fast_task.done()
+        ):
             return
 
         text = decision.reply_text.strip() if decision.should_reply else ""
@@ -1161,6 +1194,59 @@ class TurnOrchestrator:
 
             finally:
                 turn.server_timing.finish_tts()
+
+        if not intent_emitted and turn.fast_action_active:
+            if fast_task is not None and not fast_task.done():
+                self._diagnostic(
+                    "avatar.action.reply_wait_for_arbitration",
+                    component="action",
+                    phase="reply_end",
+                    status="processing",
+                    reason_code="fast_action_deadline",
+                    action_source="fast_provider_pending",
+                )
+                await fast_task
+            if turn.fast_action_selected and turn.fast_action_intent is not None:
+                intent = turn.fast_action_intent
+                intent_emitted = True
+                self._diagnostic(
+                    "avatar.action.arbitration_winner",
+                    component="action",
+                    phase="arbitration",
+                    status="selected",
+                    operation=intent.gesture.value,
+                    reason_code="fast_action_selected",
+                    action_source=turn.fast_action_source,
+                )
+            elif self.sessions.is_current(session, turn.turn_id, turn.generation):
+                fallback = self._fast_action_reply_fallback(decision)
+                turn.intent_emitted = True
+                turn.primary_intent_gesture = fallback.intent.gesture.value
+                intent, intent_emitted = await self._emit_avatar_intent(
+                    session,
+                    turn,
+                    self.policy.apply(
+                        session_id=session.session_id,
+                        turn_id=turn.turn_id,
+                        decision=fallback,
+                        interaction=interaction,
+                        relationship=relationship,
+                        action_source=ActionSource.FALLBACK,
+                    ),
+                )
+                self._diagnostic(
+                    "avatar.action.arbitration_winner",
+                    component="action",
+                    phase="arbitration",
+                    status="fallback" if intent_emitted else "dropped",
+                    operation=intent.gesture.value,
+                    reason_code=(
+                        "fast_action_no_action" if intent_emitted else "turn_not_current"
+                    ),
+                    action_source="fast_provider_fallback",
+                )
+        if not intent_emitted:
+            return
 
         reply_end_payload = {
             "type": "reply.end",
