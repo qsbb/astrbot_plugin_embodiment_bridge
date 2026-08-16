@@ -702,7 +702,7 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
         assert intent_record == {
             "component": "action",
             "operation": "step_back",
-            "status": "completed",
+            "status": "planned",
             "reason_code": "boundary_soft_refusal",
             "emotion": "shy",
             "gesture": "step_back",
@@ -1133,6 +1133,39 @@ def test_explicit_crouch_bypasses_fast_provider_and_emits_bounded_method() -> No
             "easing": "ease_in_out",
         }
         assert intent["source"] == "explicit_request"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_same_turn_action_completion_claim_is_hard_corrected() -> None:
+    async def scenario() -> None:
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "我已经蹲好了。",
+                )
+            ),
+            supported_actions=("talk", "crouch"),
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-crouch-claim", text="请蹲一下"),
+        )
+        events = await collect_until_end(session)
+        text = "".join(
+            event["text"] for event in events if event["type"] == "reply.text.delta"
+        )
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+
+        assert intent["gesture"] == "crouch"
+        assert intent.get("action_id")
+        assert text == "我现在开始。"
         await orchestrator.close()
 
     asyncio.run(scenario())

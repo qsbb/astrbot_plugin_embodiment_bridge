@@ -173,6 +173,13 @@ def test_fast_action_respects_client_action_intersection_and_bounds_crouch() -> 
     assert intent.transition.exit_ms == 650
 
 
+def test_fast_action_empty_client_capability_does_not_expose_full_catalog() -> None:
+    prompt = FastActionDecisionAdapter._system_prompt(())
+
+    assert "Allowlisted names: " in prompt
+    assert prompt.rsplit("Allowlisted names:", 1)[1].strip() == ""
+
+
 def test_fast_action_timeout_does_not_return_a_stale_action() -> None:
     async def scenario() -> None:
         adapter = FastActionDecisionAdapter(

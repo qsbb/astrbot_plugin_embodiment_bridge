@@ -94,6 +94,15 @@ _PUBLIC_PIPELINE_REASONS = frozenset(
     }
 )
 
+_SAME_TURN_ACTION_COMPLETION_CLAIM = re.compile(
+    r"(?:"
+    r"我(?:已经|刚刚)?(?:做完|完成|蹲好|蹲完|转完|跳完|挥完)(?:了|啦|咯)?"
+    r"|动作(?:已经)?完成(?:了|啦)?"
+    r"|(?:i(?:'ve| have)?\s+)?(?:finished|completed|done)(?:\s+it)?\b"
+    r")",
+    re.IGNORECASE,
+)
+
 
 class TurnOrchestrator:
     def __init__(
@@ -1009,7 +1018,7 @@ class TurnOrchestrator:
                 "avatar.intent.emitted" if intent_emitted else "avatar.intent.dropped",
                 component="action",
                 operation=intent.gesture.value,
-                status="completed" if intent_emitted else "cancelled",
+                status="planned" if intent_emitted else "cancelled",
                 reason_code=(
                     intent.reason_code if intent_emitted else "turn_not_current"
                 ),
@@ -1028,6 +1037,19 @@ class TurnOrchestrator:
             return
 
         text = decision.reply_text.strip() if decision.should_reply else ""
+        if intent.action_id is not None and _SAME_TURN_ACTION_COMPLETION_CLAIM.search(
+            text
+        ):
+            text = "我现在开始。"
+            self._diagnostic(
+                "avatar.action.reply_corrected",
+                component="action",
+                phase="reply",
+                status="corrected",
+                operation=intent.gesture.value,
+                reason_code="same_turn_completion_claim",
+                action_source="completion_guard",
+            )
         if text:
             for chunk in self._text_chunks(text):
                 accepted = await self._emit(

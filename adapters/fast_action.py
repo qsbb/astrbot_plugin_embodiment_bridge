@@ -413,7 +413,11 @@ class FastActionDecisionAdapter:
 
     @staticmethod
     def _system_prompt(allowed_actions: tuple[str, ...] | None = None) -> str:
-        names = ",".join(allowed_actions or AvatarSkillRegistry.names())
+        names = ",".join(
+            AvatarSkillRegistry.names()
+            if allowed_actions is None
+            else allowed_actions
+        )
         return (
             "You are the fast action selector for an embodied avatar. "
             "Decide only whether the avatar should perform one allowlisted "
