@@ -22,6 +22,9 @@ from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
 )
 from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
 from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_FAST_ACTION_EVENT_SELECTED,
+    BRIDGE_FAST_ACTION_FEEDBACK,
+    BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_SUPPORTED_ACTIONS,
 )
 
@@ -115,6 +118,36 @@ def test_action_execution_fails_closed_for_non_quest_unknown_and_extra_arguments
         )
         assert extra == {"status": "rejected", "code": "unknown_argument"}
         assert read_selected_intent(quest_event) is None
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_and_fast_action_arbitrate_one_action_without_racing() -> None:
+    async def scenario() -> None:
+        event_first = EventStub(quest=True)
+        event_first.set_extra(BRIDGE_SUPPORTED_ACTIONS, ("wave", "crouch"))
+        holder: dict[str, object] = {}
+        event_first.set_extra(BRIDGE_FAST_ACTION_FEEDBACK, holder)
+        selected = json.loads(
+            await execute_quest_action(event_first, action="wave", diagnostic=None)
+        )
+        assert selected == {"status": "accepted", "code": "wave"}
+        assert holder[BRIDGE_FAST_ACTION_EVENT_SELECTED] == "wave"
+
+        fast_first = EventStub(quest=True)
+        fast_first.set_extra(BRIDGE_SUPPORTED_ACTIONS, ("wave", "crouch"))
+        fast_first.set_extra(
+            BRIDGE_FAST_ACTION_FEEDBACK,
+            {BRIDGE_FAST_ACTION_SELECTED: "wave"},
+        )
+        rejected = json.loads(
+            await execute_quest_action(fast_first, action="crouch", diagnostic=None)
+        )
+        assert rejected == {
+            "status": "rejected",
+            "code": "fast_action_already_selected",
+        }
+        assert read_selected_intent(fast_first) is None
 
     asyncio.run(scenario())
 

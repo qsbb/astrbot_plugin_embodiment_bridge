@@ -91,7 +91,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 |---|---:|---|
 | `bridge_service_enabled` | `true` | 启停具身对话服务；关闭时清理现有会话和 listener |
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
-| `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作；关闭、未配置或 Provider 缺失时才由主回复链路处理 |
+| `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作，并与主回复动作工具进行同轮单动作仲裁 |
 | `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
 | `fast_action_timeout_seconds` | `4.0` | 快速动作调用上限；超时不影响主回复，只有严格整句白名单命令可由保守解析器兜底 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
@@ -116,7 +116,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 
 Provider 下拉列表和管理响应只返回必要的安全摘要，不返回 API Key、Base URL、请求头或原始 Provider 配置。完整配置项和人格边界见 [API 文档](docs/API_CN.md) 与 [人格集成文档](docs/PERSONA_INTEGRATION_CN.md)。
 
-快速动作结果分为两层：同轮回复最多看到“动作计划已发送、尚未确认执行”的有界快照，因此不得声称动作已经完成；客户端通过双重认证回报 `completed/rejected/interrupted` 后，后续同会话 EventBus 轮次才会把该终态作为身体事实读取。明确的整句动作命令（包括“下蹲/蹲下/crouch/squat”）直接由严格解析器选择，不等待快速 Provider；否定、引用、假设、讨论或多动作表达不会猜测执行。
+快速动作结果分为两层：快速动作模型与 AstrBot EventBus 动作工具可以并行准备，但同一轮只允许一个白名单动作保留；明确动作命令优先，快速模型与主回复工具通过有界保留标记互斥。主回复最多看到“动作计划已发送、尚未确认执行”的有界快照，因此不得声称动作已经完成；客户端通过双重认证回报 `completed/rejected/interrupted` 后，后续同会话 EventBus 轮次才会把该终态作为身体事实读取。明确的整句动作命令（包括“下蹲/蹲下/crouch/squat”）直接由严格解析器选择，不等待快速 Provider；否定、引用、假设、讨论或多动作表达不会猜测执行。
 
 ## Protocol 1.0
 

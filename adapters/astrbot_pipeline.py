@@ -20,6 +20,7 @@ from ..core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
     BRIDGE_FAST_ACTION_ACTIVE,
+    BRIDGE_FAST_ACTION_EXPLICIT,
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
@@ -405,23 +406,27 @@ def _build_capture_event(
     if supported_actions is not None:
         event.set_extra(BRIDGE_SUPPORTED_ACTIONS, tuple(supported_actions))
     event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
+    if (
+        fast_action_active
+        and isinstance(fast_action_feedback, dict)
+        and fast_action_feedback.get("explicit_action") is True
+    ):
+        event.set_extra(BRIDGE_FAST_ACTION_EXPLICIT, True)
     event.set_extra(
         BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
         bool(protected_context_authorized),
     )
-    if (
-        protected_context_authorized
-        and fast_action_active
-        and isinstance(fast_action_feedback, dict)
-    ):
+    if fast_action_active and isinstance(fast_action_feedback, dict):
         snapshot = fast_action_feedback.get("snapshot")
         try:
             FastActionFeedback.model_validate(snapshot)
         except (TypeError, ValueError):
             pass
         else:
-            # Keep the bounded holder by reference. The action task replaces
-            # only ``snapshot``; the request hook reads it without awaiting.
+            # Keep the bounded holder by reference for same-turn action
+            # arbitration. This internal coordination is independent from
+            # protected persona/relationship context authorization; only the
+            # prompt overlay below remains authorization-gated.
             event.set_extra(BRIDGE_FAST_ACTION_FEEDBACK, fast_action_feedback)
     if protected_context_authorized and spatial_context is not None:
         event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))

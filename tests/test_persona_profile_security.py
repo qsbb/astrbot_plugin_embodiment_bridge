@@ -1073,11 +1073,13 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
             message_str: str = "",
             *,
             fast_action_active: bool = False,
+            fast_action_explicit: bool = False,
         ) -> None:
             self.message_str = message_str
             self.extras = {
                 "embodiment_bridge": marker,
                 "embodiment_bridge.fast_action_active": fast_action_active,
+                "embodiment_bridge.fast_action_explicit": fast_action_explicit,
             }
 
         def get_extra(self, key: str) -> object:
@@ -1126,6 +1128,7 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
             True,
             "wave",
             fast_action_active=True,
+            fast_action_explicit=True,
         )
         await plugin.inject_quest_persona(fast_event, fast_request)
         assert read_selected_intent(fast_event) is None
@@ -1136,7 +1139,28 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
             "avatar.action.tool_skipped",
             "persona.overlay.injected",
         ]
-        assert diagnostic.events[0][1]["reason_code"] == "fast_action_enabled"
+        assert diagnostic.events[0][1]["reason_code"] == "explicit_action_reserved"
+
+        diagnostic.events.clear()
+        autonomous_request = SimpleNamespace(
+            system_prompt="原 AstrBot 人格",
+            func_tool=None,
+        )
+        autonomous_event = EventStub(
+            True,
+            "今天心情不错",
+            fast_action_active=True,
+        )
+        await plugin.inject_quest_persona(autonomous_event, autonomous_request)
+        assert read_selected_intent(autonomous_event) is None
+        assert autonomous_request.func_tool is not None
+        assert "# 临：具身角色动作工具" in autonomous_request.system_prompt
+        assert [event for event, _fields in diagnostic.events] == [
+            "avatar.action.explicit_parse",
+            "avatar.action.tool_exposed",
+            "avatar.action.prompt_injected",
+            "persona.overlay.injected",
+        ]
 
     asyncio.run(scenario())
 

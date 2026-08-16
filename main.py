@@ -50,6 +50,7 @@ from .core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
     BRIDGE_FAST_ACTION_ACTIVE,
+    BRIDGE_FAST_ACTION_EXPLICIT,
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
@@ -68,7 +69,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.6"
+__version__ = "1.0.7"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -668,6 +669,7 @@ class EmbodimentBridgePlugin(Star):
             formal_marker = event.get_extra(BRIDGE_EVENT_MARKER) is True
             legacy_marker = event.get_extra(LEGACY_BRIDGE_EVENT_MARKER) is True
             fast_action_active = event.get_extra(BRIDGE_FAST_ACTION_ACTIVE) is True
+            fast_action_explicit = event.get_extra(BRIDGE_FAST_ACTION_EXPLICIT) is True
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return
         if not formal_marker and not legacy_marker:
@@ -677,19 +679,21 @@ class EmbodimentBridgePlugin(Star):
                 event.set_extra(BRIDGE_EVENT_MARKER, True)
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 return
-        if fast_action_active:
+        if fast_action_active and fast_action_explicit:
             self.diagnostic_log.record(
                 "avatar.action.tool_skipped",
                 component="action",
                 operation="none",
                 status="skipped",
-                reason_code="fast_action_enabled",
-                result="fast_provider",
-                action_source="fast_provider",
+                reason_code="explicit_action_reserved",
+                result="explicit_request",
+                action_source="explicit_request",
             )
         else:
-            # Disabled or unavailable fast action keeps the established
-            # request-scoped EventBus action tool as a compatibility fallback.
+            # Keep the request-scoped tool available while the optional fast
+            # selector is in flight. The shared feedback holder arbitrates
+            # whichever action source wins first; explicit commands are the
+            # only case where this fallback is intentionally suppressed.
             await prepare_quest_action_request(
                 req,
                 event,

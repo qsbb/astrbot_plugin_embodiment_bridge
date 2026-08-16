@@ -17,6 +17,9 @@ from .explicit_action_parser import ExplicitActionResult, parse_explicit_action
 from .models import ProposedIntent
 from .plugin_identity import (
     BRIDGE_EVENT_MARKER,
+    BRIDGE_FAST_ACTION_EVENT_SELECTED,
+    BRIDGE_FAST_ACTION_FEEDBACK,
+    BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_SUPPORTED_ACTIONS,
     LEGACY_BRIDGE_EVENT_MARKER,
 )
@@ -118,6 +121,17 @@ def _supported_action_names(event: Any) -> tuple[str, ...]:
     if not isinstance(declared, (list, tuple, set, frozenset)):
         return AvatarSkillRegistry.legacy_client_names()
     return AvatarSkillRegistry.supported_names(declared)
+
+
+def _fast_action_feedback_holder(event: Any) -> dict[str, object] | None:
+    getter = getattr(event, "get_extra", None)
+    if not callable(getter):
+        return None
+    try:
+        holder = getter(BRIDGE_FAST_ACTION_FEEDBACK)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return None
+    return holder if isinstance(holder, dict) else None
 
 
 def inject_quest_action_tool(
@@ -411,6 +425,8 @@ async def execute_quest_action(
         if selection_source == EXPLICIT_ACTION_SOURCE
         else MODEL_TOOL_SOURCE
     )
+    feedback_holder: dict[str, object] | None = None
+    event_action_reserved = False
     try:
         if not _is_quest_event(event):
             _diagnostic(
@@ -486,6 +502,24 @@ async def execute_quest_action(
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
             return _result("rejected", "action_already_selected")
+        feedback_holder = _fast_action_feedback_holder(event)
+        if (
+            feedback_holder is not None
+            and isinstance(
+                feedback_holder.get(BRIDGE_FAST_ACTION_SELECTED), str
+            )
+        ):
+            _diagnostic(
+                diagnostic,
+                "avatar.action.rejected",
+                component="action",
+                operation=normalized_action,
+                status="rejected",
+                reason_code="fast_action_already_selected",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                action_source=normalized_source,
+            )
+            return _result("rejected", "fast_action_already_selected")
         arguments: dict[str, Any] = {
             "emotion": emotion,
             "intensity": intensity,
@@ -515,6 +549,9 @@ async def execute_quest_action(
                 action_source=normalized_source,
             )
             return _result("rejected", "unknown_action")
+        if feedback_holder is not None:
+            feedback_holder[BRIDGE_FAST_ACTION_EVENT_SELECTED] = normalized_action
+            event_action_reserved = True
         setter = getattr(event, "set_extra", None)
         if not callable(setter):
             raise RuntimeError("event_extra_unavailable")
@@ -554,6 +591,13 @@ async def execute_quest_action(
         )
         return _result("accepted", normalized_action)
     except (AttributeError, RuntimeError, TypeError, ValueError):
+        if (
+            event_action_reserved
+            and feedback_holder is not None
+            and feedback_holder.get(BRIDGE_FAST_ACTION_EVENT_SELECTED)
+            == normalized_action
+        ):
+            feedback_holder.pop(BRIDGE_FAST_ACTION_EVENT_SELECTED, None)
         _diagnostic(
             diagnostic,
             "avatar.action.failed",
@@ -588,6 +632,8 @@ def _inject_action_prompt(
 本轮是可信具身客户端对话。只有确实需要角色执行身体动作时，调用
 `{QUEST_ACTION_TOOL_NAME}`，不要只在回复正文中描述“我抬手/转身/跳舞”。
 `action` 只能从以下白名单选择：{skills}。
+无需等待用户明确命令：问候、同意、犹豫或明显情绪语境适合时，可以自主选择一个
+自然的小动作；普通事实问答或动作没有意义时不要调用。
 “换一个/另一支舞”使用 dance_next，普通跳舞使用 dance。每轮至多选择一个动作；
 普通说话无需调用。不得生成动画路径、文件路径、骨骼名或白名单外动作。
 工具返回 rejected/failed 时，不得声称动作已经成功完成。工具返回 accepted 也只

@@ -11,6 +11,9 @@ from astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline import (
     MessagePipelineUnavailable,
 )
 from astrbot_plugin_embodiment_bridge.core.interaction_policy import InteractionPolicy
+from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_FAST_ACTION_EVENT_SELECTED,
+)
 from astrbot_plugin_embodiment_bridge.core.models import (
     AudioChunkRequest,
     Emotion,
@@ -763,6 +766,54 @@ def test_fast_action_runs_beside_reply_and_emits_at_most_one_intent() -> None:
         assert sum(event["type"] == "avatar.intent" for event in events) == 1
         assert any(event["type"] == "reply.text.delta" for event in events)
         assert events[-1]["status"] == "completed"
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_action_wins_when_fast_selector_has_not_selected() -> None:
+    async def scenario() -> None:
+        release = asyncio.Event()
+        fast = FastActionStub(
+            ProposedIntent(
+                emotion=Emotion.HAPPY,
+                gesture=Gesture.WAVE,
+                look_at=LookAt.USER,
+                intensity=0.6,
+                duration_ms=1_800,
+                reason_code="skill_wave",
+            ),
+            release=release,
+        )
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.CROUCH,
+                    LookAt.USER,
+                    "skill_crouch",
+                    "我现在蹲下。",
+                )
+            ),
+            fast_action=fast,
+            supported_actions=("talk", "wave", "crouch"),
+            tts=TTSStub(available=False),
+        )
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-arbitration", text="我有点紧张"),
+        )
+        await asyncio.wait_for(fast.started.wait(), timeout=1)
+        assert session.current_turn is not None
+        session.current_turn.fast_action_feedback[BRIDGE_FAST_ACTION_EVENT_SELECTED] = (
+            "crouch"
+        )
+        release.set()
+        events = await collect_until_end(session)
+        intents = [event for event in events if event["type"] == "avatar.intent"]
+        assert len(intents) == 1
+        assert intents[0]["gesture"] == "crouch"
+        assert intents[0]["source"] == "eventbus_tool"
         await orchestrator.close()
 
     asyncio.run(scenario())

@@ -205,9 +205,9 @@ class TurnState:
     fast_action_selected: bool = False
     fast_action_intent: AvatarIntent | None = None
     fast_action_source: str = "fast_provider"
-    # A mutable one-key holder is attached to the synthetic EventBus event.
-    # Replacing ``snapshot`` is atomic on the event loop and exposes only a
-    # validated action enum/status, never the task, prompt, or user text.
+    # A bounded mutable holder is attached to the synthetic EventBus event.
+    # Replacing ``snapshot`` and reserving one allowlisted action are atomic on
+    # the event loop; it never exposes the task, prompt, or user text.
     fast_action_feedback: dict[str, object] = field(default_factory=dict)
     intent_emitted: bool = False
     primary_intent_gesture: str = ""

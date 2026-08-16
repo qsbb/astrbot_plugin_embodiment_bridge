@@ -566,3 +566,94 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
             "duration_ms": 1_250,
         }
     ]
+
+
+def test_build_capture_event_keeps_action_arbitration_when_context_unauthorized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePlain:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class FakeAstrBotMessage:
+        def __init__(self) -> None:
+            self.group = None
+
+    class FakeEvent:
+        def __init__(self, message: Any) -> None:
+            self.message_obj = message
+            self._extras: dict[str, Any] = {}
+
+        def set_extra(self, key: str, value: Any) -> None:
+            self._extras[key] = value
+
+        def get_extra(self, key: str, default: Any = None) -> Any:
+            return self._extras.get(key, default)
+
+        def cleanup_temporary_local_files(self) -> None:
+            return None
+
+    class FakeAstrMessageEvent(FakeEvent):
+        pass
+
+    class FakePlatform:
+        def meta(self) -> Any:
+            return types.SimpleNamespace(id="trusted-platform", name="aiocqhttp")
+
+        def create_event(self, message: Any) -> FakeEvent:
+            return FakeAstrMessageEvent(message)
+
+    class FakeMessageMember:
+        def __init__(self, user_id: str, nickname: str) -> None:
+            self.user_id = user_id
+            self.nickname = nickname
+
+    class FakeGroup:
+        def __init__(self, group_id: str) -> None:
+            self.group_id = group_id
+
+    message_components = types.ModuleType("astrbot.api.message_components")
+    message_components.Plain = FakePlain
+    platform_module = types.ModuleType("astrbot.api.platform")
+    platform_module.AstrBotMessage = FakeAstrBotMessage
+    platform_module.Group = FakeGroup
+    platform_module.MessageMember = FakeMessageMember
+    platform_module.MessageType = types.SimpleNamespace(
+        GROUP_MESSAGE="group", FRIEND_MESSAGE="friend"
+    )
+    event_module = types.ModuleType("astrbot.api.event")
+    event_module.AstrMessageEvent = FakeAstrMessageEvent
+    monkeypatch.setitem(
+        sys.modules, "astrbot.api.message_components", message_components
+    )
+    monkeypatch.setitem(sys.modules, "astrbot.api.platform", platform_module)
+    monkeypatch.setitem(sys.modules, "astrbot.api.event", event_module)
+
+    fast_action_feedback = {
+        "snapshot": {
+            "status": "processing",
+            "action": None,
+            "execution_confirmed": False,
+        }
+    }
+    event = astrbot_pipeline._build_capture_event(
+        platform=FakePlatform(),
+        platform_meta=FakePlatform().meta(),
+        user_text="hello",
+        user_id="bound-user",
+        bot_id="bound-bot",
+        group_id="",
+        protected_context_authorized=False,
+        fast_action_active=True,
+        fast_action_feedback=fast_action_feedback,
+    )
+
+    assert event.get_extra("embodiment_bridge.protected_context_authorized") is False
+    assert (
+        event.get_extra("embodiment_bridge.fast_action_feedback")
+        is fast_action_feedback
+    )
+    identity = event.get_extra("embodiment_bridge.identity_context")
+    assert identity["trusted"] is True
+    assert identity["user_id"] == "bound-user"
+    assert event.get_extra("embodiment_bridge.spatial_context") is None

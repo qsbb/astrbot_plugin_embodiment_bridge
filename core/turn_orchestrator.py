@@ -46,6 +46,10 @@ from .models import (
     SessionStartRequest,
     TurnStartRequest,
 )
+from .plugin_identity import (
+    BRIDGE_FAST_ACTION_EVENT_SELECTED,
+    BRIDGE_FAST_ACTION_SELECTED,
+)
 from .session_manager import SessionManager, SessionState, TurnState
 
 
@@ -468,9 +472,9 @@ class TurnOrchestrator:
         """Run the reply path while an optional action-only LLM runs beside it.
 
         The action task never owns reply text, EventBus dispatch, history, STT,
-        or TTS. When it is active, it is the only model-driven action source;
-        the regular reply path waits for this already-parallel task before
-        emitting a deterministic talk/idle fallback.
+        or TTS. When it is active, it races the request-scoped EventBus action
+        tool through a one-action reservation; the regular reply path waits
+        for this task before emitting a deterministic talk/idle fallback.
         """
         fast_task: asyncio.Task[None] | None = None
         adapter = self.fast_action
@@ -482,6 +486,7 @@ class TurnOrchestrator:
         )
         if explicit_action is not None:
             turn.fast_action_active = True
+            turn.fast_action_feedback["explicit_action"] = True
             if self.sessions.supports_action(session, explicit_action):
                 self._set_fast_action_feedback(turn, status="processing")
                 fast_task = asyncio.create_task(
@@ -675,8 +680,8 @@ class TurnOrchestrator:
                 )
                 return
             # The reply path awaits this task before selecting its local
-            # talk/idle fallback, so the fast provider is the sole model-driven
-            # action owner whenever it is active.
+            # talk/idle fallback. EventBus and the fast selector coordinate
+            # through the shared reservation holder below.
             if turn.intent_emitted:
                 self._diagnostic(
                     "fast_action.skipped",
@@ -688,6 +693,28 @@ class TurnOrchestrator:
                     duration_ms=duration_ms,
                 )
                 return
+            eventbus_action = turn.fast_action_feedback.get(
+                BRIDGE_FAST_ACTION_EVENT_SELECTED
+            )
+            if isinstance(eventbus_action, str):
+                self._diagnostic(
+                    "fast_action.deferred",
+                    component="action",
+                    phase="arbitration",
+                    status="superseded",
+                    reason_code="eventbus_action_selected",
+                    operation=proposed.gesture.value,
+                    result=eventbus_action,
+                    duration_ms=duration_ms,
+                    action_source=action_source,
+                )
+                return
+            # EventBus tool execution and this reservation are synchronous on
+            # the owning event loop. Whichever source reserves first wins; the
+            # other source fails closed before any avatar.intent is emitted.
+            turn.fast_action_feedback[BRIDGE_FAST_ACTION_SELECTED] = (
+                proposed.gesture.value
+            )
             turn.fast_action_selected = True
             turn.fast_action_source = action_source
             turn.intent_emitted = True
@@ -712,6 +739,7 @@ class TurnOrchestrator:
             intent, emitted = await self._emit_avatar_intent(session, turn, intent)
             turn.fast_action_intent = intent
             if not emitted:
+                turn.fast_action_feedback.pop(BRIDGE_FAST_ACTION_SELECTED, None)
                 turn.fast_action_selected = False
                 turn.intent_emitted = False
                 turn.fast_action_intent = None
@@ -973,6 +1001,10 @@ class TurnOrchestrator:
                 action_source="main_reply_suppressed",
             )
         else:
+            eventbus_action_selected = isinstance(
+                turn.fast_action_feedback.get(BRIDGE_FAST_ACTION_EVENT_SELECTED),
+                str,
+            )
             action_decision = (
                 self._fast_action_reply_fallback(
                     decision,
@@ -986,7 +1018,7 @@ class TurnOrchestrator:
                         else "fast_action_no_action"
                     ),
                 )
-                if turn.fast_action_active
+                if turn.fast_action_active and not eventbus_action_selected
                 else decision
             )
             intent = self.policy.apply(
@@ -997,11 +1029,12 @@ class TurnOrchestrator:
                 relationship=relationship,
                 action_source=(
                     ActionSource.FALLBACK
-                    if turn.fast_action_active
+                    if turn.fast_action_active and not eventbus_action_selected
                     else ActionSource.INTERACTION_POLICY
                     if interaction is not None
                     else ActionSource.EVENTBUS_TOOL
-                    if decision.intent.reason_code.startswith("skill_")
+                    if eventbus_action_selected
+                    or decision.intent.reason_code.startswith("skill_")
                     else ActionSource.DIRECT_MODEL
                 ),
             )
@@ -1028,7 +1061,9 @@ class TurnOrchestrator:
                 intensity=intent.intensity,
                 duration_ms=intent.duration_ms,
                 **(
-                    {"action_source": "fast_provider_fallback"}
+                    {"action_source": "eventbus_tool_fallback"}
+                    if eventbus_action_selected
+                    else {"action_source": "fast_provider_fallback"}
                     if turn.fast_action_active
                     else {}
                 ),

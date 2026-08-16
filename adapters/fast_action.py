@@ -422,8 +422,11 @@ class FastActionDecisionAdapter:
             "You are the fast action selector for an embodied avatar. "
             "Decide only whether the avatar should perform one allowlisted "
             "action in response to the user's current utterance. Prefer an "
-            "explicitly requested action; a subtle natural gesture is allowed "
-            "only when it is clearly appropriate. Do not answer the user. "
+            "explicitly requested action. For non-command conversation, autonomously "
+            "choose one subtle natural action when the user's emotion, greeting, "
+            "agreement, hesitation, or shared context gives a clear reason; this does "
+            "not require an explicit action request. Still use null for routine factual "
+            "exchange or when no action adds meaning. Do not answer the user. "
             "Return exactly one compact JSON object and no markdown: "
             '{"action":null} or '
             '{"action":{"name":"<name>","arguments":{"emotion":"neutral",'
