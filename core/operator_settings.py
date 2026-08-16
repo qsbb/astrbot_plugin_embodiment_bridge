@@ -15,6 +15,7 @@ from ..adapters.identity_control_plane import (
     IdentityControlPlaneError,
     validate_principal_digest,
 )
+from ..adapters.fast_action import FAST_ACTION_TIMEOUT_POLICY_REVISION
 from .config_persistence import config_is_writable, save_config_changes
 
 
@@ -457,7 +458,7 @@ class OperatorSettings:
                 "selected_id": "",
                 "configured_timeout_seconds": 6.0,
                 "effective_timeout_seconds": 6.0,
-                "timeout_policy_revision": "v2",
+                "timeout_policy_revision": FAST_ACTION_TIMEOUT_POLICY_REVISION,
                 "timeout_migrated": False,
                 "providers": self._list_chat_providers(),
                 "config_writable": config_is_writable(self.config),
@@ -524,7 +525,9 @@ class OperatorSettings:
             persisted.update(
                 {
                     "fast_action_timeout_seconds": timeout,
-                    "fast_action_timeout_policy_revision": "v2",
+                    "fast_action_timeout_policy_revision": (
+                        FAST_ACTION_TIMEOUT_POLICY_REVISION
+                    ),
                 }
             )
         await self._persist_many(persisted)
@@ -538,7 +541,9 @@ class OperatorSettings:
                     {
                         "timeout_seconds": timeout,
                         "configured_timeout_seconds": timeout,
-                        "timeout_policy_revision": "v2",
+                        "timeout_policy_revision": (
+                            FAST_ACTION_TIMEOUT_POLICY_REVISION
+                        ),
                     }
                 )
             self.fast_action.configure(**configure_kwargs)

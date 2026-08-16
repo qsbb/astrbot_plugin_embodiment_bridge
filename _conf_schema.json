@@ -168,7 +168,7 @@
   "fast_action_timeout_policy_revision": {
     "description": "快速动作超时策略修订号",
     "type": "string",
-    "hint": "内部审计字段。旧配置的4秒默认值仅在没有修订号时识别为旧默认；管理页保存后写入 v2。",
+    "hint": "内部审计字段。旧版 v2 的4秒策略会运行时迁移到6秒；管理页再次保存后写入 v3，并尊重管理员的新显式值。",
     "default": ""
   },
   "enable_astrbot_message_pipeline": {

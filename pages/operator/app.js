@@ -379,16 +379,13 @@ function renderFastActionSettings(settings) {
   }
   select.value = selected;
   select.disabled = !writable || !providers.length;
-  const configuredTimeout = Number(fastActionSettings.configured_timeout_seconds);
   const effectiveTimeout = Number(fastActionSettings.effective_timeout_seconds);
-  const timeoutValue = Number.isFinite(configuredTimeout)
-    ? configuredTimeout
-    : Number.isFinite(effectiveTimeout) ? effectiveTimeout : 6;
+  const timeoutValue = fastActionTimeoutInputValue(fastActionSettings);
   if (document.activeElement !== timeoutInput) timeoutInput.value = String(timeoutValue);
   timeoutInput.disabled = !writable;
   timeoutHelp.textContent = Number.isFinite(effectiveTimeout)
-    ? `有效超时：${effectiveTimeout.toFixed(1)} 秒 · 策略：${String(fastActionSettings.timeout_policy_revision || "v2")}` +
-      (fastActionSettings.timeout_migrated === true ? " · 旧4秒默认已安全迁移，未覆盖显式设置" : "")
+    ? `有效超时：${effectiveTimeout.toFixed(1)} 秒 · 策略：${String(fastActionSettings.timeout_policy_revision || "v3")}` +
+      (fastActionSettings.timeout_migrated === true ? " · 旧4秒策略已安全迁移到6秒" : "")
     : "有效超时：读取中";
   button.disabled = !writable || (enabled && !select.value);
 
@@ -407,6 +404,17 @@ function renderFastActionSettings(settings) {
       ? "快速动作状态未知，普通回复链路不受影响。"
       : messages.disabled)
     : "当前 AstrBot 配置对象不支持安全保存。";
+}
+
+function fastActionTimeoutInputValue(settings) {
+  const configuredTimeout = Number(settings?.configured_timeout_seconds);
+  const effectiveTimeout = Number(settings?.effective_timeout_seconds);
+  if (settings?.timeout_migrated === true && Number.isFinite(effectiveTimeout)) {
+    return effectiveTimeout;
+  }
+  return Number.isFinite(configuredTimeout)
+    ? configuredTimeout
+    : Number.isFinite(effectiveTimeout) ? effectiveTimeout : 6;
 }
 
 async function saveFastActionSettings() {

@@ -633,7 +633,10 @@ def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
                 assert initial["selected"] is False
                 assert initial["availability_reason"] == "provider_not_configured"
                 assert initial["effective_timeout_seconds"] == 6.0
-                assert initial["timeout_policy_revision"] in {"v2", "legacy_default_v1"}
+                assert initial["timeout_policy_revision"] in {
+                    "v3",
+                    "legacy_default_v2",
+                }
                 assert {tuple(item) for item in initial["providers"]} == {
                     ("id", "model", "adapter_type", "provider_type")
                 }
@@ -653,7 +656,7 @@ def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
                 assert saved["enabled"] is True
                 assert saved["selected_id"] == "fake-provider"
                 assert saved["effective_timeout_seconds"] == 5.5
-                assert saved["timeout_policy_revision"] == "v2"
+                assert saved["timeout_policy_revision"] == "v3"
                 assert bundle.plugin.fast_action.provider_id == "fake-provider"
 
                 invalid = await client.post(
@@ -673,6 +676,80 @@ def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
                 )
                 assert disabled.status == 200
                 assert bundle.plugin.fast_action.enabled is False
+
+    asyncio.run(scenario())
+
+
+def test_fast_action_settings_persist_migrated_effective_timeout(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(
+            monkeypatch,
+            tmp_path,
+            config_overrides={
+                "fast_action_enabled": True,
+                "fast_action_provider_id": "fake-provider",
+                "fast_action_timeout_seconds": 4.0,
+                "fast_action_timeout_policy_revision": "v2",
+            },
+        )
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                overview = await client.get(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert overview.status == 200
+                migrated = (await overview.json())["fast_action"]
+                assert migrated["configured_timeout_seconds"] == 4.0
+                assert migrated["effective_timeout_seconds"] == 6.0
+                assert migrated["timeout_policy_revision"] == "legacy_default_v2"
+                assert migrated["timeout_migrated"] is True
+
+                legacy_client_response = await client.post(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "enabled": True,
+                        "provider_id": "fake-provider",
+                    },
+                )
+                assert legacy_client_response.status == 200
+                still_migrated = (await legacy_client_response.json())["fast_action"]
+                assert still_migrated["configured_timeout_seconds"] == 4.0
+                assert still_migrated["effective_timeout_seconds"] == 6.0
+                assert still_migrated["timeout_policy_revision"] == (
+                    "legacy_default_v2"
+                )
+                assert still_migrated["timeout_migrated"] is True
+                assert bundle.plugin.config["fast_action_timeout_seconds"] == 4.0
+                assert (
+                    bundle.plugin.config["fast_action_timeout_policy_revision"]
+                    == "v2"
+                )
+
+                saved_response = await client.post(
+                    server.url("/pairing/fast-action-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "enabled": True,
+                        "provider_id": "fake-provider",
+                        "timeout_seconds": migrated["effective_timeout_seconds"],
+                    },
+                )
+                assert saved_response.status == 200
+                saved = (await saved_response.json())["fast_action"]
+                assert saved["configured_timeout_seconds"] == 6.0
+                assert saved["effective_timeout_seconds"] == 6.0
+                assert saved["timeout_policy_revision"] == "v3"
+                assert saved["timeout_migrated"] is False
+                assert bundle.plugin.config["fast_action_timeout_seconds"] == 6.0
+                assert (
+                    bundle.plugin.config["fast_action_timeout_policy_revision"]
+                    == "v3"
+                )
 
     asyncio.run(scenario())
 

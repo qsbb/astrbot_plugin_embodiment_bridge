@@ -10,7 +10,7 @@
 
 临独立诊断会记录 `fast_action.*`、`avatar.action.*` 的阶段、状态、来源、白名单动作、超时/空结果、仲裁胜者和意图下发状态。不会记录用户文本、Provider ID、身份、密钥或音频。`audio/chunk` 的成功 202 不逐块记录；一次 `audio/end` 后输出一条 `audio.upload.completed`，包含块数、字节数、HTTP 状态和耗时。
 
-快速动作设置接口 `GET/POST /pairing/fast-action-settings` 的 `timeout_seconds` 范围为 `0.5..15`；旧版客户端省略该字段时保留当前配置，不会默默写回 6 秒。响应同时返回 `configured_timeout_seconds`、`effective_timeout_seconds`、`timeout_policy_revision` 和 `timeout_migrated`。旧安装中没有 revision 且配置值为 4.0 时只进行运行时兼容迁移，不修改原配置；管理员保存后写入 `v2`，此后显式 4.0 按 4 秒生效。流式动作 Provider 在严格完整 JSON 通过 schema/allowlist 后立即关闭上游迭代器，不等待流尾；增量片段与累计前缀片段均支持，多 JSON 或尾部垃圾不会被提前接受。
+快速动作设置接口 `GET/POST /pairing/fast-action-settings` 的 `timeout_seconds` 范围为 `0.5..15`；旧版客户端省略该字段时保留当前配置，不会默默写回 6 秒。响应同时返回 `configured_timeout_seconds`、`effective_timeout_seconds`、`timeout_policy_revision` 和 `timeout_migrated`。旧安装中 revision 为空、`v2` 或 `legacy_default_v1` 且配置值为 4.0 时只进行运行时兼容迁移：响应保留 configured=4.0，并返回 effective=6.0、revision=`legacy_default_v2`、migrated=true，不直接修改原配置。管理页会把迁移后的有效 6 秒作为默认保存值；再次保存时写入 `v3`，之后管理员明确输入的 4.0 会按 4 秒生效。流式动作 Provider 在严格完整 JSON 通过 schema/allowlist 后立即关闭上游迭代器，不等待流尾；增量片段与累计前缀片段均支持，多 JSON 或尾部垃圾不会被提前接受。
 
 ## 1. 协议概览
 

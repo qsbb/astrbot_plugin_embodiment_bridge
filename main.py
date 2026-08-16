@@ -70,7 +70,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.11"
+__version__ = "1.0.12"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:

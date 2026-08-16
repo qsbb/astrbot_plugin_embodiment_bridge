@@ -55,13 +55,23 @@ const window = {
 const sourcePath = new URL("../pages/operator/app.js", import.meta.url);
 let source = fs.readFileSync(sourcePath, "utf8");
 source = source.replace(/\ninit\(\);\s*$/, "\n");
-source += `\n globalThis.__bridgeTest = { renderDiagnosticEvents, setDiagnosticAutoScroll };\n`;
+source += `\n globalThis.__bridgeTest = { renderDiagnosticEvents, setDiagnosticAutoScroll, fastActionTimeoutInputValue };\n`;
 const context = { window, document, console, setTimeout, clearTimeout };
 vm.runInNewContext(source, context, { filename: sourcePath.pathname });
 
 const container = document.getElementById("diagnostics-events");
 const api = context.__bridgeTest;
 assert.ok(api);
+assert.equal(api.fastActionTimeoutInputValue({
+  configured_timeout_seconds: 4,
+  effective_timeout_seconds: 6,
+  timeout_migrated: true,
+}), 6);
+assert.equal(api.fastActionTimeoutInputValue({
+  configured_timeout_seconds: 4,
+  effective_timeout_seconds: 4,
+  timeout_migrated: false,
+}), 4);
 api.setDiagnosticAutoScroll(false);
 api.renderDiagnosticEvents([
   { event: "fast_action.started", component: "action", status: "processing" },

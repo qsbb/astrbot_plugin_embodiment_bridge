@@ -184,7 +184,7 @@ class FastActionSettingsStub:
         self.provider_id = provider_id
         self.timeout_seconds = 6.0
         self.configured_timeout_seconds = 6.0
-        self.timeout_policy_revision = "v2"
+        self.timeout_policy_revision = "v3"
         self.timeout_migrated = False
 
     def configure(
@@ -411,11 +411,11 @@ def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
             "fast_action_enabled": True,
             "fast_action_provider_id": "model-b",
             "fast_action_timeout_seconds": 4.0,
-            "fast_action_timeout_policy_revision": "v2",
+            "fast_action_timeout_policy_revision": "v3",
         }
         assert saved["configured_timeout_seconds"] == 4.0
         assert saved["effective_timeout_seconds"] == 4.0
-        assert saved["timeout_policy_revision"] == "v2"
+        assert saved["timeout_policy_revision"] == "v3"
 
         legacy_client_saved = await settings.save_fast_action_settings(
             enabled=True,
@@ -426,7 +426,7 @@ def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
             "fast_action_provider_id": "model-a",
         }
         assert legacy_client_saved["effective_timeout_seconds"] == 4.0
-        assert legacy_client_saved["timeout_policy_revision"] == "v2"
+        assert legacy_client_saved["timeout_policy_revision"] == "v3"
         assert {item["id"] for item in saved["providers"]} == {
             "model-a",
             "model-b",

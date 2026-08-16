@@ -398,7 +398,7 @@ def test_fast_action_ready_snapshot_does_not_report_stale_not_configured() -> No
     assert snapshot["status"] == "ready"
 
 
-def test_legacy_four_second_default_is_auditable_without_overwriting_explicit_v2() -> None:
+def test_legacy_four_second_policy_migrates_v2_but_preserves_explicit_v3() -> None:
     legacy = FastActionDecisionAdapter(
         ContextStub('{"action":null}'),
         enabled=True,
@@ -410,10 +410,10 @@ def test_legacy_four_second_default_is_auditable_without_overwriting_explicit_v2
     legacy_snapshot = legacy.snapshot()
     assert legacy_snapshot["configured_timeout_seconds"] == 4.0
     assert legacy_snapshot["effective_timeout_seconds"] == 6.0
-    assert legacy_snapshot["timeout_policy_revision"] == "legacy_default_v1"
+    assert legacy_snapshot["timeout_policy_revision"] == "legacy_default_v2"
     assert legacy_snapshot["timeout_migrated"] is True
 
-    explicit = FastActionDecisionAdapter(
+    old_v2 = FastActionDecisionAdapter(
         ContextStub('{"action":null}'),
         enabled=True,
         provider_id="fast-model",
@@ -421,9 +421,27 @@ def test_legacy_four_second_default_is_auditable_without_overwriting_explicit_v2
         configured_timeout_seconds=4.0,
         timeout_policy_revision="v2",
     )
+    old_v2_snapshot = old_v2.snapshot()
+    assert old_v2_snapshot["effective_timeout_seconds"] == 6.0
+    assert old_v2_snapshot["timeout_policy_revision"] == "legacy_default_v2"
+    assert old_v2_snapshot["timeout_migrated"] is True
+    old_v2.configure(enabled=False, provider_id="")
+    reconfigured_snapshot = old_v2.snapshot()
+    assert reconfigured_snapshot["effective_timeout_seconds"] == 6.0
+    assert reconfigured_snapshot["timeout_policy_revision"] == "legacy_default_v2"
+    assert reconfigured_snapshot["timeout_migrated"] is True
+
+    explicit = FastActionDecisionAdapter(
+        ContextStub('{"action":null}'),
+        enabled=True,
+        provider_id="fast-model",
+        timeout_seconds=4.0,
+        configured_timeout_seconds=4.0,
+        timeout_policy_revision="v3",
+    )
     explicit_snapshot = explicit.snapshot()
     assert explicit_snapshot["effective_timeout_seconds"] == 4.0
-    assert explicit_snapshot["timeout_policy_revision"] == "v2"
+    assert explicit_snapshot["timeout_policy_revision"] == "v3"
     assert explicit_snapshot["timeout_migrated"] is False
 
 

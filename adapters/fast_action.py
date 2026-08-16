@@ -13,8 +13,8 @@ class FastActionUnavailable(RuntimeError):
     """Raised when the optional fast action provider cannot be used."""
 
 
-FAST_ACTION_TIMEOUT_POLICY_REVISION = "v2"
-LEGACY_DEFAULT_TIMEOUT_POLICY_REVISION = "legacy_default_v1"
+FAST_ACTION_TIMEOUT_POLICY_REVISION = "v3"
+LEGACY_DEFAULT_TIMEOUT_POLICY_REVISION = "legacy_default_v2"
 DEFAULT_FAST_ACTION_TIMEOUT_SECONDS = 6.0
 _PARSE_SELECTED = "selected"
 _PARSE_NO_ACTION = "no_action"
@@ -54,7 +54,8 @@ class FastActionDecisionAdapter:
         self.timeout_migrated = False
         if (
             configured_timeout_seconds is not None
-            and not self.timeout_policy_revision
+            and self.timeout_policy_revision
+            in {"", "v2", "legacy_default_v1"}
             and abs(self.configured_timeout_seconds - 4.0) < 0.001
         ):
             self.timeout_seconds = DEFAULT_FAST_ACTION_TIMEOUT_SECONDS
@@ -127,9 +128,10 @@ class FastActionDecisionAdapter:
                 if configured_timeout_seconds is not None
                 else self.timeout_seconds
             )
+            self.timeout_migrated = False
         if timeout_policy_revision is not None:
             self.timeout_policy_revision = str(timeout_policy_revision or "").strip()
-        self.timeout_migrated = False
+            self.timeout_migrated = False
         self.last_status = "disabled" if not self.enabled else (
             "ready" if self.provider_id else "not_configured"
         )

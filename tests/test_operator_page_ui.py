@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.11-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.11-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.11-1")
+    assert '<script type="module" src="./app.js?v=1.0.12-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.12-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.12-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -159,6 +159,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "timeout_seconds: timeoutSeconds" in js
     assert "effective_timeout_seconds" in js
     assert "timeout_policy_revision" in js
+    assert "fastActionTimeoutInputValue(fastActionSettings)" in js
+    assert "settings?.timeout_migrated === true" in js
     assert "load: loadFastActionSettings" in js
     assert "异步快速动作" in html
     assert "不等待主回复链路" in html
