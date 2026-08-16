@@ -364,6 +364,8 @@ function renderFastActionSettings(settings) {
   const select = document.getElementById("fast-action-provider-id");
   const button = document.getElementById("save-fast-action-button");
   const status = document.getElementById("fast-action-status");
+  const timeoutInput = document.getElementById("fast-action-timeout-seconds");
+  const timeoutHelp = document.getElementById("fast-action-timeout-help");
 
   checkbox.checked = enabled;
   checkbox.disabled = !writable;
@@ -377,6 +379,17 @@ function renderFastActionSettings(settings) {
   }
   select.value = selected;
   select.disabled = !writable || !providers.length;
+  const configuredTimeout = Number(fastActionSettings.configured_timeout_seconds);
+  const effectiveTimeout = Number(fastActionSettings.effective_timeout_seconds);
+  const timeoutValue = Number.isFinite(configuredTimeout)
+    ? configuredTimeout
+    : Number.isFinite(effectiveTimeout) ? effectiveTimeout : 6;
+  if (document.activeElement !== timeoutInput) timeoutInput.value = String(timeoutValue);
+  timeoutInput.disabled = !writable;
+  timeoutHelp.textContent = Number.isFinite(effectiveTimeout)
+    ? `有效超时：${effectiveTimeout.toFixed(1)} 秒 · 策略：${String(fastActionSettings.timeout_policy_revision || "v2")}` +
+      (fastActionSettings.timeout_migrated === true ? " · 旧4秒默认已安全迁移，未覆盖显式设置" : "")
+    : "有效超时：读取中";
   button.disabled = !writable || (enabled && !select.value);
 
   const messages = {
@@ -402,9 +415,11 @@ async function saveFastActionSettings() {
   try {
     const enabled = document.getElementById("fast-action-enabled").checked;
     const providerId = document.getElementById("fast-action-provider-id").value;
+    const timeoutSeconds = Number(document.getElementById("fast-action-timeout-seconds").value);
     const response = await apiPost("pairing/fast-action-settings", {
       enabled,
-      provider_id: providerId
+      provider_id: providerId,
+      timeout_seconds: timeoutSeconds
     });
     renderFastActionSettings(response.fast_action);
     toast(enabled
@@ -1877,6 +1892,13 @@ function diagnosticEventLabel(value) {
     "fast_action.skipped": "快速动作已回退或跳过",
     "fast_action.error": "快速动作判断失败",
     "fast_action.settings_updated": "快速动作设置已更新",
+    "avatar.action.eventbus_outcome": "EventBus 动作工具结果",
+    "avatar.action.main_delivery_parallel": "正文与动作并行交付",
+    "avatar.action.reply_wait_for_arbitration": "回复结束前等待动作仲裁",
+    "avatar.action.arbitration_winner": "动作仲裁胜者已确定",
+    "avatar.intent.emitted": "动作意图已下发",
+    "avatar.intent.dropped": "动作意图未下发",
+    "audio.upload.completed": "音频上传汇总完成",
     "avatar.action.tool_skipped": "主回复动作工具已切换",
     "avatar.intent.skipped": "重复动作意图已抑制",
     "llm.completed": "模型生成完成",
@@ -1955,6 +1977,12 @@ function diagnosticMeta(event) {
   if (Number.isFinite(event.chunks)) parts.push(`${event.chunks} 块`);
   if (Number.isFinite(event.bytes)) parts.push(`${event.bytes} 字节`);
   if (Number.isFinite(event.event_count)) parts.push(`${event.event_count} 个事件`);
+  if (event.operation) parts.push(`动作：${String(event.operation)}`);
+  if (event.action_source) parts.push(`来源：${String(event.action_source)}`);
+  if (event.method) parts.push(`方式：${String(event.method)}`);
+  if (event.catalog_status) parts.push(`目录：${String(event.catalog_status)}`);
+  if (event.eventbus_tool_called === true) parts.push("EventBus 工具已调用");
+  if (event.eventbus_tool_called === false) parts.push("EventBus 工具未调用");
   if (event.authorized === true) parts.push("身份已授权");
   if (event.authorized === false) parts.push("身份未授权");
   return parts.join(" · ");
@@ -1962,12 +1990,33 @@ function diagnosticMeta(event) {
 
 function renderDiagnosticEvents(events) {
   const container = document.getElementById("diagnostics-events");
+  const previousScrollTop = Number(container.scrollTop || 0);
+  const previousScrollHeight = Number(container.scrollHeight || 0);
+  const previousClientHeight = Number(container.clientHeight || 0);
+  const previousDistanceFromBottom = Math.max(
+    0,
+    previousScrollHeight - previousScrollTop - previousClientHeight,
+  );
   container.replaceChildren();
+  const restoreScrollPosition = () => {
+    if (diagnosticAutoScroll) {
+      container.scrollTop = container.scrollHeight;
+      return;
+    }
+    const nextMax = Math.max(
+      0,
+      Number(container.scrollHeight || 0) - Number(container.clientHeight || 0),
+    );
+    container.scrollTop = previousDistanceFromBottom <= 24
+      ? Math.max(0, nextMax - previousDistanceFromBottom)
+      : Math.min(previousScrollTop, nextMax);
+  };
   if (!events.length && !personaConversionJobSnapshot) {
     const empty = document.createElement("p");
     empty.className = "diagnostics-empty";
     empty.textContent = "尚无诊断事件。发起一次 Quest 连接或对话后再刷新。";
     container.append(empty);
+    restoreScrollPosition();
     return;
   }
   const timeline = events.slice(-39);
@@ -2001,7 +2050,7 @@ function renderDiagnosticEvents(events) {
     item.textContent = parts.join(" · ");
     container.append(item);
   });
-  if (diagnosticAutoScroll) container.scrollTop = container.scrollHeight;
+  restoreScrollPosition();
 }
 
 function renderDiagnosticSummary(events) {

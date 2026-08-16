@@ -52,6 +52,7 @@ class FastActionSettingsRequest(BaseModel):
 
     enabled: bool
     provider_id: str = Field(default="", max_length=256)
+    timeout_seconds: float | None = Field(default=None, ge=0.5, le=15.0)
 
 
 class STTProviderSelectionRequest(BaseModel):
@@ -537,6 +538,7 @@ class PairingHttpApi:
             settings = await self.operator_settings.save_fast_action_settings(
                 enabled=payload.enabled,
                 provider_id=payload.provider_id,
+                timeout_seconds=payload.timeout_seconds,
             )
             return _json_no_store({"success": True, "fast_action": settings})
         except Exception as exc:

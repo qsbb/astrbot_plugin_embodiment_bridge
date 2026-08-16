@@ -93,7 +93,8 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
 | `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作，并与主回复动作工具进行同轮单动作仲裁 |
 | `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
-| `fast_action_timeout_seconds` | `6.0` | 快速动作调用上限；动作决策与文字/TTS并行，正文不等待动作模型；超时只在 `reply.end` 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上 |
+| `fast_action_timeout_seconds` | `6.0` | 快速动作调用上限；动作决策与文字/TTS并行，正文不等待动作模型；超时只在 `reply.end` 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上。Operator Page 可保存 0.5–15 秒并显示 effective timeout |
+| `fast_action_timeout_policy_revision` | 空 | 审计字段；无 revision 且值为 4.0 时只识别为旧默认并按 6.0 effective 运行，管理页保存后写入 `v2`，显式保存的 4.0 不会被覆盖 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
 | `quest_direct_dialogue_mode` | `false` | 无平台身份的基础对话模式；不进入 EventBus，不需要 Bot/User 或“序”，关系/记忆/其他消息插件不会注入 |

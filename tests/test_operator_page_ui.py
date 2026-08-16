@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.0.8-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.0.8-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.8-1")
+    assert '<script type="module" src="./app.js?v=1.0.9-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.0.9-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.0.9-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -82,6 +82,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "fast-action-enabled",
         "fast-action-provider-id",
         "fast-action-status",
+        "fast-action-timeout-seconds",
+        "fast-action-timeout-help",
         "save-fast-action-button",
         "stt-provider-id",
         "stt-provider-help",
@@ -141,6 +143,9 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert 'apiPost("pairing/operator-settings"' in js
     assert 'apiGet("pairing/fast-action-settings")' in js
     assert 'apiPost("pairing/fast-action-settings"' in js
+    assert "timeout_seconds: timeoutSeconds" in js
+    assert "effective_timeout_seconds" in js
+    assert "timeout_policy_revision" in js
     assert "load: loadFastActionSettings" in js
     assert "异步快速动作" in html
     assert "不等待主回复链路" in html
@@ -392,4 +397,15 @@ def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> No
     assert "每秒自动刷新" in html
     assert "DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY" in js
     assert "setDiagnosticAutoScroll" in js
-    assert "if (diagnosticAutoScroll) container.scrollTop = container.scrollHeight;" in js
+    assert "if (diagnosticAutoScroll)" in js
+    for event_name in (
+        "avatar.action.eventbus_outcome",
+        "avatar.action.main_delivery_parallel",
+        "avatar.action.reply_wait_for_arbitration",
+        "avatar.action.arbitration_winner",
+        "avatar.intent.emitted",
+        "avatar.intent.dropped",
+        "audio.upload.completed",
+    ):
+        assert f'"{event_name}"' in js
+    assert "event.eventbus_tool_called" in js

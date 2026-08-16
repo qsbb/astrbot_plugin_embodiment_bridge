@@ -56,6 +56,47 @@ class StreamContext(ContextStub):
         return [self.provider]
 
 
+class EarlyCompleteProvider(StreamProvider):
+    def __init__(self, chunks: list[str], *, cumulative: bool = False) -> None:
+        super().__init__()
+        self.chunks = chunks
+        self.cumulative = cumulative
+        self.closed = False
+
+    async def text_chat_stream(self, **kwargs: Any):
+        del kwargs
+        try:
+            for chunk in self.chunks:
+                yield SimpleNamespace(completion_text=chunk, is_chunk=True)
+            await asyncio.sleep(5)
+        finally:
+            self.closed = True
+
+
+class NeverClosingIterator:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __aiter__(self) -> NeverClosingIterator:
+        return self
+
+    async def __anext__(self) -> Any:
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        await asyncio.sleep(5)
+
+
+class NeverClosingProvider(StreamProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.iterator = NeverClosingIterator()
+
+    def text_chat_stream(self, **kwargs: Any) -> NeverClosingIterator:
+        del kwargs
+        return self.iterator
+
+
 def test_fast_action_selects_only_an_allowlisted_action() -> None:
     async def scenario() -> None:
         context = ContextStub(
@@ -130,6 +171,62 @@ def test_fast_action_uses_public_provider_stream_and_reports_phases() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("cumulative", [False, True])
+def test_fast_action_accepts_complete_stream_json_without_waiting_for_stream_tail(
+    cumulative: bool,
+) -> None:
+    async def scenario() -> None:
+        complete = '{"action":{"name":"wave","arguments":{}}}'
+        chunks = (
+            [
+                '{"action":{"name":"',
+                'wave","arguments":{}}}',
+            ]
+            if not cumulative
+            else ['{"action":', complete]
+        )
+        provider = EarlyCompleteProvider(chunks, cumulative=cumulative)
+        adapter = FastActionDecisionAdapter(
+            StreamContext(provider),
+            enabled=True,
+            provider_id="fast-model",
+            timeout_seconds=1,
+        )
+        started = asyncio.get_running_loop().time()
+        intent = await adapter.decide(user_text="hello")
+        elapsed = asyncio.get_running_loop().time() - started
+        assert intent is not None
+        assert intent.gesture.value == "wave"
+        assert elapsed < 1.0
+        assert provider.closed is True
+
+    asyncio.run(scenario())
+
+
+def test_fast_action_stream_rejects_multi_json_and_tail_garbage() -> None:
+    raw = '{"action":{"name":"wave","arguments":{}}}{"action":null}'
+    assert FastActionDecisionAdapter._complete_stream_result(
+        raw,
+        allowed_actions=("wave",),
+    ) == (False, None)
+
+
+def test_fast_action_returns_when_iterator_close_never_finishes() -> None:
+    async def scenario() -> None:
+        provider = NeverClosingProvider()
+        adapter = FastActionDecisionAdapter(
+            StreamContext(provider),
+            enabled=True,
+            provider_id="fast-model",
+            timeout_seconds=1,
+        )
+        started = asyncio.get_running_loop().time()
+        assert await adapter.decide(user_text="hello") is None
+        assert asyncio.get_running_loop().time() - started < 1.0
+
+    asyncio.run(scenario())
+
+
 def test_fast_action_fails_closed_for_null_unknown_and_extra_arguments() -> None:
     for completion in (
         '{"action":null}',
@@ -196,6 +293,35 @@ def test_fast_action_timeout_does_not_return_a_stale_action() -> None:
         assert adapter.snapshot()["status"] == "timeout"
 
     asyncio.run(scenario())
+
+
+def test_legacy_four_second_default_is_auditable_without_overwriting_explicit_v2() -> None:
+    legacy = FastActionDecisionAdapter(
+        ContextStub('{"action":null}'),
+        enabled=True,
+        provider_id="fast-model",
+        timeout_seconds=4.0,
+        configured_timeout_seconds=4.0,
+        timeout_policy_revision="",
+    )
+    legacy_snapshot = legacy.snapshot()
+    assert legacy_snapshot["configured_timeout_seconds"] == 4.0
+    assert legacy_snapshot["effective_timeout_seconds"] == 6.0
+    assert legacy_snapshot["timeout_policy_revision"] == "legacy_default_v1"
+    assert legacy_snapshot["timeout_migrated"] is True
+
+    explicit = FastActionDecisionAdapter(
+        ContextStub('{"action":null}'),
+        enabled=True,
+        provider_id="fast-model",
+        timeout_seconds=4.0,
+        configured_timeout_seconds=4.0,
+        timeout_policy_revision="v2",
+    )
+    explicit_snapshot = explicit.snapshot()
+    assert explicit_snapshot["effective_timeout_seconds"] == 4.0
+    assert explicit_snapshot["timeout_policy_revision"] == "v2"
+    assert explicit_snapshot["timeout_migrated"] is False
 
 
 def test_fast_action_is_inert_when_disabled_or_unconfigured() -> None:

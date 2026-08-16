@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.0.8-1" />
+  <link rel="stylesheet" href="./style.css?v=1.0.9-1" />
 </head>
 <body>
   <main class="shell">
@@ -118,6 +118,9 @@
         <select id="fast-action-provider-id" disabled>
           <option value="">正在读取可用模型</option>
         </select>
+        <label for="fast-action-timeout-seconds">动作模型超时（秒）</label>
+        <input id="fast-action-timeout-seconds" type="number" min="0.5" max="15" step="0.1" value="6" inputmode="decimal" />
+        <p id="fast-action-timeout-help" class="field-help">有效超时：读取中。旧版未标记的4秒默认会按6秒运行；保存后会记录当前策略版本。</p>
         <p id="fast-action-status" class="field-status" role="status">尚未读取</p>
         <button id="save-fast-action-button" class="primary" type="button" aria-busy="false" disabled>保存快速动作设置</button>
       </section>
@@ -398,6 +401,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.0.8-1"></script>
+  <script type="module" src="./app.js?v=1.0.9-1"></script>
 </body>
 </html>

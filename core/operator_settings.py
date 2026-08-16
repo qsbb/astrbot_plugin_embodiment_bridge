@@ -455,6 +455,10 @@ class OperatorSettings:
                 "availability_reason": "adapter_unavailable",
                 "selected": False,
                 "selected_id": "",
+                "configured_timeout_seconds": 6.0,
+                "effective_timeout_seconds": 6.0,
+                "timeout_policy_revision": "v2",
+                "timeout_migrated": False,
                 "providers": self._list_chat_providers(),
                 "config_writable": config_is_writable(self.config),
             }
@@ -468,6 +472,7 @@ class OperatorSettings:
         *,
         enabled: bool,
         provider_id: str,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         normalized = str(provider_id or "").strip()
         if len(normalized) > 256 or any(ord(char) < 33 for char in normalized):
@@ -489,14 +494,54 @@ class OperatorSettings:
                 422,
                 "启用快速动作处理前必须选择模型",
             )
-        await self._persist_many(
-            {
-                "fast_action_enabled": bool(enabled),
-                "fast_action_provider_id": normalized,
-            }
-        )
+        timeout: float | None = None
+        if timeout_seconds is not None:
+            if isinstance(timeout_seconds, bool):
+                raise OperatorSettingsError(
+                    "invalid_fast_action_timeout",
+                    422,
+                    "快速动作超时必须是0.5到15秒之间的数字",
+                )
+            try:
+                timeout = float(timeout_seconds)
+            except (TypeError, ValueError) as exc:
+                raise OperatorSettingsError(
+                    "invalid_fast_action_timeout",
+                    422,
+                    "快速动作超时必须是0.5到15秒之间的数字",
+                ) from exc
+            if not 0.5 <= timeout <= 15.0:
+                raise OperatorSettingsError(
+                    "invalid_fast_action_timeout",
+                    422,
+                    "快速动作超时必须是0.5到15秒之间的数字",
+                )
+        persisted = {
+            "fast_action_enabled": bool(enabled),
+            "fast_action_provider_id": normalized,
+        }
+        if timeout is not None:
+            persisted.update(
+                {
+                    "fast_action_timeout_seconds": timeout,
+                    "fast_action_timeout_policy_revision": "v2",
+                }
+            )
+        await self._persist_many(persisted)
         if self.fast_action is not None:
-            self.fast_action.configure(enabled=bool(enabled), provider_id=normalized)
+            configure_kwargs: dict[str, Any] = {
+                "enabled": bool(enabled),
+                "provider_id": normalized,
+            }
+            if timeout is not None:
+                configure_kwargs.update(
+                    {
+                        "timeout_seconds": timeout,
+                        "configured_timeout_seconds": timeout,
+                        "timeout_policy_revision": "v2",
+                    }
+                )
+            self.fast_action.configure(**configure_kwargs)
         self._diagnostic(
             "fast_action.settings_updated",
             component="action",
@@ -1055,6 +1100,8 @@ class OperatorSettings:
                 "chat_provider_id",
                 "fast_action_enabled",
                 "fast_action_provider_id",
+                "fast_action_timeout_seconds",
+                "fast_action_timeout_policy_revision",
                 "quest_direct_dialogue_mode",
                 "astrbot_stt_provider_id",
                 "enable_astrbot_stt",

@@ -182,17 +182,30 @@ class FastActionSettingsStub:
     def __init__(self, *, enabled: bool = True, provider_id: str = "") -> None:
         self.enabled = enabled
         self.provider_id = provider_id
+        self.timeout_seconds = 6.0
+        self.configured_timeout_seconds = 6.0
+        self.timeout_policy_revision = "v2"
+        self.timeout_migrated = False
 
     def configure(
         self,
         *,
         enabled: bool | None = None,
         provider_id: str | None = None,
+        timeout_seconds: float | None = None,
+        configured_timeout_seconds: float | None = None,
+        timeout_policy_revision: str | None = None,
     ) -> None:
         if enabled is not None:
             self.enabled = enabled
         if provider_id is not None:
             self.provider_id = provider_id
+        if timeout_seconds is not None:
+            self.timeout_seconds = timeout_seconds
+        if configured_timeout_seconds is not None:
+            self.configured_timeout_seconds = configured_timeout_seconds
+        if timeout_policy_revision is not None:
+            self.timeout_policy_revision = timeout_policy_revision
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -207,6 +220,10 @@ class FastActionSettingsStub:
             ),
             "selected": bool(self.provider_id),
             "selected_id": self.provider_id,
+            "configured_timeout_seconds": self.configured_timeout_seconds,
+            "effective_timeout_seconds": self.timeout_seconds,
+            "timeout_policy_revision": self.timeout_policy_revision,
+            "timeout_migrated": self.timeout_migrated,
         }
 
 
@@ -385,6 +402,7 @@ def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
         saved = await settings.save_fast_action_settings(
             enabled=True,
             provider_id="model-b",
+            timeout_seconds=4.0,
         )
         assert saved["enabled"] is True
         assert saved["selected_id"] == "model-b"
@@ -392,7 +410,23 @@ def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
         assert config.saves[-1] == {
             "fast_action_enabled": True,
             "fast_action_provider_id": "model-b",
+            "fast_action_timeout_seconds": 4.0,
+            "fast_action_timeout_policy_revision": "v2",
         }
+        assert saved["configured_timeout_seconds"] == 4.0
+        assert saved["effective_timeout_seconds"] == 4.0
+        assert saved["timeout_policy_revision"] == "v2"
+
+        legacy_client_saved = await settings.save_fast_action_settings(
+            enabled=True,
+            provider_id="model-a",
+        )
+        assert config.saves[-1] == {
+            "fast_action_enabled": True,
+            "fast_action_provider_id": "model-a",
+        }
+        assert legacy_client_saved["effective_timeout_seconds"] == 4.0
+        assert legacy_client_saved["timeout_policy_revision"] == "v2"
         assert {item["id"] for item in saved["providers"]} == {
             "model-a",
             "model-b",
@@ -418,6 +452,13 @@ def test_fast_action_settings_validate_persist_and_apply_atomically() -> None:
             await settings.save_fast_action_settings(
                 enabled=True,
                 provider_id="missing",
+            )
+
+        with pytest.raises(OperatorSettingsError, match="0.5到15秒"):
+            await settings.save_fast_action_settings(
+                enabled=False,
+                provider_id="",
+                timeout_seconds=0.4,
             )
 
     asyncio.run(scenario())

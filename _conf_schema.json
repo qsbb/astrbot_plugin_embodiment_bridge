@@ -165,6 +165,12 @@
     "minimum": 0.5,
     "maximum": 15.0
   },
+  "fast_action_timeout_policy_revision": {
+    "description": "快速动作超时策略修订号",
+    "type": "string",
+    "hint": "内部审计字段。旧配置的4秒默认值仅在没有修订号时识别为旧默认；管理页保存后写入 v2。",
+    "default": ""
+  },
   "enable_astrbot_message_pipeline": {
     "description": "普通对话进入 AstrBot 正式消息管线",
     "type": "bool",

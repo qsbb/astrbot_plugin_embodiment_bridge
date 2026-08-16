@@ -69,7 +69,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.8"
+__version__ = "1.0.9"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -277,12 +277,19 @@ class EmbodimentBridgePlugin(Star):
         # Action selection has its own short-lived provider call. It defaults
         # to enabled, but remains inert until an administrator selects a
         # dedicated fast chat-completion Provider.
+        raw_fast_timeout = config.get("fast_action_timeout_seconds", 6.0)
+        try:
+            configured_fast_timeout = float(raw_fast_timeout)
+        except (TypeError, ValueError):
+            configured_fast_timeout = 6.0
         self.fast_action = FastActionDecisionAdapter(
             context,
             provider_id=str(config.get("fast_action_provider_id", "") or ""),
             enabled=self._bool_config("fast_action_enabled", True),
-            timeout_seconds=self._float_config(
-                "fast_action_timeout_seconds", 6.0, 0.5, 15.0
+            timeout_seconds=configured_fast_timeout,
+            configured_timeout_seconds=configured_fast_timeout,
+            timeout_policy_revision=str(
+                config.get("fast_action_timeout_policy_revision", "") or ""
             ),
             diagnostic_log=self._component_logger,
         )

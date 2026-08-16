@@ -632,6 +632,8 @@ def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
                 assert initial["enabled"] is True
                 assert initial["selected"] is False
                 assert initial["availability_reason"] == "provider_not_configured"
+                assert initial["effective_timeout_seconds"] == 6.0
+                assert initial["timeout_policy_revision"] in {"v2", "legacy_default_v1"}
                 assert {tuple(item) for item in initial["providers"]} == {
                     ("id", "model", "adapter_type", "provider_type")
                 }
@@ -640,12 +642,18 @@ def test_fast_action_settings_are_dashboard_only_and_use_safe_provider_catalog(
                 enabled = await client.post(
                     server.url("/pairing/fast-action-settings"),
                     headers=PAGE_AUTH,
-                    json={"enabled": True, "provider_id": "fake-provider"},
+                    json={
+                        "enabled": True,
+                        "provider_id": "fake-provider",
+                        "timeout_seconds": 5.5,
+                    },
                 )
                 assert enabled.status == 200
                 saved = (await enabled.json())["fast_action"]
                 assert saved["enabled"] is True
                 assert saved["selected_id"] == "fake-provider"
+                assert saved["effective_timeout_seconds"] == 5.5
+                assert saved["timeout_policy_revision"] == "v2"
                 assert bundle.plugin.fast_action.provider_id == "fake-provider"
 
                 invalid = await client.post(

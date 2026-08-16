@@ -13,6 +13,11 @@ class FastActionUnavailable(RuntimeError):
     """Raised when the optional fast action provider cannot be used."""
 
 
+FAST_ACTION_TIMEOUT_POLICY_REVISION = "v2"
+LEGACY_DEFAULT_TIMEOUT_POLICY_REVISION = "legacy_default_v1"
+DEFAULT_FAST_ACTION_TIMEOUT_SECONDS = 6.0
+
+
 class FastActionDecisionAdapter:
     """Small, action-only LLM adapter kept outside the normal reply pipeline.
 
@@ -28,13 +33,32 @@ class FastActionDecisionAdapter:
         *,
         provider_id: str = "",
         enabled: bool = True,
-        timeout_seconds: float = 4.0,
+        timeout_seconds: float = DEFAULT_FAST_ACTION_TIMEOUT_SECONDS,
+        configured_timeout_seconds: float | None = None,
+        timeout_policy_revision: str = "",
         diagnostic_log: Any | None = None,
     ) -> None:
         self.context = context
         self.provider_id = str(provider_id or "").strip()
         self.enabled = bool(enabled)
-        self.timeout_seconds = min(max(float(timeout_seconds), 0.5), 15.0)
+        configured = (
+            float(timeout_seconds)
+            if configured_timeout_seconds is None
+            else float(configured_timeout_seconds)
+        )
+        self.configured_timeout_seconds = min(max(configured, 0.5), 15.0)
+        self.timeout_policy_revision = str(timeout_policy_revision or "").strip()
+        self.timeout_migrated = False
+        if (
+            configured_timeout_seconds is not None
+            and not self.timeout_policy_revision
+            and abs(self.configured_timeout_seconds - 4.0) < 0.001
+        ):
+            self.timeout_seconds = DEFAULT_FAST_ACTION_TIMEOUT_SECONDS
+            self.timeout_policy_revision = LEGACY_DEFAULT_TIMEOUT_POLICY_REVISION
+            self.timeout_migrated = True
+        else:
+            self.timeout_seconds = min(max(float(timeout_seconds), 0.5), 15.0)
         self.diagnostic_log = diagnostic_log
         self.last_status = "disabled" if not self.enabled else "not_configured"
         self.last_error = ""
@@ -86,6 +110,8 @@ class FastActionDecisionAdapter:
         enabled: bool | None = None,
         provider_id: str | None = None,
         timeout_seconds: float | None = None,
+        timeout_policy_revision: str | None = None,
+        configured_timeout_seconds: float | None = None,
     ) -> None:
         if enabled is not None:
             self.enabled = bool(enabled)
@@ -93,6 +119,14 @@ class FastActionDecisionAdapter:
             self.provider_id = str(provider_id or "").strip()
         if timeout_seconds is not None:
             self.timeout_seconds = min(max(float(timeout_seconds), 0.5), 15.0)
+            self.configured_timeout_seconds = (
+                min(max(float(configured_timeout_seconds), 0.5), 15.0)
+                if configured_timeout_seconds is not None
+                else self.timeout_seconds
+            )
+        if timeout_policy_revision is not None:
+            self.timeout_policy_revision = str(timeout_policy_revision or "").strip()
+        self.timeout_migrated = False
         self.last_status = "disabled" if not self.enabled else (
             "ready" if self.provider_id else "not_configured"
         )
@@ -324,8 +358,9 @@ class FastActionDecisionAdapter:
             request_max_retries=1,
         )
         iterator = stream.__aiter__()
-        chunks: list[str] = []
+        accumulated = ""
         final_text = ""
+        early_text = ""
         received = False
         try:
             while True:
@@ -346,16 +381,21 @@ class FastActionDecisionAdapter:
                 text = self._completion_text(response)
                 if bool(getattr(response, "is_chunk", False)):
                     if text:
-                        chunks.append(text)
+                        accumulated = self._merge_stream_text(accumulated, text)
+                        complete, _intent = self._complete_stream_result(
+                            accumulated,
+                            allowed_actions=allowed_actions,
+                        )
+                        if complete:
+                            self.last_phase = "parse"
+                            early_text = accumulated
+                            break
                 elif text:
                     final_text = text
         finally:
             close = getattr(iterator, "aclose", None)
             if callable(close):
-                try:
-                    await asyncio.wait_for(close(), timeout=0.25)
-                except Exception:
-                    pass
+                await self._close_iterator_bounded(close)
         self.last_phase = "complete"
         self._record_phase(
             "fast_action.provider_completed",
@@ -364,7 +404,53 @@ class FastActionDecisionAdapter:
             status="completed",
             method=self.last_method,
         )
-        return final_text or "".join(chunks)
+        return early_text or final_text or accumulated
+
+    @staticmethod
+    def _merge_stream_text(previous: str, piece: str) -> str:
+        """Accept both delta chunks and cumulative-prefix chunks."""
+        if not previous:
+            return piece
+        if piece.startswith(previous):
+            return piece
+        if previous.startswith(piece):
+            return previous
+        return previous + piece
+
+    @classmethod
+    def _complete_stream_result(
+        cls,
+        raw: str,
+        *,
+        allowed_actions: tuple[str, ...],
+    ) -> tuple[bool, ProposedIntent | None]:
+        text = raw.strip()
+        if text.startswith("```"):
+            if not re.search(r"\s*```$", text):
+                return False, None
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)
+        if not text:
+            return False, None
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False, None
+        if not isinstance(payload, dict) or set(payload) != {"action"}:
+            return False, None
+        if payload.get("action") is None:
+            return True, None
+        intent = cls._parse(text, allowed_actions=allowed_actions)
+        return intent is not None, intent
+
+    @staticmethod
+    async def _close_iterator_bounded(close: Any) -> None:
+        try:
+            task = asyncio.create_task(close())
+            done, _pending = await asyncio.wait({task}, timeout=0.25)
+            if task not in done:
+                task.cancel()
+        except Exception:
+            return
 
     @staticmethod
     def _completion_text(response: Any) -> str:
@@ -498,6 +584,11 @@ class FastActionDecisionAdapter:
             "last_phase": self.last_phase,
             "last_method": self.last_method,
             "timeout_seconds": self.timeout_seconds,
+            "configured_timeout_seconds": self.configured_timeout_seconds,
+            "effective_timeout_seconds": self.timeout_seconds,
+            "timeout_policy_revision": self.timeout_policy_revision
+            or FAST_ACTION_TIMEOUT_POLICY_REVISION,
+            "timeout_migrated": self.timeout_migrated,
         }
 
     async def close(self) -> None:
