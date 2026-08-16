@@ -27,6 +27,7 @@ from ..core.plugin_identity import (
     BRIDGE_FAST_ACTION_ACTIVE,
     BRIDGE_FAST_ACTION_EXPLICIT,
     BRIDGE_FAST_ACTION_FEEDBACK,
+    BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
@@ -176,7 +177,13 @@ class AstrBotMessagePipelineAdapter:
         selected_intent = read_selected_intent(event)
         reply = event.captured_text().strip()
         if not reply:
+            reply = _event_result_text(event).strip()
+            if reply:
+                self._record_reply_recovered(source="event_result")
+        if not reply:
             reply = _delivery_plan_text(event).strip()
+            if reply:
+                self._record_reply_recovered(source="delivery_plan")
         # A tool-only action is still a valid turn.  AstrBot may finish after
         # executing the action tool without emitting a textual assistant reply;
         # do not discard the selected dance/turn intent as an empty response.
@@ -194,6 +201,45 @@ class AstrBotMessagePipelineAdapter:
                 should_reply=False,
                 reply_text="",
                 intent=selected_intent,
+            )
+        fast_action_selected = bool(
+            isinstance(fast_action_feedback, dict)
+            and isinstance(
+                fast_action_feedback.get(BRIDGE_FAST_ACTION_SELECTED),
+                str,
+            )
+        )
+        # ``stop_event()`` is also used by post-processing plugins to claim
+        # delivery ownership or intentionally suppress text. If the parallel
+        # fast-action path already reserved a valid action, an empty stopped
+        # EventBus result is a legitimate action-only turn rather than a
+        # dialogue transport failure. The orchestrator owns and delivers the
+        # reserved intent; this placeholder is never emitted as a second one.
+        if not reply and self.last_event_stopped is True and fast_action_selected:
+            self.status = "ok"
+            self.last_error = ""
+            self.last_duration_ms = max(
+                0, int((time.perf_counter() - started) * 1000)
+            )
+            self._record_fast_action_stopped_outcome(
+                duration_ms=self.last_duration_ms,
+                action_source=(
+                    "explicit_request"
+                    if fast_action_feedback.get("explicit_action") is True
+                    else "fast_provider"
+                ),
+            )
+            return ModelDecision(
+                should_reply=False,
+                reply_text="",
+                intent=ProposedIntent(
+                    emotion=Emotion.NEUTRAL,
+                    gesture=Gesture.TALK,
+                    look_at=LookAt.USER,
+                    intensity=0.38,
+                    duration_ms=1_200,
+                    reason_code="fast_action_selected",
+                ),
             )
         if not reply:
             self.status = "empty_reply"
@@ -223,6 +269,43 @@ class AstrBotMessagePipelineAdapter:
             reply_text=reply,
             intent=intent,
         )
+
+    def _record_reply_recovered(self, *, source: str) -> None:
+        recorder = getattr(self.logger, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                "message_pipeline.reply_recovered",
+                component="message_pipeline",
+                phase="eventbus",
+                status="recovered",
+                result=source,
+            )
+        except Exception:
+            return
+
+    def _record_fast_action_stopped_outcome(
+        self,
+        *,
+        duration_ms: int,
+        action_source: str,
+    ) -> None:
+        recorder = getattr(self.logger, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                "message_pipeline.stopped_after_fast_action",
+                component="message_pipeline",
+                phase="eventbus",
+                status="completed",
+                reason_code="fast_action_selected",
+                action_source=action_source,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            return
 
     def _record_action_outcome(
         self,
@@ -574,3 +657,28 @@ def _delivery_plan_text(event: Any) -> str:
         return ""
     plan = conversation_flow.get("delivery_plan")
     return str(plan.get("original_text") or "") if isinstance(plan, dict) else ""
+
+
+def _event_result_text(event: Any) -> str:
+    """Read the final EventBus result when a plugin claimed default delivery.
+
+    ``stop_event()`` controls further EventBus propagation; it does not erase a
+    result that was already produced. Reading only captured ``send()`` calls
+    therefore loses valid post-processed replies from plugins that stop default
+    delivery after updating ``MessageEventResult``.
+    """
+    getter = getattr(event, "get_result", None)
+    if not callable(getter):
+        return ""
+    try:
+        result = getter()
+    except Exception:
+        return ""
+    plain_text = getattr(result, "get_plain_text", None)
+    if not callable(plain_text):
+        return ""
+    try:
+        value = plain_text()
+    except Exception:
+        return ""
+    return value if isinstance(value, str) else ""

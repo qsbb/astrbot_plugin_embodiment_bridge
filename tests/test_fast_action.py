@@ -211,6 +211,35 @@ def test_fast_action_stream_rejects_multi_json_and_tail_garbage() -> None:
     ) == (False, None)
 
 
+def test_fast_action_invalid_stream_schema_finishes_without_waiting_for_tail() -> None:
+    async def scenario() -> None:
+        provider = EarlyCompleteProvider(['{"action":{"name":"unknown"}}'])
+        diagnostic = SimpleNamespace(events=[])
+
+        def record(event: str, **fields: Any) -> None:
+            diagnostic.events.append((event, fields))
+
+        adapter = FastActionDecisionAdapter(
+            StreamContext(provider),
+            enabled=True,
+            provider_id="fast-model",
+            timeout_seconds=1,
+            diagnostic_log=SimpleNamespace(record=record),
+        )
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(
+            FastActionUnavailable,
+            match="fast_action_invalid_output",
+        ):
+            await adapter.decide(user_text="hello")
+        assert asyncio.get_running_loop().time() - started < 1.0
+        assert provider.closed is True
+        assert adapter.snapshot()["status"] == "invalid_output"
+        assert diagnostic.events[-1][0] == "fast_action.parse_invalid"
+
+    asyncio.run(scenario())
+
+
 def test_fast_action_returns_when_iterator_close_never_finishes() -> None:
     async def scenario() -> None:
         provider = NeverClosingProvider()
@@ -221,7 +250,11 @@ def test_fast_action_returns_when_iterator_close_never_finishes() -> None:
             timeout_seconds=1,
         )
         started = asyncio.get_running_loop().time()
-        assert await adapter.decide(user_text="hello") is None
+        with pytest.raises(
+            FastActionUnavailable,
+            match="fast_action_invalid_output",
+        ):
+            await adapter.decide(user_text="hello")
         assert asyncio.get_running_loop().time() - started < 1.0
 
     asyncio.run(scenario())
@@ -279,11 +312,17 @@ def test_fast_action_empty_client_capability_does_not_expose_full_catalog() -> N
 
 def test_fast_action_timeout_does_not_return_a_stale_action() -> None:
     async def scenario() -> None:
+        diagnostic = SimpleNamespace(events=[])
+
+        def record(event: str, **fields: Any) -> None:
+            diagnostic.events.append((event, fields))
+
         adapter = FastActionDecisionAdapter(
             ContextStub('{"action":"wave"}', delay=0.05),
             enabled=True,
             provider_id="fast-model",
             timeout_seconds=0.01,
+            diagnostic_log=SimpleNamespace(record=record),
         )
         # The constructor clamps the production timeout to 500 ms; set a
         # deliberately tiny value after construction to exercise wait_for.
@@ -291,8 +330,60 @@ def test_fast_action_timeout_does_not_return_a_stale_action() -> None:
         with pytest.raises(FastActionUnavailable, match="fast_action_timeout"):
             await adapter.decide(user_text="wave")
         assert adapter.snapshot()["status"] == "timeout"
+        timeout_fields = diagnostic.events[-1][1]
+        assert diagnostic.events[-1][0] == "fast_action.timeout"
+        assert timeout_fields["configured_timeout_ms"] == 500
+        assert timeout_fields["effective_timeout_ms"] == 10
 
     asyncio.run(scenario())
+
+
+def test_fast_action_distinguishes_no_action_from_invalid_output() -> None:
+    async def scenario() -> None:
+        diagnostic = SimpleNamespace(events=[])
+
+        def record(event: str, **fields: Any) -> None:
+            diagnostic.events.append((event, fields))
+
+        no_action = FastActionDecisionAdapter(
+            ContextStub('{"action":null}'),
+            enabled=True,
+            provider_id="fast-model",
+            diagnostic_log=SimpleNamespace(record=record),
+        )
+        assert await no_action.decide(user_text="hello") is None
+        assert no_action.snapshot()["status"] == "no_action"
+        assert diagnostic.events[-1][0] == "fast_action.parsed_no_action"
+
+        invalid = FastActionDecisionAdapter(
+            ContextStub("not-json"),
+            enabled=True,
+            provider_id="fast-model",
+            diagnostic_log=SimpleNamespace(record=record),
+        )
+        with pytest.raises(
+            FastActionUnavailable,
+            match="fast_action_invalid_output",
+        ):
+            await invalid.decide(user_text="hello")
+        assert invalid.snapshot()["status"] == "invalid_output"
+        assert diagnostic.events[-1][0] == "fast_action.parse_invalid"
+
+    asyncio.run(scenario())
+
+
+def test_fast_action_ready_snapshot_does_not_report_stale_not_configured() -> None:
+    adapter = FastActionDecisionAdapter(
+        ContextStub('{"action":null}'),
+        enabled=True,
+        provider_id="fast-model",
+    )
+
+    snapshot = adapter.snapshot()
+
+    assert snapshot["available"] is True
+    assert snapshot["availability_reason"] == "ready"
+    assert snapshot["status"] == "ready"
 
 
 def test_legacy_four_second_default_is_auditable_without_overwriting_explicit_v2() -> None:

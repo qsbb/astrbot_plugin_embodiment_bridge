@@ -16,6 +16,9 @@ from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
     prepare_quest_action_request,
 )
 from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
+from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_FAST_ACTION_SELECTED,
+)
 
 
 class QueueStub:
@@ -73,6 +76,7 @@ class CaptureEventStub:
         woken: bool = True,
         stopped: bool = False,
         send_observed: bool = False,
+        result_text: str = "",
     ) -> None:
         self.text = text
         self.plan = plan
@@ -80,6 +84,7 @@ class CaptureEventStub:
         self.is_at_or_wake_command = woken
         self._stopped = stopped
         self._has_send_oper = send_observed
+        self.result_text = result_text
         self.extras: dict[str, Any] = {}
 
     async def wait_completed(self) -> None:
@@ -98,6 +103,9 @@ class CaptureEventStub:
 
     def is_stopped(self) -> bool:
         return self._stopped
+
+    def get_result(self) -> Any:
+        return SimpleNamespace(get_plain_text=lambda: self.result_text)
 
 
 class DiagnosticStub:
@@ -149,13 +157,98 @@ def test_delivery_plan_recovers_text_when_voice_plugin_removed_plain_chain(
             {"version": "1.0", "original_text": "保留的最终正文"},
         )
         monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        diagnostic = DiagnosticStub()
         adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
             context,
-            SimpleNamespace(),
+            diagnostic,
             platform_id="qq",
         )
         decision = await adapter.generate(session=session(), user_text="你好")
         assert decision.reply_text == "保留的最终正文"
+
+    asyncio.run(scenario())
+
+
+def test_stopped_eventbus_result_preserves_postprocessed_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = CaptureEventStub(
+            "",
+            stopped=True,
+            result_text="后处理后的最终回复",
+        )
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        diagnostic = DiagnosticStub()
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(
+            session=session(),
+            user_text="向我挥挥手",
+            fast_action_active=True,
+            fast_action_feedback={
+                "explicit_action": True,
+                BRIDGE_FAST_ACTION_SELECTED: "wave",
+            },
+        )
+
+        assert decision.should_reply is True
+        assert decision.reply_text == "后处理后的最终回复"
+        assert adapter.status == "ok"
+        assert adapter.last_event_stopped is True
+        assert diagnostic.events[0] == (
+            "message_pipeline.reply_recovered",
+            {
+                "component": "message_pipeline",
+                "phase": "eventbus",
+                "status": "recovered",
+                "result": "event_result",
+            },
+        )
+
+    asyncio.run(scenario())
+
+
+def test_stopped_event_after_reserved_fast_action_is_valid_silent_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = CaptureEventStub("", stopped=True)
+        diagnostic = DiagnosticStub()
+        feedback = {
+            "explicit_action": True,
+            BRIDGE_FAST_ACTION_SELECTED: "wave",
+        }
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+        )
+
+        decision = await adapter.generate(
+            session=session(),
+            user_text="向我挥挥手",
+            fast_action_active=True,
+            fast_action_feedback=feedback,
+        )
+
+        assert decision.should_reply is False
+        assert decision.reply_text == ""
+        assert decision.intent.gesture.value == "talk"
+        assert decision.intent.reason_code == "fast_action_selected"
+        assert adapter.status == "ok"
+        assert adapter.last_error == ""
+        assert diagnostic.events[-1][0] == (
+            "message_pipeline.stopped_after_fast_action"
+        )
+        assert diagnostic.events[-1][1]["action_source"] == "explicit_request"
 
     asyncio.run(scenario())
 

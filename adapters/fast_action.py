@@ -16,6 +16,9 @@ class FastActionUnavailable(RuntimeError):
 FAST_ACTION_TIMEOUT_POLICY_REVISION = "v2"
 LEGACY_DEFAULT_TIMEOUT_POLICY_REVISION = "legacy_default_v1"
 DEFAULT_FAST_ACTION_TIMEOUT_SECONDS = 6.0
+_PARSE_SELECTED = "selected"
+_PARSE_NO_ACTION = "no_action"
+_PARSE_INVALID = "invalid"
 
 
 class FastActionDecisionAdapter:
@@ -201,15 +204,34 @@ class FastActionDecisionAdapter:
                 timeout=self.timeout_seconds,
             )
             self.last_phase = "parse"
-            intent = self._parse(response, allowed_actions=allowed_actions)
+            parse_status, intent = self._parse_outcome(
+                response,
+                allowed_actions=allowed_actions,
+            )
             self.last_duration_ms = max(
                 0, int(round((asyncio.get_running_loop().time() - started) * 1000))
             )
-            self.last_status = "selected" if intent is not None else "no_action"
-            if intent is not None:
+            if parse_status == _PARSE_INVALID:
+                self.last_status = "invalid_output"
+                self.last_error = "fast_action_invalid_output"
+                self._record_phase(
+                    "fast_action.parse_invalid",
+                    started=started,
+                    phase="parse",
+                    status="invalid",
+                    reason_code="fast_action_invalid_output",
+                    method=self.last_method,
+                )
+                raise FastActionUnavailable("fast_action_invalid_output")
+            self.last_status = parse_status
+            if parse_status == _PARSE_SELECTED and intent is not None:
                 self.last_action = intent.gesture.value
             self._record_phase(
-                "fast_action.parsed",
+                (
+                    "fast_action.parsed"
+                    if parse_status == _PARSE_SELECTED
+                    else "fast_action.parsed_no_action"
+                ),
                 started=started,
                 phase="parse",
                 status=self.last_status,
@@ -231,6 +253,8 @@ class FastActionDecisionAdapter:
                 status="timeout",
                 reason_code="fast_action_timeout",
                 method=self.last_method,
+                configured_timeout_ms=self.configured_timeout_seconds * 1000,
+                effective_timeout_ms=self.timeout_seconds * 1000,
             )
             raise FastActionUnavailable("fast_action_timeout") from exc
         except FastActionUnavailable:
@@ -432,15 +456,17 @@ class FastActionDecisionAdapter:
         if not text:
             return False, None
         try:
-            payload = json.loads(text)
+            json.loads(text)
         except (TypeError, ValueError, json.JSONDecodeError):
             return False, None
-        if not isinstance(payload, dict) or set(payload) != {"action"}:
-            return False, None
-        if payload.get("action") is None:
-            return True, None
-        intent = cls._parse(text, allowed_actions=allowed_actions)
-        return intent is not None, intent
+        _status, intent = cls._parse_outcome(
+            text,
+            allowed_actions=allowed_actions,
+        )
+        # Once one complete JSON value has arrived, schema validation can run
+        # immediately. Invalid objects must not keep a hanging stream alive
+        # until the provider timeout.
+        return True, intent
 
     @staticmethod
     async def _close_iterator_bounded(close: Any) -> None:
@@ -519,8 +545,9 @@ class FastActionDecisionAdapter:
             '"intensity":0.45,"duration_ms":2000,"look_at":"user",'
             '"style":"natural"}}}. turn_half may use angle_degrees; crouch may '
             "use depth and hold_ms. "
-            "Use null for ordinary conversation, descriptions, quoted requests, "
-            "or ambiguous/unsafe wording. Never invent names, "
+            "Use null for routine factual exchange, descriptions, quoted requests, "
+            "ambiguous or unsafe wording, and whenever no natural action adds "
+            "meaning. Never invent names, "
             "files, bones, paths, or arguments. Allowlisted names: "
             + names
         )
@@ -531,46 +558,65 @@ class FastActionDecisionAdapter:
         *,
         allowed_actions: tuple[str, ...] | None = None,
     ) -> ProposedIntent | None:
+        _status, intent = FastActionDecisionAdapter._parse_outcome(
+            raw,
+            allowed_actions=allowed_actions,
+        )
+        return intent
+
+    @staticmethod
+    def _parse_outcome(
+        raw: Any,
+        *,
+        allowed_actions: tuple[str, ...] | None = None,
+    ) -> tuple[str, ProposedIntent | None]:
         if not isinstance(raw, str) or not raw.strip():
-            return None
+            return _PARSE_INVALID, None
         text = raw.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)
         try:
             payload = json.loads(text)
         except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+            return _PARSE_INVALID, None
         if not isinstance(payload, dict):
-            return None
+            return _PARSE_INVALID, None
         if set(payload) != {"action"}:
-            return None
+            return _PARSE_INVALID, None
         action = payload.get("action")
         if action is None:
-            return None
+            return _PARSE_NO_ACTION, None
         if isinstance(action, str):
             name = action
             arguments = {}
         elif isinstance(action, dict):
             if "name" not in action or set(action) - {"name", "arguments"}:
-                return None
+                return _PARSE_INVALID, None
             name = action.get("name")
             arguments = action.get("arguments", {})
         else:
-            return None
+            return _PARSE_INVALID, None
         if not isinstance(arguments, dict):
-            return None
+            return _PARSE_INVALID, None
         normalized = AvatarSkillRegistry.normalize_action_name(name)
         if normalized is None:
-            return None
+            return _PARSE_INVALID, None
         if allowed_actions is not None and normalized not in allowed_actions:
-            return None
-        return AvatarSkillRegistry.invoke(normalized, arguments)
+            return _PARSE_INVALID, None
+        intent = AvatarSkillRegistry.invoke(normalized, arguments)
+        return (
+            (_PARSE_SELECTED, intent)
+            if intent is not None
+            else (_PARSE_INVALID, None)
+        )
 
     def snapshot(self) -> dict[str, Any]:
         availability = self.availability_reason
         status = self.last_status
         if availability != "ready" and status != "processing":
             status = availability
+        elif availability == "ready" and status == "not_configured":
+            status = "ready"
         return {
             "enabled": self.enabled,
             "available": self.available,
