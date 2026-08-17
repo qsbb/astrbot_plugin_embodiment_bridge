@@ -59,12 +59,14 @@ class AstrBotMessagePipelineAdapter:
         enabled: bool = True,
         platform_id: str = "",
         timeout_seconds: float = 90.0,
+        diagnostic_log: Any | None = None,
     ) -> None:
         self.context = context
         self.logger = logger
         self.enabled = bool(enabled)
         self.platform_id = str(platform_id or "").strip()
         self.timeout_seconds = min(max(float(timeout_seconds), 10.0), 180.0)
+        self.diagnostic_log = diagnostic_log
         self.status = "enabled" if self.enabled else "disabled"
         self.last_error = ""
         self.last_duration_ms = 0
@@ -111,6 +113,25 @@ class AstrBotMessagePipelineAdapter:
         action_facts: list[dict[str, Any]] | None = None,
     ) -> ModelDecision:
         started = time.perf_counter()
+        current_turn = getattr(session, "current_turn", None)
+        trace_id = str(getattr(current_turn, "trace_id", "") or "")[:16]
+        recorder = getattr(self.diagnostic_log, "record", None)
+
+        def stage(event: str, *, status: str, **fields: Any) -> None:
+            if not callable(recorder):
+                return
+            try:
+                recorder(
+                    event,
+                    component="eventbus",
+                    phase="pipeline",
+                    status=status,
+                    trace_id=trace_id,
+                    **fields,
+                )
+            except Exception:
+                return
+
         self.last_error = ""
         self.last_event_woken = None
         self.last_event_stopped = None
@@ -166,16 +187,21 @@ class AstrBotMessagePipelineAdapter:
             self.status = "queue_unavailable"
             self.last_error = "astrbot_event_queue_unavailable"
             raise MessagePipelineUnavailable("astrbot_event_queue_unavailable") from exc
+        stage("event_enqueued", status="queued", event_type="message.event")
 
         self.status = "processing"
         try:
             await asyncio.wait_for(event.wait_completed(), timeout=self.timeout_seconds)
+            stage("event_woken", status="completed", event_type="message.event")
         except TimeoutError as exc:
             self.status = "timeout"
             self.last_error = "astrbot_pipeline_timeout"
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
+        finally:
+            stage("event_cleanup_entered", status="entered", event_type="message.event")
 
         self._record_event_outcome(event)
+        stage("event_completed", status="ok", event_type="message.event")
         text_reply_required = requires_text_reply(user_text)
         selected_intent = read_selected_intent(event)
         reply = event.captured_text().strip()

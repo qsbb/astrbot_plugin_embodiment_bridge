@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import secrets
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from time import monotonic
@@ -212,6 +213,8 @@ class TurnState:
     intent_emitted: bool = False
     primary_intent_gesture: str = ""
     reply_ended: bool = False
+    terminal_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
 
 
 @dataclass(slots=True)

@@ -69,6 +69,7 @@ _SAFE_FIELD_NAMES = frozenset(
         "send_observed",
         "eventbus_tool_called",
         "reply_required",
+        "trace_id",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(

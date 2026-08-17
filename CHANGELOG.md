@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.0.14 - 2026-08-17
+
+### Fixed
+
+- 为 Bridge 创建的 AstrBot EventBus 轮次增加 29 秒独立终帧截止线；超时安全取消等待并发送一次脱敏错误和一次 `reply.end(status=failed)`。
+- 为动作首事件、EventBus 阶段、终帧发送与取消增加同 trace 脱敏诊断，并保证成功或失败终帧 exactly-once。
+- 合法 action-only 轮次保留空成功终帧；客户端区分首事件、回复停滞和动作后缺终帧超时。
+
 ## 1.0.13 - 2026-08-17
 
 ### Fixed

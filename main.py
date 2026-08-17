@@ -70,7 +70,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.0.13"
+__version__ = "1.0.14"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -366,6 +366,7 @@ class EmbodimentBridgePlugin(Star):
             self._component_logger,
             enabled=self._bool_config("enable_astrbot_message_pipeline", True),
             platform_id=trusted_platform_id,
+            diagnostic_log=self.diagnostic_log,
         )
         self.knowledge = GlobalKnowledgeAdapter(
             context,

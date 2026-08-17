@@ -108,6 +108,9 @@ _SAME_TURN_ACTION_COMPLETION_CLAIM = re.compile(
     re.IGNORECASE,
 )
 
+# Bridge deadline leaves transport/headset margin before the 35-second client budget.
+EVENTBUS_TERMINAL_DEADLINE_SECONDS = 29.0
+
 
 class TurnOrchestrator:
     def __init__(
@@ -131,6 +134,7 @@ class TurnOrchestrator:
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
         server_timing_enabled: bool = False,
+        eventbus_terminal_deadline_seconds: float = EVENTBUS_TERMINAL_DEADLINE_SECONDS,
     ) -> None:
         self.sessions = sessions
         self.llm = llm
@@ -149,6 +153,9 @@ class TurnOrchestrator:
         self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
         self.server_timing_enabled = bool(server_timing_enabled)
+        self.eventbus_terminal_deadline_seconds = min(
+            34.0, max(0.01, float(eventbus_terminal_deadline_seconds))
+        )
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
     async def authorize_session(
@@ -326,6 +333,9 @@ class TurnOrchestrator:
                 ),
             )
         except asyncio.CancelledError:
+            self._diagnostic(
+                "turn_cancelled", component="turn", phase="audio", status="cancelled", trace_id=turn.trace_id
+            )
             turn.server_timing.finish_stt()
             raise
         except MessagePipelineEmpty as exc:
@@ -392,6 +402,13 @@ class TurnOrchestrator:
                 ),
             )
         except asyncio.CancelledError:
+            self._diagnostic(
+                "turn_cancelled",
+                component="turn",
+                phase="text",
+                status="cancelled",
+                trace_id=turn.trace_id,
+            )
             raise
         except MessagePipelineEmpty as exc:
             await self._emit_pipeline_empty_error(session, turn, exc, phase="text")
@@ -450,6 +467,13 @@ class TurnOrchestrator:
                 interaction=interaction,
             )
         except asyncio.CancelledError:
+            self._diagnostic(
+                "turn_cancelled",
+                component="turn",
+                phase="interaction",
+                status="cancelled",
+                trace_id=turn.trace_id,
+            )
             raise
         except Exception as exc:
             self.logger.warning(
@@ -849,6 +873,9 @@ class TurnOrchestrator:
                 action_source=action_source,
             )
         except asyncio.CancelledError:
+            self._diagnostic(
+                "turn_cancelled", component="turn", phase="action", status="cancelled", trace_id=turn.trace_id
+            )
             raise
         except Exception as exc:
             self._set_fast_action_feedback(turn, status="error")
@@ -951,13 +978,53 @@ class TurnOrchestrator:
                         session,
                         exclude_turn_id=turn.turn_id,
                     )
-                    decision = await self.message_pipeline.generate(
-                        session=session,
-                        user_text=user_text,
-                        fast_action_active=turn.fast_action_active,
-                        fast_action_feedback=turn.fast_action_feedback,
-                        action_facts=action_facts,
+                    self._diagnostic(
+                        "event_enqueued",
+                        component="eventbus",
+                        phase="pipeline",
+                        status="queued",
+                        event_type="message.event",
+                        trace_id=turn.trace_id,
                     )
+                    try:
+                        decision = await asyncio.wait_for(
+                            self.message_pipeline.generate(
+                                session=session,
+                                user_text=user_text,
+                                fast_action_active=turn.fast_action_active,
+                                fast_action_feedback=turn.fast_action_feedback,
+                                action_facts=action_facts,
+                            ),
+                            timeout=self.eventbus_terminal_deadline_seconds,
+                        )
+                        self._diagnostic(
+                            "event_woken",
+                            component="eventbus",
+                            phase="pipeline",
+                            status="completed",
+                            event_type="message.event",
+                            trace_id=turn.trace_id,
+                        )
+                    except TimeoutError as exc:
+                        self._diagnostic(
+                            "event_completed",
+                            component="eventbus",
+                            phase="terminal",
+                            status="timeout",
+                            reason_code="astrbot_pipeline_timeout",
+                            deadline_ms=self.eventbus_terminal_deadline_seconds * 1000,
+                            trace_id=turn.trace_id,
+                        )
+                        raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
+                    finally:
+                        self._diagnostic(
+                            "event_cleanup_entered",
+                            component="eventbus",
+                            phase="pipeline",
+                            status="entered",
+                            event_type="message.event",
+                            trace_id=turn.trace_id,
+                        )
                     operation = "astrbot_event_bus"
                     self._diagnostic(
                         "message_pipeline.completed",
@@ -965,6 +1032,13 @@ class TurnOrchestrator:
                         phase="eventbus",
                         status="ok",
                         duration_ms=(time.perf_counter() - llm_started) * 1000,
+                    )
+                    self._diagnostic(
+                        "decision_ready",
+                        component="eventbus",
+                        phase="decision",
+                        status="ready",
+                        trace_id=turn.trace_id,
                     )
                 except MessagePipelineUnavailable as exc:
                     self._diagnostic(
@@ -1348,11 +1422,26 @@ class TurnOrchestrator:
         }
         if self.server_timing_enabled:
             reply_end_payload["server_timing"] = turn.server_timing.snapshot()
-        turn.reply_ended = True
-        await self._emit(
-            session,
-            turn,
-            reply_end_payload,
+        async with turn.terminal_lock:
+            if turn.reply_ended:
+                self._diagnostic(
+                    "reply_end_dropped",
+                    component="reply",
+                    phase="terminal",
+                    status="duplicate",
+                    event_type="reply.end",
+                    trace_id=turn.trace_id,
+                )
+                return
+            turn.reply_ended = True
+            emitted = await self._emit(session, turn, reply_end_payload)
+        self._diagnostic(
+            "reply_end_emitted" if emitted else "reply_end_dropped",
+            component="reply",
+            phase="terminal",
+            status="emitted" if emitted else "dropped",
+            event_type="reply.end",
+            trace_id=turn.trace_id,
         )
         self._diagnostic(
             "reply.completed",
@@ -1672,6 +1761,14 @@ class TurnOrchestrator:
         if action_id is None:
             payload.pop("action_id", None)
         emitted = await self._emit(session, turn, payload)
+        self._diagnostic(
+            "avatar_intent_emitted" if emitted else "avatar_intent_dropped",
+            component="action",
+            phase="delivery",
+            status="emitted" if emitted else "dropped",
+            event_type="avatar.intent",
+            trace_id=turn.trace_id,
+        )
         if not emitted:
             await self.sessions.discard_action_plan(session, action_id)
         return intent, emitted
@@ -1706,22 +1803,38 @@ class TurnOrchestrator:
             text_sent=False,
             audio_sent=False,
         )
-        if not await self._emit_error(session, turn, code, message):
-            return False
-        reply_end_payload = {
-            "type": "reply.end",
-            "status": "failed",
-            "text_sent": False,
-            "audio_sent": False,
-        }
-        if self.server_timing_enabled:
-            reply_end_payload["server_timing"] = turn.server_timing.snapshot()
-        turn.reply_ended = True
-        return await self._emit(
-            session,
-            turn,
-            reply_end_payload,
+        async with turn.terminal_lock:
+            if turn.reply_ended:
+                self._diagnostic(
+                    "reply_end_dropped",
+                    component="reply",
+                    phase="terminal",
+                    status="duplicate",
+                    event_type="reply.end",
+                    trace_id=turn.trace_id,
+                )
+                return False
+            turn.reply_ended = True
+            if not await self._emit_error(session, turn, code, message):
+                return False
+            reply_end_payload = {
+                "type": "reply.end",
+                "status": "failed",
+                "text_sent": False,
+                "audio_sent": False,
+            }
+            if self.server_timing_enabled:
+                reply_end_payload["server_timing"] = turn.server_timing.snapshot()
+            emitted = await self._emit(session, turn, reply_end_payload)
+        self._diagnostic(
+            "reply_end_emitted" if emitted else "reply_end_dropped",
+            component="reply",
+            phase="terminal",
+            status="emitted" if emitted else "dropped",
+            event_type="reply.end",
+            trace_id=turn.trace_id,
         )
+        return emitted
 
     async def _normalized_audio_chunks(
         self,
