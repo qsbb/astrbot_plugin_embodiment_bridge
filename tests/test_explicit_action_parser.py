@@ -225,3 +225,33 @@ def test_action_plus_reply_is_one_explicit_action_with_required_text(
 )
 def test_reply_requirement_does_not_expand_action_only_or_negated_text(text: str) -> None:
     assert requires_text_reply(text) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "action"),
+    [
+        ("不要回复我，只挥手。", "wave"),
+        ("请只下蹲，不要回复文字。", "crouch"),
+        ("Do not reply, just wave.", "wave"),
+    ],
+)
+def test_action_only_no_reply_clause_preserves_explicit_action(
+    text: str,
+    action: str,
+) -> None:
+    result = parse_explicit_action(text)
+
+    assert result.action == action
+    assert result.status == "matched"
+    assert result.reason == "explicit_imperative"
+    assert result.allow_model_tool is False
+    assert requires_text_reply(text) is False
+
+
+@pytest.mark.parametrize("text", ["不要挥手", "别下蹲", "Do not wave"])
+def test_action_negation_is_still_rejected(text: str) -> None:
+    result = parse_explicit_action(text)
+
+    assert result.action is None
+    assert result.status == "rejected"
+    assert result.reason == "negated"

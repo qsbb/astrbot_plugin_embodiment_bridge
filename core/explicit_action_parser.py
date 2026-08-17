@@ -40,10 +40,10 @@ _ZH_PREFIX = (
     r"让(?:她|他|角色|它)?|叫(?:她|他|角色|它)?|帮我|请她|请他|请角色|"
     r"我让(?:她|他|角色|它)?|我想让(?:她|他|角色|它)?|你|她|他|角色|它|"
     r"开始|直接|来)\s*)?"
-    r"(?:(?:随便|自然(?:地)?|轻轻(?:地)?)\s*)?"
+    r"(?:(?:随便|自然(?:地)?|轻轻(?:地)?|只)\s*)?"
 )
 _ZH_SUFFIX = r"\s*(?:(?:一下|一下吧|吧|吗|嘛|可以吗|好不好))?[。！!？?]?"
-_EN_PREFIX = r"(?:(?:please|now|please\s+now|now\s+please)\s+)?"
+_EN_PREFIX = r"(?:(?:please|now|please\s+now|now\s+please)\s+)?(?:just\s+)?"
 _EN_SUFFIX = r"(?:\s+please)?[.!]?"
 
 _ACTION_PATTERNS: dict[ActionName, tuple[str, ...]] = {
@@ -179,6 +179,13 @@ _NEGATED_REPLY_RE = re.compile(
     r"|\b(?:do\s+not|don't|dont|never)\s+(?:reply|respond|answer)\b",
     re.IGNORECASE,
 )
+_ACTION_ONLY_REPLY_RE = re.compile(
+    r"(?:不要|别|无需|不用|不必)\s*(?:(?:再|同时|也)\s*)?"
+    r"(?:回复|回答|回应|答复)(?:我|文字|文本|内容|这个问题)?[。！!？?]?"
+    r"|\b(?:do\s+not|don't|dont|never)\s+(?:reply|respond|answer)"
+    r"(?:\s+(?:to\s+)?(?:me|that|this))?\b",
+    re.IGNORECASE,
+)
 
 
 def parse_explicit_action(text: str) -> ExplicitActionResult:
@@ -190,12 +197,13 @@ def parse_explicit_action(text: str) -> ExplicitActionResult:
     if len(normalized) > MAX_COMMAND_CHARS:
         return ExplicitActionResult(None, "rejected", "input_too_long", False)
 
-    mentions = _action_mentions(normalized)
-    rejection = _rejection_reason(normalized, has_action_mention=bool(mentions))
+    action_only_text = _strip_action_only_reply_clause(normalized)
+    mentions = _action_mentions(action_only_text)
+    rejection = _rejection_reason(action_only_text, has_action_mention=bool(mentions))
     if rejection:
         return ExplicitActionResult(None, "rejected", rejection, False)
 
-    action_text = _strip_required_reply_suffix(normalized)
+    action_text = _strip_required_reply_suffix(action_only_text)
     matches = [
         action
         for action, patterns in _COMPILED_ACTIONS.items()
@@ -207,7 +215,7 @@ def parse_explicit_action(text: str) -> ExplicitActionResult:
             "matched",
             (
                 "explicit_imperative_with_reply"
-                if action_text != normalized
+                if action_text != action_only_text
                 else "explicit_imperative"
             ),
             False,
@@ -250,6 +258,15 @@ def _strip_required_reply_suffix(text: str) -> str:
         if match is not None and match.start() > 0:
             return text[: match.start()].rstrip(" ,，、;；")
     return text
+
+
+def _strip_action_only_reply_clause(text: str) -> str:
+    """Remove an explicit no-text clause without weakening action negation."""
+    stripped = _ACTION_ONLY_REPLY_RE.sub(" ", text)
+    stripped = re.sub(r"^\s*[,\uFF0C\u3001;\uFF1B]+\s*|\s*[,\uFF0C\u3001;\uFF1B]+$", "", stripped)
+    stripped = re.sub(r"^(?:并且|同时|也|还|顺便|and|while)\s*", "", stripped, flags=re.IGNORECASE)
+    stripped = stripped.strip(" ,，、;；")
+    return stripped.strip()
 
 
 def _rejection_reason(text: str, *, has_action_mention: bool) -> str:
