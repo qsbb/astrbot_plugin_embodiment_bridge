@@ -104,6 +104,82 @@ def test_eventbus_action_only_http_has_one_intent_and_terminal(monkeypatch: Any,
     asyncio.run(scenario())
 
 
+def test_eventbus_tool_only_action_without_fast_selection_has_one_intent_and_terminal(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        pipeline = EventBusFake()
+        bundle.plugin.message_pipeline = pipeline
+        bundle.plugin.orchestrator.message_pipeline = pipeline
+        bundle.plugin.fast_action = None
+        bundle.plugin.orchestrator.fast_action = None
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
+                events = await _open(bundle, server, client, "eventbus-tool-only")
+                started = await client.post(
+                    server.url("/turn/start"), headers=AUTH_HEADERS,
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-tool-only", "turn_id": "t1", "text": "请根据工具决定身体表达", "cancel_previous": True},
+                )
+                assert started.status == 202
+                frames = []
+                while not frames or frames[-1].event != "reply.end":
+                    frames.append(await read_sse_frame(events, timeout=2))
+                event_types = [frame.event for frame in frames]
+                assert event_types == ["avatar.intent", "reply.end"]
+                assert frames[0].data["gesture"] == "dance"
+                assert frames[-1].data["status"] == "completed"
+                events.close()
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_text_reply_preserves_intent_text_audio_end_order(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        pipeline = EventBusFake(
+            decision=ModelDecision(
+                should_reply=True,
+                reply_text="请轻一点。",
+                intent=ProposedIntent(
+                    emotion=Emotion.SHY,
+                    gesture=Gesture.TALK,
+                    look_at=LookAt.USER,
+                    intensity=0.4,
+                    duration_ms=1_200,
+                    reason_code="astrbot_message_pipeline",
+                ),
+            )
+        )
+        bundle.plugin.message_pipeline = pipeline
+        bundle.plugin.orchestrator.message_pipeline = pipeline
+        bundle.plugin.fast_action = None
+        bundle.plugin.orchestrator.fast_action = None
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
+                events = await _open(bundle, server, client, "eventbus-text")
+                started = await client.post(
+                    server.url("/turn/start"), headers=AUTH_HEADERS,
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-text", "turn_id": "t1", "text": "请正常回复", "cancel_previous": True},
+                )
+                assert started.status == 202
+                frames = []
+                while not frames or frames[-1].event != "reply.end":
+                    frames.append(await read_sse_frame(events, timeout=2))
+                event_types = [frame.event for frame in frames]
+                assert event_types.count("avatar.intent") == 1
+                assert event_types.index("avatar.intent") < event_types.index("reply.text.delta")
+                assert event_types.index("reply.text.delta") < event_types.index("reply.audio.chunk")
+                assert event_types[-1] == "reply.end"
+                events.close()
+
+    asyncio.run(scenario())
+
+
 def test_eventbus_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tmp_path: Path) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
