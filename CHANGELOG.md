@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.15 - 2026-08-17
+
+### Fixed
+
+- 为首个 `reply.text.delta` 与首个 `reply.audio.chunk` 增加同 `trace_id` 的脱敏诊断阶段，使 EventBus 入队、唤醒、决策、动作、首文字、首音频和终帧可以在同一轮精确计算耗时；不记录正文或音频内容，也不改变 SSE、EventBus、人格、记忆、知识、TTS 或 Provider 选择。
+
 ## 1.0.14 - 2026-08-17
 
 ### Fixed

@@ -99,6 +99,14 @@ def test_eventbus_action_only_http_has_one_intent_and_terminal(monkeypatch: Any,
                 assert [frame.event for frame in frames].count("avatar.intent") == 1
                 assert [frame.event for frame in frames].count("reply.end") == 1
                 assert frames[-1].data["status"] == "completed"
+                diagnostic_codes = {
+                    item["code"]
+                    for item in bundle.plugin.diagnostic_log.diagnostic_events(
+                        limit=200
+                    )["events"]
+                }
+                assert "reply_text_first_emitted" not in diagnostic_codes
+                assert "reply_audio_first_emitted" not in diagnostic_codes
                 events.close()
 
     asyncio.run(scenario())
@@ -175,6 +183,26 @@ def test_eventbus_text_reply_preserves_intent_text_audio_end_order(
                 assert event_types.index("avatar.intent") < event_types.index("reply.text.delta")
                 assert event_types.index("reply.text.delta") < event_types.index("reply.audio.chunk")
                 assert event_types[-1] == "reply.end"
+                diagnostic = bundle.plugin.diagnostic_log.diagnostic_events(limit=200)
+                first_delivery = [
+                    item
+                    for item in diagnostic["events"]
+                    if item["code"]
+                    in {"reply_text_first_emitted", "reply_audio_first_emitted"}
+                ]
+                assert [item["code"] for item in first_delivery] == [
+                    "reply_text_first_emitted",
+                    "reply_audio_first_emitted",
+                ]
+                assert all(
+                    item["details"]["trace_id"] == first_delivery[0]["details"]["trace_id"]
+                    for item in first_delivery
+                )
+                assert first_delivery[0]["details"]["event_type"] == "reply.text.delta"
+                assert first_delivery[1]["details"]["event_type"] == "reply.audio.chunk"
+                serialized = repr(first_delivery)
+                assert "请轻一点" not in serialized
+                assert "data" not in serialized
                 events.close()
 
     asyncio.run(scenario())

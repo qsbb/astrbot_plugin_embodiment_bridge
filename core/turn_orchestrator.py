@@ -1285,12 +1285,23 @@ class TurnOrchestrator:
                 action_source="completion_guard",
             )
         if text:
+            first_text_emitted = False
             for chunk in self._text_chunks(text):
                 accepted = await self._emit(
                     session,
                     turn,
                     {"type": "reply.text.delta", "text": chunk},
                 )
+                if accepted and not first_text_emitted:
+                    first_text_emitted = True
+                    self._diagnostic(
+                        "reply_text_first_emitted",
+                        component="reply",
+                        phase="text",
+                        status="emitted",
+                        event_type="reply.text.delta",
+                        trace_id=turn.trace_id,
+                    )
                 if not accepted and not self.sessions.is_current(
                     session, turn.turn_id, turn.generation
                 ):
@@ -1321,6 +1332,15 @@ class TurnOrchestrator:
                     )
                     if accepted:
                         turn.server_timing.mark_tts_first_chunk()
+                        if audio_chunks == 0:
+                            self._diagnostic(
+                                "reply_audio_first_emitted",
+                                component="reply",
+                                phase="audio",
+                                status="emitted",
+                                event_type="reply.audio.chunk",
+                                trace_id=turn.trace_id,
+                            )
                     if not accepted and not self.sessions.is_current(
                         session, turn.turn_id, turn.generation
                     ):

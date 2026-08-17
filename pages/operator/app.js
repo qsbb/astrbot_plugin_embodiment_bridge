@@ -1923,6 +1923,8 @@ function diagnosticEventLabel(value) {
     "avatar.action.arbitration_winner": "动作仲裁胜者已确定",
     "avatar.intent.emitted": "动作意图已下发",
     "avatar.intent.dropped": "动作意图未下发",
+    reply_text_first_emitted: "首个文字事件已下发",
+    reply_audio_first_emitted: "首个音频事件已下发",
     "audio.upload.completed": "音频上传汇总完成",
     "avatar.action.tool_skipped": "主回复动作工具已切换",
     "avatar.action.tool_superseded": "主回复动作工具已被快速动作替代",
