@@ -10,6 +10,7 @@ ActionName = Literal[
     "dance",
     "dance_next",
     "raise_hand",
+    "raise_leg",
     "turn_half",
     "wave",
     "bow",
@@ -60,6 +61,10 @@ _ACTION_PATTERNS: dict[ActionName, tuple[str, ...]] = {
         rf"{_ZH_PREFIX}(?:举手|举起手|把手举起来|把手抬起来|抬起手|抬手){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:raise\s+your\s+hand|put\s+your\s+hand\s+up){_EN_SUFFIX}",
     ),
+    "raise_leg": (
+        rf"{_ZH_PREFIX}(?:抬起单腿|抬起一条腿|抬腿|抬起腿|单腿站立){_ZH_SUFFIX}",
+        rf"{_EN_PREFIX}(?:raise\s+one\s+leg|lift\s+one\s+leg|raise\s+your\s+leg|lift\s+your\s+leg){_EN_SUFFIX}",
+    ),
     "turn_half": (
         rf"{_ZH_PREFIX}(?:转身|转个身|转过身|转半圈|旋转半圈){_ZH_SUFFIX}",
         rf"{_EN_PREFIX}(?:turn\s+around|turn\s+halfway|turn\s+half\s+way|turn\s+180\s+degrees|make\s+a\s+half\s+turn){_EN_SUFFIX}",
@@ -105,6 +110,10 @@ _MENTION_PATTERNS: dict[ActionName, re.Pattern[str]] = {
     "raise_hand": re.compile(
         r"举手|举起手|把手举起来|把手抬起来|抬起手|抬手|\braise\s+your\s+hand\b|"
         r"\bput\s+your\s+hand\s+up\b",
+        re.IGNORECASE,
+    ),
+    "raise_leg": re.compile(
+        r"抬起单腿|抬起一条腿|抬腿|抬起腿|单腿站立|\braise\s+(?:one|your)\s+leg\b|\blift\s+(?:one|your)\s+leg\b",
         re.IGNORECASE,
     ),
     "turn_half": re.compile(

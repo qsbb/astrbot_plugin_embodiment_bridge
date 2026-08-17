@@ -542,7 +542,7 @@ class FastActionDecisionAdapter:
             "not require an explicit action request. Use wave for a greeting, reunion, "
             "or farewell; bow for a clear thanks or apology; raise_hand for enthusiastic "
             "agreement, volunteering, or a strong celebration; and dance only for an "
-            "unmistakably celebratory moment. Keep sit, lie, crouch, turn_half, and "
+            "unmistakably celebratory moment. Keep sit, lie, crouch, raise_leg, turn_half, and "
             "dance_next explicit-only unless the current utterance directly asks for "
             "them. Still use null for routine factual exchange or when no action adds "
             "meaning. Do not answer the user. "

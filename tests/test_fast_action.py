@@ -381,7 +381,7 @@ def test_fast_action_prompt_maps_autonomous_contexts_to_bounded_actions() -> Non
     assert "bow for a clear thanks or apology" in prompt
     assert "raise_hand for enthusiastic agreement" in prompt
     assert "dance only for an unmistakably celebratory moment" in prompt
-    assert "sit, lie, crouch, turn_half, and dance_next explicit-only" in prompt
+    assert "sit, lie, crouch, raise_leg, turn_half, and dance_next explicit-only" in prompt
 
 
 def test_fast_action_ready_snapshot_does_not_report_stale_not_configured() -> None:

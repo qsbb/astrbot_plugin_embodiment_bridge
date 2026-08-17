@@ -63,7 +63,7 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
                 "source",
             ],
             "selection": "server_client_intersection",
-            "legacy_client_excludes": ["crouch"],
+            "legacy_client_excludes": ["crouch", "raise_leg"],
             "one_full_body_action_per_turn": True,
         },
     }

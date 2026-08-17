@@ -947,13 +947,13 @@ GET /health
 
 ```text
 emotion: neutral | happy | shy | surprised | concerned | uncomfortable
-gesture/method: idle | talk | wave | bow | dance | dance_next | raise_hand | turn_half | sit | lie | nod | sway | crouch | handshake | head_pat | cheek_pinch | refuse | step_back
+gesture/method: idle | talk | wave | bow | dance | dance_next | raise_hand | raise_leg | turn_half | sit | lie | nod | sway | crouch | handshake | head_pat | cheek_pinch | refuse | step_back
 look_at: user | hand | away | none
 ```
 
 `in_reply_to_event_id` 在非交互轮次可能为 `null`。`reason_code` 用于诊断和行为选择，不应作为骨骼、Morph 或动画路径。`method` 必须与 `gesture` 一致；`parameters` 只允许受限的 `angle_degrees/depth/hold_ms/style`，`transition` 只允许有界入场、退场时长与缓动。除 `idle`、`talk` 外，服务端为可执行意图附加 `action_id`，客户端可用 11.1 节的回执接口报告真实执行结果。
 
-Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求允许预选 `dance`、`dance_next`、`raise_hand`、`turn_half`、`wave`、`bow`、`sit`、`lie`、`crouch`；其中下蹲的中英文明确命令不等待快速动作 Provider。所有动作仍通过 `AvatarSkillRegistry`、会话能力交集和发送前门禁，每轮最多一个全身动作。否定、假设、引用、转述、讨论和多动作歧义不会猜测执行。计划或 accepted 只允许回复“开始/尝试”，只有后续认证 `completed` 回执才能声称完成。
+Bridge 对服务端创建且带可信 `embodiment_bridge` 标记的 EventBus 轮次执行保守的整句动作祈使识别。明确请求允许预选 `dance`、`dance_next`、`raise_hand`、`raise_leg`、`turn_half`、`wave`、`bow`、`sit`、`lie`、`crouch`；其中下蹲和抬单腿的中英文明确命令不等待快速动作 Provider。所有动作仍通过 `AvatarSkillRegistry`、会话能力交集和发送前门禁，每轮最多一个全身动作。否定、假设、引用、转述、讨论和多动作歧义不会猜测执行。计划或 accepted 只允许回复“开始/尝试”，只有后续认证 `completed` 回执才能声称完成。
 
 Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降级到 `idle`；未知 `emotion` 降级到 `neutral`，未知 `look_at` 降级到 `none`。
 

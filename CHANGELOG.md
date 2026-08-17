@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.16 - 2026-08-17
+
+### Added
+
+- 新增 `raise_leg` canonical 动作，保留旧客户端能力交集和现有 EventBus、人格、记忆、知识、TTS 与 Provider 链路。
+
 ## 1.0.15 - 2026-08-17
 
 ### Fixed

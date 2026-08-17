@@ -52,6 +52,7 @@ class Gesture(StrEnum):
     DANCE = "dance"
     DANCE_NEXT = "dance_next"
     RAISE_HAND = "raise_hand"
+    RAISE_LEG = "raise_leg"
     TURN_HALF = "turn_half"
     SIT = "sit"
     LIE = "lie"

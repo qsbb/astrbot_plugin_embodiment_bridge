@@ -29,7 +29,7 @@
       "session_capability_field": "session.start.supported_actions",
       "intent_fields": ["action_id", "method", "parameters", "transition", "source"],
       "selection": "server_client_intersection",
-      "legacy_client_excludes": ["crouch"],
+      "legacy_client_excludes": ["crouch", "raise_leg"],
       "one_full_body_action_per_turn": true
     }
   },
@@ -128,6 +128,7 @@
       "dance",
       "dance_next",
       "raise_hand",
+      "raise_leg",
       "turn_half",
       "sit",
       "lie",

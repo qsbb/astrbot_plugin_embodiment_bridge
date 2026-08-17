@@ -87,6 +87,7 @@ def test_session_action_capabilities_are_explicit_and_legacy_safe() -> None:
         legacy = await manager.start_session(session_request("legacy"), "api_key:one")
         assert manager.supports_action(legacy, "wave") is True
         assert manager.supports_action(legacy, "crouch") is False
+        assert manager.supports_action(legacy, "raise_leg") is False
         assert legacy.supported_actions_declared is False
 
         declared_request = session_request("declared", "quest-b").model_copy(

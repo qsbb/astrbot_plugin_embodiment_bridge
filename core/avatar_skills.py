@@ -87,6 +87,14 @@ class AvatarSkillRegistry:
             3_000,
         ),
         AvatarSkill(
+            "raise_leg",
+            Gesture.RAISE_LEG,
+            "Raise one leg briefly while keeping the other foot planted",
+            LookAt.USER,
+            0.45,
+            3_200,
+        ),
+        AvatarSkill(
             "turn_half",
             Gesture.TURN_HALF,
             "Turn the body about half a turn toward the requested direction",
@@ -184,6 +192,10 @@ class AvatarSkillRegistry:
         "turn_around": "turn_half",
         "half_turn": "turn_half",
         "raise_hand": "raise_hand",
+        "raise_leg": "raise_leg",
+        "lift_leg": "raise_leg",
+        "raise_one_leg": "raise_leg",
+        "lift_one_leg": "raise_leg",
         "crouch": "crouch",
         "squat": "crouch",
     }
@@ -192,7 +204,9 @@ class AvatarSkillRegistry:
     # Preserve every action it could already receive, but never opt it into a
     # method whose Unity implementation may not exist.
     _legacy_client_names = tuple(
-        skill.name for skill in _skills if skill.gesture is not Gesture.CROUCH
+        skill.name
+        for skill in _skills
+        if skill.gesture not in {Gesture.CROUCH, Gesture.RAISE_LEG}
     )
 
     @classmethod

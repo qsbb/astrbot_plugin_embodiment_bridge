@@ -22,6 +22,7 @@ def test_semantic_aliases_normalize_without_accepting_paths() -> None:
     assert AvatarSkillRegistry.normalize_action_name("switch-dance") == "dance_next"
     assert AvatarSkillRegistry.normalize_action_name("hand_wave") == "wave"
     assert AvatarSkillRegistry.normalize_action_name("turn around") == "turn_half"
+    assert AvatarSkillRegistry.normalize_action_name("lift one leg") == "raise_leg"
     assert AvatarSkillRegistry.normalize_action_name("C:/motion.vmd") is None
 
 
