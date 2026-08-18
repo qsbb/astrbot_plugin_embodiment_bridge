@@ -5,7 +5,7 @@ desc: >
   凝心溯溪-临是面向虚拟陪伴与具身 AI 的 AstrBot 桥接插件。它将 VR/MR、
   桌面虚拟角色和实体设备接入 AstrBot 正式消息链，把用户的语音、触碰与空间信息
   交给人格、记忆、知识和工具系统处理，再将回复、语音、动作、表情与注视意图实时返回客户端。
-version: 1.0.18
+version: 1.0.19
 author: qsbb
 repo: https://github.com/qsbb/astrbot_plugin_embodiment_bridge
 astrbot_version: ">=4.26,<5"

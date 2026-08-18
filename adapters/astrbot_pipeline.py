@@ -29,6 +29,8 @@ from ..core.plugin_identity import (
     BRIDGE_FAST_ACTION_EXPLICIT,
     BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_FAST_ACTION_SELECTED,
+    BRIDGE_CAPTURE_REQUIRED,
+    BRIDGE_DELIVERY_OWNER,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
@@ -46,6 +48,11 @@ class MessagePipelineUnavailable(RuntimeError):
 
 class MessagePipelineEmpty(RuntimeError):
     pass
+
+
+DELIVERY_VISIBILITY_VALUES = frozenset(
+    {"captured", "result_recovered", "plan_recovered", "action_only", "unobserved"}
+)
 
 
 class AstrBotMessagePipelineAdapter:
@@ -73,6 +80,8 @@ class AstrBotMessagePipelineAdapter:
         self.last_event_woken: bool | None = None
         self.last_event_stopped: bool | None = None
         self.last_send_observed: bool | None = None
+        self.last_delivery_visibility = "unobserved"
+        self.last_delivery_visibility_reason = ""
 
     @property
     def available(self) -> bool:
@@ -136,6 +145,8 @@ class AstrBotMessagePipelineAdapter:
         self.last_event_woken = None
         self.last_event_stopped = None
         self.last_send_observed = None
+        self.last_delivery_visibility = "unobserved"
+        self.last_delivery_visibility_reason = ""
         if not self.enabled:
             self.last_error = "message_pipeline_disabled"
             raise MessagePipelineUnavailable("message_pipeline_disabled")
@@ -196,6 +207,7 @@ class AstrBotMessagePipelineAdapter:
         except TimeoutError as exc:
             self.status = "timeout"
             self.last_error = "astrbot_pipeline_timeout"
+            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
         finally:
             stage("event_cleanup_entered", status="entered", event_type="message.event")
@@ -209,13 +221,16 @@ class AstrBotMessagePipelineAdapter:
             reply = _event_result_text(event).strip()
             if reply:
                 self._record_reply_recovered(source="event_result")
+                self._set_delivery_visibility("result_recovered", "event_result")
         if not reply:
             reply = _delivery_plan_text(event).strip()
             if reply:
                 self._record_reply_recovered(source="delivery_plan")
+                self._set_delivery_visibility("plan_recovered", "delivery_plan")
         if not reply and text_reply_required:
             self.status = "empty_reply"
             self.last_error = "astrbot_pipeline_reply_required_missing"
+            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
             self._record_required_reply_missing()
             raise MessagePipelineEmpty(self.last_error)
         # A tool-only action is still a valid turn. AstrBot may finish after
@@ -230,6 +245,7 @@ class AstrBotMessagePipelineAdapter:
                 source="selected",
                 duration_ms=self.last_duration_ms,
             )
+            self._set_delivery_visibility("action_only", "selected_action")
             self._record_eventbus_action_outcome(event, selected_intent)
             return ModelDecision(
                 should_reply=False,
@@ -252,9 +268,7 @@ class AstrBotMessagePipelineAdapter:
         if not reply and self.last_event_stopped is True and fast_action_selected:
             self.status = "ok"
             self.last_error = ""
-            self.last_duration_ms = max(
-                0, int((time.perf_counter() - started) * 1000)
-            )
+            self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
             self._record_fast_action_stopped_outcome(
                 duration_ms=self.last_duration_ms,
                 action_source=(
@@ -263,6 +277,7 @@ class AstrBotMessagePipelineAdapter:
                     else "fast_provider"
                 ),
             )
+            self._set_delivery_visibility("action_only", "fast_action_selected")
             return ModelDecision(
                 should_reply=False,
                 reply_text="",
@@ -277,6 +292,7 @@ class AstrBotMessagePipelineAdapter:
             )
         if not reply:
             self.status = "empty_reply"
+            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
             self.last_error = self._empty_reply_reason()
             raise MessagePipelineEmpty(self.last_error)
 
@@ -297,6 +313,13 @@ class AstrBotMessagePipelineAdapter:
             source="selected" if selected_intent is not None else "default_talk",
             duration_ms=self.last_duration_ms,
         )
+        if self.last_delivery_visibility == "unobserved":
+            if self.last_send_observed is True:
+                self._set_delivery_visibility("captured", "event_send")
+            else:
+                self._set_delivery_visibility(
+                    "unobserved", "external_direct_send_or_empty"
+                )
         self._record_eventbus_action_outcome(event, selected_intent)
         return ModelDecision(
             should_reply=True,
@@ -315,6 +338,44 @@ class AstrBotMessagePipelineAdapter:
                 phase="eventbus",
                 status="recovered",
                 result=source,
+            )
+        except Exception:
+            return
+
+    def _set_delivery_visibility(self, visibility: str, source: str = "") -> None:
+        """Record only whether this adapter can observe its own delivery.
+
+        External plugins may call platform/context send APIs which this synthetic
+        event cannot safely intercept. Those paths remain ``unobserved`` rather
+        than being guessed or globally monkeypatched.
+        """
+        if visibility not in DELIVERY_VISIBILITY_VALUES:
+            visibility = "unobserved"
+        self.last_delivery_visibility = visibility
+        self.last_delivery_visibility_reason = (
+            "external_direct_send_or_empty" if visibility == "unobserved" else ""
+        )
+        recorder = getattr(self.diagnostic_log, "record", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                "message_pipeline.delivery_visibility",
+                component="message_pipeline",
+                phase="eventbus",
+                status=visibility,
+                reason_code=self.last_delivery_visibility_reason,
+                source=source
+                if source
+                in {
+                    "event_send",
+                    "event_result",
+                    "delivery_plan",
+                    "selected_action",
+                    "fast_action_selected",
+                    "external_direct_send_or_empty",
+                }
+                else "none",
             )
         except Exception:
             return
@@ -399,6 +460,11 @@ class AstrBotMessagePipelineAdapter:
             "last_event_woken": self.last_event_woken,
             "last_event_stopped": self.last_event_stopped,
             "last_send_observed": self.last_send_observed,
+            "last_delivery_visibility": self.last_delivery_visibility,
+            "last_delivery_visibility_reason": self.last_delivery_visibility_reason,
+            "delivery_owner": "embodiment_bridge",
+            "capture_required": True,
+            "decision_path": "astrbot_event_bus",
             "mode": "astrbot_event_bus",
             "admin_inheritance": False,
             "server_tts_suppressed": True,
@@ -569,6 +635,8 @@ def _build_capture_event(
         event.set_extra(BRIDGE_SUPPORTED_ACTIONS, tuple(supported_actions))
     event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
     event.set_extra(BRIDGE_TEXT_REPLY_REQUIRED, requires_text_reply(user_text))
+    event.set_extra(BRIDGE_DELIVERY_OWNER, "embodiment_bridge")
+    event.set_extra(BRIDGE_CAPTURE_REQUIRED, True)
     if (
         fast_action_active
         and isinstance(fast_action_feedback, dict)
@@ -595,9 +663,7 @@ def _build_capture_event(
         event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))
     if protected_context_authorized and action_facts:
         try:
-            verified_facts = VerifiedActionFacts.model_validate(
-                {"facts": action_facts}
-            )
+            verified_facts = VerifiedActionFacts.model_validate({"facts": action_facts})
         except (TypeError, ValueError):
             verified_facts = None
         if verified_facts is not None and verified_facts.facts:

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.0.19 - 2026-08-19
+
+### Fixed
+
+- 为临创建的合成 EventBus 事件增加 `delivery_owner=embodiment_bridge` 与
+  `capture_required=true` 标记，并记录脱敏的交付可见性：`captured`、`result_recovered`、
+  `plan_recovered`、`action_only` 或 `unobserved`。
+- 当外部插件通过平台/上下文 API 直接发送，或本轮没有可观察结果时，临只记录
+  `external_direct_send_or_empty`，不全局 monkeypatch 发送函数、不伪造回复，也不把空轮次当成成功。
+
 ## 1.0.18 - 2026-08-18
 
 ### Fixed

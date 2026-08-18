@@ -17,6 +17,8 @@ from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
 )
 from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
 from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_CAPTURE_REQUIRED,
+    BRIDGE_DELIVERY_OWNER,
     BRIDGE_FAST_ACTION_SELECTED,
 )
 
@@ -576,6 +578,130 @@ def test_empty_pipeline_reply_preserves_precise_event_outcome(
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("event", "expected_visibility"),
+    (
+        (CaptureEventStub("captured reply", send_observed=True), "captured"),
+        (CaptureEventStub("", result_text="result reply"), "result_recovered"),
+        (
+            CaptureEventStub("", {"version": "1.0", "original_text": "planned reply"}),
+            "plan_recovered",
+        ),
+    ),
+)
+def test_delivery_visibility_tracks_observable_reply_source(
+    monkeypatch: pytest.MonkeyPatch,
+    event: CaptureEventStub,
+    expected_visibility: str,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        diagnostic = DiagnosticStub()
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+            diagnostic_log=diagnostic,
+        )
+
+        decision = await adapter.generate(session=session(), user_text="你好")
+
+        assert decision.reply_text
+        assert adapter.status_snapshot()["last_delivery_visibility"] == (
+            expected_visibility
+        )
+        records = [
+            fields
+            for name, fields in diagnostic.events
+            if name == "message_pipeline.delivery_visibility"
+        ]
+        assert records[-1]["status"] == expected_visibility
+        assert records[-1]["reason_code"] == ""
+
+    asyncio.run(scenario())
+
+
+def test_delivery_visibility_marks_unobserved_external_or_empty_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        diagnostic = DiagnosticStub()
+        event = CaptureEventStub("", stopped=False, send_observed=False)
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+            diagnostic_log=diagnostic,
+        )
+
+        with pytest.raises(astrbot_pipeline.MessagePipelineEmpty):
+            await adapter.generate(session=session(), user_text="你好")
+
+        snapshot = adapter.status_snapshot()
+        assert snapshot["last_delivery_visibility"] == "unobserved"
+        assert snapshot["last_delivery_visibility_reason"] == (
+            "external_direct_send_or_empty"
+        )
+        records = [
+            fields
+            for name, fields in diagnostic.events
+            if name == "message_pipeline.delivery_visibility"
+        ]
+        assert records[-1] == {
+            "component": "message_pipeline",
+            "phase": "eventbus",
+            "status": "unobserved",
+            "reason_code": "external_direct_send_or_empty",
+            "source": "external_direct_send_or_empty",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_status_snapshot_exposes_scoped_delivery_contract() -> None:
+    adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+        ContextStub(), SimpleNamespace(), platform_id="qq"
+    )
+
+    snapshot = adapter.status_snapshot()
+
+    assert snapshot["delivery_owner"] == "embodiment_bridge"
+    assert snapshot["capture_required"] is True
+    assert snapshot["decision_path"] == "astrbot_event_bus"
+    assert snapshot["last_delivery_visibility"] in (
+        "captured",
+        "result_recovered",
+        "plan_recovered",
+        "action_only",
+        "unobserved",
+    )
+
+
+def test_nonempty_unobserved_text_is_not_misreported_as_captured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = CaptureEventStub("text without observed send", send_observed=False)
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context, SimpleNamespace(), platform_id="qq"
+        )
+
+        decision = await adapter.generate(session=session(), user_text="你好")
+
+        assert decision.reply_text == "text without observed send"
+        assert adapter.status_snapshot()["last_delivery_visibility"] == "unobserved"
+        assert adapter.status_snapshot()["last_delivery_visibility_reason"] == (
+            "external_direct_send_or_empty"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -684,6 +810,8 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert isinstance(message, FakeAstrMessageEvent)
     assert message.native_factory is True
     assert message.get_extra("_api_key_allow_admin_role") is False
+    assert message.get_extra(BRIDGE_DELIVERY_OWNER) == "embodiment_bridge"
+    assert message.get_extra(BRIDGE_CAPTURE_REQUIRED) is True
     staged_action = message.get_extra(QUEST_ACTION_PARSE_EXTRA)
     assert staged_action.status == "not_explicit"
     assert staged_action.action is None
@@ -691,9 +819,7 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert identity["platform_id"] == "trusted-platform"
     assert identity["user_id"] == "bound-user"
     assert identity["trusted"] is True
-    assert (
-        message.get_extra("embodiment_bridge.protected_context_authorized") is True
-    )
+    assert message.get_extra("embodiment_bridge.protected_context_authorized") is True
     assert message.get_extra("embodiment_bridge.fast_action_active") is True
     feedback = message.get_extra("embodiment_bridge.fast_action_feedback")
     assert feedback is fast_action_feedback

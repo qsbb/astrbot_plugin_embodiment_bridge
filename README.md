@@ -52,6 +52,17 @@ flowchart LR
 
 Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot 消息事件。客户端不能自报管理员身份、平台、人格或自然人；AstrBot 生成的回复只返回当前具身客户端，不会重复发送到绑定的 QQ 等原平台。
 
+### 交付与兼容边界
+
+临创建的合成事件会携带 `delivery_owner=embodiment_bridge` 和
+`capture_required=true`。临只捕获该事件自身的 `event.send()`/流式发送、最终结果链或已声明的
+`conversation_flow.delivery_plan@1.0`；状态页用 `captured`、`result_recovered`、`plan_recovered`、
+`action_only`、`unobserved` 区分这些来源。
+
+第三方插件直接调用 `context.send_message()` 或平台发送 API 时，临不会全局接管这些调用，也不会
+据此猜测正文已经交付。若没有可观察结果，会记录固定的 `external_direct_send_or_empty` 诊断并按
+原有空回复策略失败关闭。这样保留第三方插件兼容性，同时避免把别的会话消息误收进 Quest。
+
 `allow_direct_provider_fallback` 默认关闭。正式消息链不可用时会明确报错，避免静默绕过记忆、知识和后处理插件；触碰等受控交互仍使用独立的兼容决策路径。
 
 ## 快速开始
