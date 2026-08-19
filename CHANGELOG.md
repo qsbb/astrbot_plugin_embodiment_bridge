@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-19
+
+### Changed
+
+- 发布管理页面动效、触屏交互与 reduced-motion 优化。
+
 ### Changed
 
 - Operator and pairing pages now provide precise press feedback, pointer-aware hover states, and reduced-motion fallbacks.
