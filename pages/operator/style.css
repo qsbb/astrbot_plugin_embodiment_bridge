@@ -16,12 +16,12 @@ button {
   color: #eef5f2;
   background: #1b2928;
   cursor: pointer;
+  transition: transform 140ms cubic-bezier(.23,1,.32,1), border-color 160ms ease, background-color 160ms ease;
 }
-button:hover:not(:disabled) { border-color: #58d5aa; background: #223734; }
+button:active:not(:disabled) { transform: scale(.97); }
 button:disabled { cursor: default; opacity: .48; }
 button.primary { border-color: #55d7aa; color: #071b15; background: #55d7aa; font-weight: 700; }
 button.danger { border-color: #8c4f4a; color: #ffd9d5; background: #321d1c; }
-button.danger:hover:not(:disabled) { border-color: #e27a72; background: #452523; }
 button[aria-busy="true"] { cursor: wait; }
 select, input, textarea {
   width: 100%;
@@ -166,7 +166,6 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   color: #91a7a1;
   background: transparent;
 }
-.segmented-control .segment:hover:not(:disabled) { border-color: #546965; background: #1a2626; }
 .segmented-control .segment.active {
   border-bottom-color: #55d7aa;
   color: #eff8f5;
@@ -512,6 +511,13 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   .persona-toolbar { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; }
   .persona-editor-actions { display: grid; grid-template-columns: 1fr; }
 }
+@media (hover: hover) and (pointer: fine) {
+  button:hover:not(:disabled) { border-color: #58d5aa; background: #223734; }
+  .segmented-control .segment:hover:not(:disabled) { border-color: #546965; background: #1a2626; }
+  button.danger:hover:not(:disabled) { border-color: #e27a72; background: #452523; }
+}
 @media (prefers-reduced-motion: reduce) {
-  #toast { transition: none; }
+  button { transition: border-color 120ms ease, background-color 120ms ease; }
+  button:active:not(:disabled) { transform: none; }
+  #toast { transition: opacity 120ms ease, background-color 120ms ease; }
 }

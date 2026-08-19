@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Operator and pairing pages now provide precise press feedback, pointer-aware hover states, and reduced-motion fallbacks.
+
 ## 1.0.19 - 2026-08-19
 
 ### Fixed
@@ -625,3 +629,6 @@
 
 - 默认 STT/TTS adapter 关闭；文本决策链可用，真实 PCM 输入识别和输出合成待稳定契约。
 - 尚未进行 Quest 3 真机、Unity 音频/嘴型、动作映射和网络延迟验证。
+### Changed
+
+- Operator and pairing pages now provide precise press feedback, pointer-aware hover states, and reduced-motion fallbacks.
