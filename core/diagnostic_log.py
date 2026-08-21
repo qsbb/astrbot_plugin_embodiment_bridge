@@ -193,6 +193,18 @@ class DiagnosticLog:
                 "write_failures": self._write_failures,
             }
 
+    def configure(self, *, enabled: bool, platform_log_enabled: bool) -> None:
+        """Update logging switches safely when the series controller changes them."""
+        self.enabled = bool(enabled)
+        self.platform_log_enabled = bool(platform_log_enabled)
+        if not self.enabled or self._closing or self._writer_task is not None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self.start(), name="embodiment-bridge:diagnostic-start")
+
     def record(self, event: str, **fields: Any) -> None:
         if self._closing:
             return

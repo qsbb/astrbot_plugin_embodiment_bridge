@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
@@ -60,6 +61,7 @@ from .core.plugin_identity import (
 )
 from .core.session_manager import SessionManager
 from .core.service_control import BridgeServiceControl
+from .series_control import SeriesControlAdapter
 from .core.server_identity import ServerIdentityStore
 from .core.turn_orchestrator import TurnOrchestrator
 from .transport.builtin_listener import (
@@ -70,7 +72,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -528,6 +530,8 @@ class EmbodimentBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
         )
+        self.series_control = SeriesControlAdapter(self)
+        self.series_control.sync_runtime()
         self.pairing_api = PairingHttpApi(
             context=context,
             manager=self.pairing,
@@ -575,6 +579,43 @@ class EmbodimentBridgePlugin(Star):
         # From this point onward, registration must remain the final action.
         self.transport.register()
         self.pairing_api.register()
+
+    def _apply_series_control_runtime(self, effective: dict[str, Any]) -> None:
+        """Apply only the non-secret runtime policy exposed by series.control."""
+        self.diagnostic_log.configure(
+            enabled=bool(effective["diagnostic_log_enabled"]),
+            platform_log_enabled=bool(
+                effective["diagnostic_platform_log_enabled"]
+            ),
+        )
+
+        max_audio_seconds = max(1, int(effective["max_audio_seconds"]))
+        self.sessions.max_sessions = max(1, int(effective["max_sessions"]))
+        self.sessions.event_queue_size = max(4, int(effective["event_queue_size"]))
+        self.sessions.max_audio_bytes = 16_000 * 2 * max_audio_seconds
+        self.sessions.max_audio_chunk_bytes = max(
+            3_200, int(effective["max_audio_chunk_bytes"])
+        )
+        self.sessions.interaction_debounce_seconds = max(
+            0, int(effective["interaction_debounce_ms"])
+        ) / 1000
+
+        self.orchestrator.output_chunk_ms = min(
+            100, max(40, int(effective["output_chunk_ms"]))
+        )
+        self.orchestrator.server_timing_enabled = bool(
+            effective["server_timing_enabled"]
+        )
+        self.transport.config = replace(
+            self.transport.config,
+            sse_heartbeat_seconds=min(
+                60, max(5, int(effective["sse_heartbeat_seconds"]))
+            ),
+        )
+        max_tts_seconds = max(1, int(effective["max_tts_audio_seconds"]))
+        max_tts_bytes = 24_000 * 2 * max_tts_seconds
+        self.astrbot_tts.max_output_bytes = max_tts_bytes
+        self.voice_hub_tts.max_output_bytes = max_tts_bytes
 
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
@@ -866,6 +907,44 @@ class EmbodimentBridgePlugin(Star):
 
     def diagnostic_clear(self) -> None:
         self.diagnostic_log.diagnostic_clear()
+
+    # Public series.control@1.0 facade.  Keep the contract methods explicit so
+    # the kernel never needs to inspect this plugin's private configuration.
+    def series_control_contract(self) -> dict[str, Any]:
+        return self.series_control.series_control_contract()
+
+    def series_control_schema(self) -> dict[str, Any]:
+        return self.series_control.series_control_schema()
+
+    def series_control_snapshot(self) -> dict[str, Any]:
+        return self.series_control.series_control_snapshot()
+
+    def series_control_set_mode(self, mode: str) -> dict[str, Any]:
+        return self.series_control.series_control_set_mode(mode)
+
+    def validate_series_control_patch(
+        self, patch: dict[str, Any], *, expected_revision: int
+    ) -> dict[str, Any]:
+        return self.series_control.validate_series_control_patch(
+            patch, expected_revision=expected_revision
+        )
+
+    def apply_series_control_patch(
+        self, patch: dict[str, Any], *, expected_revision: int
+    ) -> dict[str, Any]:
+        return self.series_control.apply_series_control_patch(
+            patch, expected_revision=expected_revision
+        )
+
+    def reset_series_control_override(
+        self,
+        fields: list[str] | None = None,
+        *,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        return self.series_control.reset_series_control_override(
+            fields, expected_revision=expected_revision
+        )
 
     async def terminate(self) -> None:
         if self._terminated:
