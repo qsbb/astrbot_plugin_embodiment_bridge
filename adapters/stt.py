@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, AsyncIterator, Protocol
 from uuid import uuid4
 import wave
 
@@ -22,6 +22,13 @@ class STTAdapter(Protocol):
 
     async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str: ...
 
+    @property
+    def streaming_available(self) -> bool: ...
+
+    async def transcribe_stream(
+        self, chunks: AsyncIterator[bytes], *, sample_rate: int
+    ) -> AsyncIterator[dict[str, Any]]: ...
+
     async def close(self) -> None: ...
 
 
@@ -35,6 +42,17 @@ class DisabledSTTAdapter:
         raise AdapterUnavailable(
             "No stable PCM16 streaming STT adapter is configured for this release"
         )
+
+    @property
+    def streaming_available(self) -> bool:
+        return False
+
+    async def transcribe_stream(
+        self, chunks: AsyncIterator[bytes], *, sample_rate: int
+    ) -> AsyncIterator[dict[str, Any]]:
+        del chunks, sample_rate
+        raise AdapterUnavailable("Streaming STT is not configured")
+        yield {}
 
     async def close(self) -> None:
         return None
@@ -66,6 +84,37 @@ class AstrBotSTTAdapter:
     @property
     def available(self) -> bool:
         return not self._closed and self._provider() is not None
+
+    @property
+    def streaming_available(self) -> bool:
+        provider = self._provider()
+        return bool(
+            provider is not None
+            and callable(getattr(provider, "transcribe_stream", None))
+        )
+
+    async def transcribe_stream(
+        self, chunks: AsyncIterator[bytes], *, sample_rate: int
+    ) -> AsyncIterator[dict[str, Any]]:
+        if self._closed:
+            raise AdapterUnavailable("AstrBot STT adapter is disabled")
+        if sample_rate != INPUT_SAMPLE_RATE:
+            raise ValueError("STT input sample rate must be 16000 Hz")
+        provider = self._provider()
+        method = getattr(provider, "transcribe_stream", None) if provider else None
+        if not callable(method):
+            raise AdapterUnavailable("Selected AstrBot STT provider has no streaming contract")
+        stream = method(chunks, sample_rate=sample_rate)
+        if hasattr(stream, "__await__"):
+            stream = await stream
+        async for item in stream:
+            if not isinstance(item, dict):
+                continue
+            kind = str(item.get("kind") or item.get("type") or "").strip().lower()
+            text = item.get("text")
+            if kind not in {"partial", "final"} or not isinstance(text, str):
+                continue
+            yield {"kind": kind, "text": text.strip()}
 
     async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
         if self._closed:
@@ -139,6 +188,7 @@ class AstrBotSTTAdapter:
                 not self.provider_id and self.legacy_default_enabled
             ),
             "external_contract_status": "no_standard_contract",
+            "streaming_available": self.streaming_available,
             "providers": catalog,
         }
 

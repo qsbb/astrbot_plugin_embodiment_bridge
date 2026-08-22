@@ -8,4 +8,4 @@ event: error
 data: {"protocol_version":"1.0","session_id":"tts-failure-session","turn_id":"tts-failure-turn","type":"error","code":"tts_failed","message":"Speech synthesis failed; text reply remains available"}
 
 event: reply.end
-data: {"protocol_version":"1.0","session_id":"tts-failure-session","turn_id":"tts-failure-turn","type":"reply.end","status":"completed","text_sent":true,"audio_sent":false}
+data: {"protocol_version":"1.0","session_id":"tts-failure-session","turn_id":"tts-failure-turn","type":"reply.end","status":"completed","speech_id":"tts-failure-turn","audio_sequence_end":-1,"text_sent":true,"audio_sent":false}

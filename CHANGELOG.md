@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.1.2 - 2026-08-22
+
+### Added
+
+- 增加可选的 Provider 流式 STT 适配：partial 仅用于客户端诊断，final 才进入 AstrBot 正式消息链；不支持流式契约时保留一次文件式 STT 回退。
+- 为音频输出增加 `speech_id`、有序序号和终帧序号，隔离打断后的迟到音频。
+- 增加播放 `started/progress/ended/interrupted` 回执接口和 90 秒有界轮次保留，记录脱敏播放诊断。
+- 补充 EventBus、STT、TTS 分段和动作/回复交付状态诊断字段与协议样例。
+
+### Fixed
+
+- 取消、关闭会话或开启新轮时会清理流式 STT 队列和任务，避免旧轮音频继续进入处理链。
+
 ## 1.1.1 - 2026-08-21
 
 ### Added

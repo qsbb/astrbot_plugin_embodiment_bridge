@@ -223,6 +223,8 @@ class TurnOrchestrator:
                 turn,
                 lambda: self._run_text_turn(session, turn, request.text or ""),
             )
+        elif bool(getattr(self.stt, "streaming_available", False)):
+            await self._start_streaming_stt(session, turn)
         return turn
 
     async def finish_audio(self, session: SessionState, turn_id: str) -> TurnState:
@@ -234,12 +236,95 @@ class TurnOrchestrator:
             status="ok",
             bytes=len(pcm16),
         )
+        stream_task = await self.sessions.close_stt_stream_input(session, turn)
         await self._launch(
             session,
             turn,
-            lambda: self._run_audio_turn(session, turn, pcm16),
+            lambda: self._run_audio_turn(session, turn, pcm16, stream_task),
         )
         return turn
+
+    async def _start_streaming_stt(
+        self,
+        session: SessionState,
+        turn: TurnState,
+    ) -> None:
+        """Start one bounded optional hypothesis stream for an audio turn.
+
+        Partial hypotheses stay in SSE and diagnostics only. A non-empty final is
+        consumed at audio end by the existing formal reply path.
+        """
+        queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=8)
+
+        async def pcm_chunks() -> AsyncIterator[bytes]:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    return
+                yield chunk
+
+        async def consume() -> None:
+            try:
+                self._diagnostic(
+                    "stt.streaming_started",
+                    component="stt",
+                    phase="streaming",
+                    status="processing",
+                )
+                async for result in self.stt.transcribe_stream(
+                    pcm_chunks(), sample_rate=16_000
+                ):
+                    kind = str(result.get("kind") or "").strip().lower()
+                    text = result.get("text")
+                    if kind not in {"partial", "final"} or not isinstance(text, str):
+                        continue
+                    text = text.strip()[:4_000]
+                    if kind == "partial":
+                        if not text or turn.stt_stream_final is not None:
+                            continue
+                        emitted = await self._emit(
+                            session, turn, {"type": "asr.partial", "text": text}
+                        )
+                        if emitted:
+                            self._diagnostic(
+                                "stt.partial",
+                                component="stt",
+                                phase="streaming",
+                                status="processing",
+                                characters=len(text),
+                            )
+                        continue
+                    if not text or turn.stt_stream_final is not None:
+                        continue
+                    if not self.sessions.is_current(session, turn.turn_id, turn.generation):
+                        return
+                    turn.stt_stream_final = text
+                    self._diagnostic(
+                        "stt.streaming_final",
+                        component="stt",
+                        phase="streaming",
+                        status="ok",
+                        characters=len(text),
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                turn.stt_stream_failure = "provider_error"
+                self._diagnostic(
+                    "stt.streaming_error",
+                    component="stt",
+                    phase="streaming",
+                    status="degraded",
+                    error_type=type(exc).__name__,
+                )
+
+        task = asyncio.create_task(
+            consume(),
+            name=f"embodiment-bridge:stt-stream:{session.session_id}:{turn.turn_id}",
+        )
+        attached = await self.sessions.attach_stt_stream(session, turn, queue, task)
+        if not attached:
+            await asyncio.gather(task, return_exceptions=True)
 
     async def submit_interaction(
         self,
@@ -288,6 +373,7 @@ class TurnOrchestrator:
         session: SessionState,
         turn: TurnState,
         pcm16: bytes,
+        stream_task: asyncio.Task[None] | None = None,
     ) -> None:
         started = time.perf_counter()
         turn.server_timing.start_stt()
@@ -299,11 +385,35 @@ class TurnOrchestrator:
                 status="processing",
                 bytes=len(pcm16),
             )
-            text = await self.stt.transcribe(pcm16, sample_rate=16_000)
+            text = ""
+            use_file_fallback = stream_task is None
+            if stream_task is not None:
+                try:
+                    await stream_task
+                except asyncio.CancelledError:
+                    if not self.sessions.is_current(session, turn.turn_id, turn.generation):
+                        raise
+                    # The optional stream may be stopped for bounded queue
+                    # backpressure.  The accumulated PCM remains the one fallback.
+                    turn.stt_stream_failure = turn.stt_stream_failure or "cancelled"
+                text = (turn.stt_stream_final or "").strip()
+                use_file_fallback = not text
+                if use_file_fallback:
+                    self._diagnostic(
+                        "stt.streaming_fallback",
+                        component="stt",
+                        phase="streaming",
+                        status="degraded",
+                        reason_code=turn.stt_stream_failure or "no_final",
+                        bytes=len(pcm16),
+                    )
+            if use_file_fallback:
+                text = await self.stt.transcribe(pcm16, sample_rate=16_000)
             turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.completed",
                 component="stt",
+                phase="file_fallback" if use_file_fallback else "streaming",
                 status="ok",
                 available=True,
                 duration_ms=(time.perf_counter() - started) * 1000,
@@ -1311,6 +1421,7 @@ class TurnOrchestrator:
         audio_sent = False
         audio_bytes = 0
         audio_chunks = 0
+        audio_sequence = 0
         if text and self.tts.available:
             turn.server_timing.start_tts()
             tts_started = time.perf_counter()
@@ -1324,12 +1435,16 @@ class TurnOrchestrator:
                         turn,
                         {
                             "type": "reply.audio.chunk",
+                            "speech_id": turn.turn_id,
+                            "sequence": audio_sequence,
+                            "first": audio_sequence == 0,
                             "format": OUTPUT_FORMAT,
                             "sample_rate": OUTPUT_SAMPLE_RATE,
                             "channels": OUTPUT_CHANNELS,
                             "data": base64.b64encode(pcm_chunk).decode("ascii"),
                         },
                     )
+                    audio_sequence += 1
                     if accepted:
                         turn.server_timing.mark_tts_first_chunk()
                         if audio_chunks == 0:
@@ -1437,6 +1552,8 @@ class TurnOrchestrator:
         reply_end_payload = {
             "type": "reply.end",
             "status": "completed",
+            "speech_id": turn.turn_id,
+            "audio_sequence_end": audio_chunks - 1 if audio_chunks else -1,
             "text_sent": bool(text),
             "audio_sent": audio_sent,
         }
@@ -1584,8 +1701,16 @@ class TurnOrchestrator:
             reason_code=reason,
             error_type=type(error).__name__,
             event_woken=snapshot.get("last_event_woken"),
+            wake_match=snapshot.get("last_event_wake_match"),
+            event_processed=snapshot.get("last_event_processed"),
             event_stopped=snapshot.get("last_event_stopped"),
             send_observed=snapshot.get("last_send_observed"),
+            event_class=snapshot.get("last_event_class"),
+            captured_chars=snapshot.get("last_captured_chars"),
+            result_chars=snapshot.get("last_result_chars"),
+            plan_chars=snapshot.get("last_delivery_plan_chars"),
+            result_chain_count=snapshot.get("last_result_chain_count"),
+            selected_intent=snapshot.get("last_selected_intent"),
         )
         self.logger.warning(
             "[embodiment-bridge] AstrBot message pipeline returned no reply: reason=%s",
@@ -1888,15 +2013,44 @@ class TurnOrchestrator:
         async def produce() -> None:
             send_sentinel = True
             try:
-                for segment in self._speech_segments(text):
+                for segment_index, segment in enumerate(self._speech_segments(text)):
+                    self._diagnostic(
+                        "tts.segment.started",
+                        component="tts",
+                        phase="segment",
+                        status="processing",
+                        segment_index=segment_index,
+                    )
+                    segment_started = time.perf_counter()
                     source = self.tts.synthesize(segment, emotion=emotion)
                     async for chunk in self._normalized_audio_chunks(source):
                         await queue.put(chunk)
+                    self._diagnostic(
+                        "tts.segment.completed",
+                        component="tts",
+                        phase="segment",
+                        status="ok",
+                        segment_index=segment_index,
+                        duration_ms=(time.perf_counter() - segment_started) * 1000,
+                    )
             except asyncio.CancelledError:
                 send_sentinel = False
+                self._diagnostic(
+                    "tts.segment.cancelled",
+                    component="tts",
+                    phase="segment",
+                    status="cancelled",
+                )
                 raise
             except Exception as exc:
                 failure.append(exc)
+                self._diagnostic(
+                    "tts.segment.failed",
+                    component="tts",
+                    phase="segment",
+                    status="error",
+                    error_type=type(exc).__name__,
+                )
             finally:
                 if send_sentinel:
                     await queue.put(None)

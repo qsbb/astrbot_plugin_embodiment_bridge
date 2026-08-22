@@ -535,8 +535,9 @@ def test_stt_provider_settings_are_dashboard_protected_strict_and_redacted(
                     "selected": False,
                     "selected_id": "",
                     "legacy_default": False,
-                    "external_contract_status": "no_standard_contract",
-                    "providers": [
+                        "external_contract_status": "no_standard_contract",
+                        "streaming_available": False,
+                        "providers": [
                         {
                             "id": "fake-stt-provider",
                             "model": "contract-stt-model",

@@ -78,8 +78,16 @@ class AstrBotMessagePipelineAdapter:
         self.last_error = ""
         self.last_duration_ms = 0
         self.last_event_woken: bool | None = None
+        self.last_event_wake_match: bool | None = None
+        self.last_event_processed: bool | None = None
         self.last_event_stopped: bool | None = None
         self.last_send_observed: bool | None = None
+        self.last_event_class = ""
+        self.last_captured_chars = 0
+        self.last_result_chars = 0
+        self.last_delivery_plan_chars = 0
+        self.last_result_chain_count = 0
+        self.last_selected_intent = "none"
         self.last_delivery_visibility = "unobserved"
         self.last_delivery_visibility_reason = ""
 
@@ -143,8 +151,16 @@ class AstrBotMessagePipelineAdapter:
 
         self.last_error = ""
         self.last_event_woken = None
+        self.last_event_wake_match = None
+        self.last_event_processed = None
         self.last_event_stopped = None
         self.last_send_observed = None
+        self.last_event_class = ""
+        self.last_captured_chars = 0
+        self.last_result_chars = 0
+        self.last_delivery_plan_chars = 0
+        self.last_result_chain_count = 0
+        self.last_selected_intent = "none"
         self.last_delivery_visibility = "unobserved"
         self.last_delivery_visibility_reason = ""
         if not self.enabled:
@@ -458,8 +474,16 @@ class AstrBotMessagePipelineAdapter:
             "last_error": self.last_error,
             "last_duration_ms": self.last_duration_ms,
             "last_event_woken": self.last_event_woken,
+            "last_event_wake_match": self.last_event_wake_match,
+            "last_event_processed": self.last_event_processed,
             "last_event_stopped": self.last_event_stopped,
             "last_send_observed": self.last_send_observed,
+            "last_event_class": self.last_event_class,
+            "last_captured_chars": self.last_captured_chars,
+            "last_result_chars": self.last_result_chars,
+            "last_delivery_plan_chars": self.last_delivery_plan_chars,
+            "last_result_chain_count": self.last_result_chain_count,
+            "last_selected_intent": self.last_selected_intent,
             "last_delivery_visibility": self.last_delivery_visibility,
             "last_delivery_visibility_reason": self.last_delivery_visibility_reason,
             "delivery_owner": "embodiment_bridge",
@@ -474,16 +498,42 @@ class AstrBotMessagePipelineAdapter:
         return None
 
     def _record_event_outcome(self, event: Any) -> None:
-        self.last_event_woken = bool(
+        self.last_event_wake_match = bool(
             getattr(event, "is_wake", False)
             or getattr(event, "is_at_or_wake_command", False)
         )
+        # Keep the legacy field for protocol compatibility. It is a wake/@
+        # match, not a claim that EventBus processing happened.
+        self.last_event_woken = self.last_event_wake_match
+        self.last_event_processed = True
+        self.last_event_class = type(event).__name__[:96]
         stopped = getattr(event, "is_stopped", None)
         try:
             self.last_event_stopped = bool(stopped()) if callable(stopped) else False
         except Exception:
             self.last_event_stopped = None
         self.last_send_observed = bool(getattr(event, "_has_send_oper", False))
+        try:
+            captured = event.captured_text() if callable(getattr(event, "captured_text", None)) else ""
+        except Exception:
+            captured = ""
+        self.last_captured_chars = len(captured.strip()) if isinstance(captured, str) else 0
+        result_text = _event_result_text(event)
+        plan_text = _delivery_plan_text(event)
+        self.last_result_chars = len(result_text.strip())
+        self.last_delivery_plan_chars = len(plan_text.strip())
+        selected_intent = read_selected_intent(event)
+        self.last_selected_intent = (
+            selected_intent.gesture.value
+            if selected_intent is not None
+            else "none"
+        )
+        try:
+            result = event.get_result() if callable(getattr(event, "get_result", None)) else None
+            chain = getattr(result, "chain", None)
+            self.last_result_chain_count = len(chain) if isinstance(chain, (list, tuple)) else 0
+        except Exception:
+            self.last_result_chain_count = 0
 
     def _record_eventbus_action_outcome(
         self,
@@ -510,9 +560,9 @@ class AstrBotMessagePipelineAdapter:
     def _empty_reply_reason(self) -> str:
         if self.last_event_stopped is True:
             return (
-                "astrbot_pipeline_event_stopped"
-                if self.last_event_woken
-                else "astrbot_pipeline_not_woken"
+                "astrbot_pipeline_not_woken"
+                if self.last_event_processed is False
+                else "astrbot_pipeline_event_stopped"
             )
         if self.last_send_observed is True:
             return "astrbot_pipeline_reply_capture_empty"

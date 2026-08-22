@@ -539,7 +539,7 @@ def test_pipeline_reports_precise_platform_availability_and_reconfigures() -> No
     (
         (
             CaptureEventStub(woken=False, stopped=True),
-            "astrbot_pipeline_not_woken",
+            "astrbot_pipeline_event_stopped",
         ),
         (
             CaptureEventStub(woken=True, stopped=True),
@@ -572,8 +572,12 @@ def test_empty_pipeline_reply_preserves_precise_event_outcome(
         assert adapter.status == "empty_reply"
         assert adapter.last_error == expected_reason
         assert adapter.status_snapshot()["last_event_woken"] is event.is_wake
+        assert adapter.status_snapshot()["last_event_wake_match"] is event.is_wake
+        assert adapter.status_snapshot()["last_event_processed"] is True
         assert adapter.status_snapshot()["last_event_stopped"] is event._stopped
         assert adapter.status_snapshot()["last_send_observed"] is event._has_send_oper
+        assert adapter.status_snapshot()["last_event_class"] == type(event).__name__
+        assert adapter.status_snapshot()["last_captured_chars"] == len(event.captured_text())
 
     asyncio.run(scenario())
 

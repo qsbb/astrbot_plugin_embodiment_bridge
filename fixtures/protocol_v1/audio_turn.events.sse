@@ -8,7 +8,7 @@ event: reply.text.delta
 data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.text.delta","text":"请轻一点。"}
 
 event: reply.audio.chunk
-data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.audio.chunk","format":"pcm16","sample_rate":24000,"channels":1,"data":"AAABAA=="}
+data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.audio.chunk","speech_id":"audio-turn","sequence":0,"first":true,"format":"pcm16","sample_rate":24000,"channels":1,"data":"AAABAA=="}
 
 event: reply.end
-data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.end","status":"completed","text_sent":true,"audio_sent":true}
+data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.end","status":"completed","speech_id":"audio-turn","audio_sequence_end":0,"text_sent":true,"audio_sent":true}

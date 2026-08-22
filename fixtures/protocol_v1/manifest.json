@@ -99,6 +99,7 @@
     {"method": "POST", "path": "/turn/start", "success_status": 202},
     {"method": "POST", "path": "/audio/chunk", "success_status": 202},
     {"method": "POST", "path": "/audio/end", "success_status": 202},
+    {"method": "POST", "path": "/playback/receipt", "success_status": 200},
     {"method": "POST", "path": "/interaction", "success_status": 202},
     {"method": "POST", "path": "/action/result", "success_status": 200},
     {"method": "POST", "path": "/interrupt", "success_status": 200},

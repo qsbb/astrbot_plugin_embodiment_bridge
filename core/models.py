@@ -301,6 +301,26 @@ class ActionResultRequest(StrictModel):
         return self
 
 
+class PlaybackReceiptRequest(StrictModel):
+    """A bounded device playback fact, never a conversational input."""
+
+    type: Literal["playback.receipt"] = "playback.receipt"
+    protocol_version: Literal["1.0"] = PROTOCOL_VERSION
+    session_id: Identifier
+    turn_id: Identifier
+    speech_id: Identifier
+    event_name: Literal[
+        "playback.started",
+        "playback.progress",
+        "playback.ended",
+        "playback.interrupted",
+    ]
+    played_ms: int = Field(default=0, ge=0, le=3_600_000)
+    buffered_ms: int = Field(default=0, ge=0, le=3_600_000)
+    underflow_count: int = Field(default=0, ge=0, le=100_000)
+    reason_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] = ""
+
+
 class VerifiedActionFact(StrictModel):
     model_config = ConfigDict(
         extra="forbid",

@@ -906,6 +906,9 @@ GET /health
   "protocol_version": "1.0",
   "session_id": "s1",
   "turn_id": "t3",
+  "speech_id": "t3",
+  "sequence": 0,
+  "first": true,
   "format": "pcm16",
   "sample_rate": 24000,
   "channels": 1,
@@ -913,7 +916,9 @@ GET /health
 }
 ```
 
-默认目标块长 50 ms，配置范围 40-100 ms。`reply.audio.chunk` 是受背压保护的有序事件，慢客户端不会主动丢音频块；生产者会等待队列消费，或在 interrupt/close 时被取消。Unity 应按真实 PCM 播放进度驱动嘴型，不应按文字估算。
+默认目标块长 50 ms，配置范围 40-100 ms。`speech_id` 当前等于产生该音频的 `turn_id`；`sequence` 自 0 严格递增；仅首块带 `first=true`。`reply.audio.chunk` 是受背压保护的有序事件，慢客户端不会主动丢音频块；生产者会等待队列消费，或在 interrupt/close 时被取消。客户端必须按当前会话、轮次和输出 generation 丢弃旧轮迟到音频。Unity 应按真实 PCM 播放进度驱动嘴型，不应按文字估算。
+
+`reply.end` 在成功音频轮次额外带 `speech_id` 与 `audio_sequence_end`。后者是最后一个已发送音频块序号；未发送音频时为 `-1`。当前文件式 STT 不产生 `asr.partial`。只有配置的 AstrBot STT Provider 明确实现 `transcribe_stream(chunks, sample_rate=16000)` 时，Bridge 才会将其 partial/final 结果用于实时通道；partial 永不进入 AstrBot EventBus、记忆、工具或正式上下文，final 才能进入正式轮次。
 
 ### 15.5 `avatar.intent`
 

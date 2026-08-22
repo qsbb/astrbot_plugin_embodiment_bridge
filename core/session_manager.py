@@ -33,6 +33,7 @@ DROPPABLE_EVENT_TYPES = frozenset({"asr.partial", "reply.text.delta"})
 SPATIAL_CONTEXT_TTL_SECONDS = 30.0
 ACTION_LIFECYCLE_TTL_SECONDS = 300.0
 ACTION_FACT_TTL_SECONDS = 300.0
+PLAYBACK_RECEIPT_TTL_SECONDS = 90.0
 MAX_ACTION_LIFECYCLES = 32
 MAX_ACTION_FACTS = 8
 MAX_ACTION_RECEIPTS_PER_LIFECYCLE = 8
@@ -199,6 +200,14 @@ class TurnState:
     next_audio_sequence: int = 0
     audio_ended: bool = False
     task: asyncio.Task[None] | None = None
+    # A streaming STT provider is optional.  Its input queue is deliberately
+    # bounded: accumulated PCM remains the authoritative fallback input, while
+    # the optional realtime path must never grow without bound.
+    stt_stream_queue: asyncio.Queue[bytes | None] | None = None
+    stt_stream_task: asyncio.Task[None] | None = None
+    stt_stream_closed: bool = False
+    stt_stream_final: str | None = None
+    stt_stream_failure: str = ""
     # Optional action-only LLM task. It runs in parallel with the normal
     # reply pipeline and is cancelled with the owning turn.
     fast_action_task: asyncio.Task[None] | None = None
@@ -288,6 +297,9 @@ class SessionState:
     )
     action_receipts: dict[str, ActionReceiptRecord] = field(default_factory=dict)
     action_facts: deque[ActionFactRecord] = field(default_factory=deque)
+    # Completed speech is retained only long enough for the device player to
+    # report its terminal playback fact. This is diagnostic state, not history.
+    receipt_turns: deque[tuple[str, float]] = field(default_factory=deque)
 
 
 class SessionManager:
@@ -425,6 +437,8 @@ class SessionManager:
                 old_turn.task.cancel()
             if old_turn is not None and old_turn.fast_action_task is not None:
                 old_turn.fast_action_task.cancel()
+            if old_turn is not None:
+                self._cancel_stt_stream_unlocked(old_turn)
         if old_turn is not None:
             await session.queue.discard_turn(old_turn.turn_id)
         return turn
@@ -468,6 +482,29 @@ class SessionManager:
             task.add_done_callback(session.tasks.discard)
             return True
 
+    async def attach_stt_stream(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        queue: asyncio.Queue[bytes | None],
+        task: asyncio.Task[None],
+    ) -> bool:
+        """Attach one optional streaming-STT worker to its owning turn.
+
+        The regular ``turn.task`` remains reserved for the final reply pipeline.
+        Keeping this worker separate lets partial hypotheses arrive while audio is
+        still uploaded without making them a formal conversation turn.
+        """
+        async with session.lock:
+            if not self._is_current_unlocked(session, turn.turn_id, turn.generation):
+                task.cancel()
+                return False
+            turn.stt_stream_queue = queue
+            turn.stt_stream_task = task
+            session.tasks.add(task)
+            task.add_done_callback(session.tasks.discard)
+            return True
+
     async def add_audio_chunk(
         self,
         session: SessionState,
@@ -482,6 +519,8 @@ class SessionManager:
         if len(decoded) > self.max_audio_chunk_bytes:
             raise PayloadTooLarge("audio chunk exceeds configured limit")
 
+        stream_queue: asyncio.Queue[bytes | None] | None = None
+        stream_task: asyncio.Task[None] | None = None
         async with session.lock:
             turn = session.current_turn
             if turn is None or turn.turn_id != request.turn_id:
@@ -494,7 +533,25 @@ class SessionManager:
                 raise PayloadTooLarge("turn audio exceeds configured limit")
             turn.audio.extend(decoded)
             turn.next_audio_sequence += 1
-            return len(turn.audio)
+            stream_queue = turn.stt_stream_queue
+            stream_task = turn.stt_stream_task
+            total_bytes = len(turn.audio)
+
+        # The accumulated audio above is the durable, bounded fallback.  Do not
+        # let a provider that stopped consuming block client audio forever.
+        if (
+            stream_queue is not None
+            and stream_task is not None
+            and not stream_task.done()
+        ):
+            try:
+                await asyncio.wait_for(stream_queue.put(decoded), timeout=0.25)
+            except TimeoutError:
+                async with session.lock:
+                    if turn.stt_stream_task is stream_task:
+                        turn.stt_stream_failure = "queue_backpressure"
+                        self._cancel_stt_stream_unlocked(turn)
+        return total_bytes
 
     async def end_audio(
         self, session: SessionState, turn_id: str
@@ -511,6 +568,30 @@ class SessionManager:
             audio = bytes(turn.audio)
             turn.audio.clear()
             return turn, audio
+
+    async def close_stt_stream_input(
+        self,
+        session: SessionState,
+        turn: TurnState,
+    ) -> asyncio.Task[None] | None:
+        """Close the optional PCM queue after the final uploaded chunk.
+
+        This runs from the already-backgrounded end-of-audio pipeline, so waiting
+        for a full bounded queue preserves ordering without delaying the HTTP
+        acknowledgement.  Cancellation/new turns use the non-blocking helper
+        below instead.
+        """
+        async with session.lock:
+            if not self._is_current_unlocked(session, turn.turn_id, turn.generation):
+                return None
+            queue = turn.stt_stream_queue
+            task = turn.stt_stream_task
+            if queue is None or task is None or turn.stt_stream_closed:
+                return task
+            turn.stt_stream_closed = True
+        if not task.done():
+            await queue.put(None)
+        return task
 
     async def record_interaction(
         self,
@@ -702,18 +783,39 @@ class SessionManager:
                 turn.task.cancel()
             if turn.fast_action_task is not None:
                 turn.fast_action_task.cancel()
+            self._cancel_stt_stream_unlocked(turn)
             turn.audio.clear()
         await session.queue.discard_turn(turn.turn_id)
         return True
+
+    async def is_receipt_turn_known(self, session: SessionState, turn_id: str) -> bool:
+        """Receipts are diagnostics; accept only a current or retained turn id."""
+        async with session.lock:
+            now = monotonic()
+            while (
+                session.receipt_turns
+                and now - session.receipt_turns[0][1] > PLAYBACK_RECEIPT_TTL_SECONDS
+            ):
+                session.receipt_turns.popleft()
+            current = session.current_turn
+            if current is not None and current.turn_id == turn_id:
+                return True
+            return turn_id in session.interaction_turns or any(
+                known_turn_id == turn_id for known_turn_id, _created_at in session.receipt_turns
+            )
 
     async def complete_turn(
         self,
         session: SessionState,
         turn: TurnState,
     ) -> None:
-        if not turn.interaction:
-            return
         async with session.lock:
+            if not turn.interaction:
+                now = monotonic()
+                session.receipt_turns.append((turn.turn_id, now))
+                while len(session.receipt_turns) > 16:
+                    session.receipt_turns.popleft()
+                return
             current = session.interaction_turns.get(turn.turn_id)
             if current is turn:
                 session.interaction_turns.pop(turn.turn_id, None)
@@ -792,11 +894,13 @@ class SessionManager:
                 task.cancel()
             if turn is not None:
                 turn.audio.clear()
+                self._cancel_stt_stream_unlocked(turn)
                 if turn.fast_action_task is not None:
                     turn.fast_action_task.cancel()
                     tasks.append(turn.fast_action_task)
             for interaction_turn in interaction_turns:
                 interaction_turn.audio.clear()
+                self._cancel_stt_stream_unlocked(interaction_turn)
                 if interaction_turn.fast_action_task is not None:
                     interaction_turn.fast_action_task.cancel()
                     tasks.append(interaction_turn.fast_action_task)
@@ -809,6 +913,7 @@ class SessionManager:
             session.action_lifecycles.clear()
             session.action_receipts.clear()
             session.action_facts.clear()
+            session.receipt_turns.clear()
         await session.queue.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -839,11 +944,13 @@ class SessionManager:
                     tasks.add(task)
                 if turn is not None:
                     turn.audio.clear()
+                    self._cancel_stt_stream_unlocked(turn)
                     if turn.fast_action_task is not None:
                         turn.fast_action_task.cancel()
                         tasks.add(turn.fast_action_task)
                 for interaction_turn in interaction_turns:
                     interaction_turn.audio.clear()
+                    self._cancel_stt_stream_unlocked(interaction_turn)
                     if interaction_turn.fast_action_task is not None:
                         interaction_turn.fast_action_task.cancel()
                         tasks.add(interaction_turn.fast_action_task)
@@ -854,12 +961,35 @@ class SessionManager:
                 session.action_lifecycles.clear()
                 session.action_receipts.clear()
                 session.action_facts.clear()
+                session.receipt_turns.clear()
             await session.queue.close()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def is_current(self, session: SessionState, turn_id: str, generation: int) -> bool:
         return self._is_current_unlocked(session, turn_id, generation)
+
+    @staticmethod
+    def _cancel_stt_stream_unlocked(turn: TurnState) -> None:
+        """Stop and drain an optional STT input stream during cancellation.
+
+        It is only called while the session lock is held.  The queue is drained
+        because no stale turn may keep PCM buffered after an interruption.
+        """
+        queue = turn.stt_stream_queue
+        turn.stt_stream_closed = True
+        if queue is not None:
+            while True:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        if turn.stt_stream_task is not None and not turn.stt_stream_task.done():
+            turn.stt_stream_task.cancel()
 
     @staticmethod
     def _is_current_unlocked(

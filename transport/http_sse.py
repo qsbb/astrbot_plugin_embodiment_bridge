@@ -20,6 +20,7 @@ from ..core.models import (
     Identifier,
     InteractionEvent,
     InterruptRequest,
+    PlaybackReceiptRequest,
     PROTOCOL_VERSION,
     SessionCloseRequest,
     SessionStartRequest,
@@ -111,6 +112,12 @@ class HttpSseTransport:
             ("turn/start", self.turn_start, ["POST"], "Start embodied-client turn"),
             ("audio/chunk", self.audio_chunk, ["POST"], "Append client PCM16 audio"),
             ("audio/end", self.audio_end, ["POST"], "Finish client PCM16 audio"),
+            (
+                "playback/receipt",
+                self.playback_receipt,
+                ["POST"],
+                "Report bounded client playback diagnostics",
+            ),
             (
                 "interaction",
                 self.interaction,
@@ -351,6 +358,38 @@ class HttpSseTransport:
             )
 
         return await self._json_endpoint(InteractionEvent, action)
+
+    async def playback_receipt(self) -> Any:
+        async def action(owner: str, payload: PlaybackReceiptRequest) -> Any:
+            session = await self.sessions.get_owned(payload.session_id, owner)
+            if payload.speech_id != payload.turn_id:
+                raise HttpApiError(
+                    "playback_receipt_mismatch", 422, "Playback receipt does not match its turn"
+                )
+            if not await self.sessions.is_receipt_turn_known(session, payload.turn_id):
+                raise SessionConflict("playback receipt belongs to a stale turn")
+            self._diagnostic(
+                "playback.receipt",
+                component="playback",
+                phase=payload.event_name,
+                status="reported",
+                played_ms=payload.played_ms,
+                buffered_ms=payload.buffered_ms,
+                underflow_count=payload.underflow_count,
+                reason_code=payload.reason_code or None,
+            )
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {
+                        "session_id": session.session_id,
+                        "turn_id": payload.turn_id,
+                        "event_name": payload.event_name,
+                    },
+                }
+            )
+
+        return await self._json_endpoint(PlaybackReceiptRequest, action)
 
     async def action_result(self) -> Any:
         async def action(owner: str, payload: ActionResultRequest) -> Any:

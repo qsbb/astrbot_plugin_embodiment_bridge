@@ -78,6 +78,17 @@ class InspectingSTTProvider:
         return "  recognized text  "
 
 
+class StreamingSTTProvider(InspectingSTTProvider):
+    async def transcribe_stream(self, chunks: Any, *, sample_rate: int) -> Any:
+        assert sample_rate == 16_000
+        received = bytearray()
+        async for chunk in chunks:
+            received.extend(chunk)
+            yield {"kind": "partial", "text": "你"}
+        assert bytes(received) == b"\x01\x02\x03\x04"
+        yield {"kind": "final", "text": "你好吗"}
+
+
 class BlockingSTTProvider:
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -141,6 +152,32 @@ def test_astrbot_stt_adapter_wraps_pcm16_and_cleans_temp_file(tmp_path: Path) ->
         assert provider.path.exists() is False
         await adapter.close()
         assert adapter.available is False
+
+    asyncio.run(scenario())
+
+
+def test_streaming_stt_is_explicit_and_separates_partial_from_final(
+    tmp_path: Path,
+) -> None:
+    async def chunks() -> Any:
+        yield b"\x01\x02"
+        yield b"\x03\x04"
+
+    async def scenario() -> None:
+        provider = StreamingSTTProvider(b"", provider_id="streaming")
+        adapter = AstrBotSTTAdapter(
+            ProviderContext(stt_providers=[provider]),
+            data_dir=tmp_path / "streaming",
+            provider_id="streaming",
+        )
+        assert adapter.streaming_available is True
+        results = [item async for item in adapter.transcribe_stream(chunks(), sample_rate=16_000)]
+        assert results == [
+            {"kind": "partial", "text": "你"},
+            {"kind": "partial", "text": "你"},
+            {"kind": "final", "text": "你好吗"},
+        ]
+        await adapter.close()
 
     asyncio.run(scenario())
 
