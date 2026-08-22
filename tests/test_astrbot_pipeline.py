@@ -119,6 +119,30 @@ class LifecycleEventStub(CaptureEventStub):
         await asyncio.sleep(0)
 
 
+def test_trace_probe_keeps_action_names_but_drops_trace_fields() -> None:
+    class Trace:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def record(self, action: str, **fields: Any) -> None:
+            self.calls.append((action, fields))
+
+    trace = Trace()
+    event = SimpleNamespace(trace=trace, _quest_bridge_timing={"started": 0.0})
+    stages: list[tuple[str, dict[str, Any]]] = []
+    astrbot_pipeline._install_trace_probe(
+        event,
+        lambda name, **fields: stages.append((name, fields)),
+    )
+
+    trace.record("astr_agent_complete", resp="private reply", stats={"tokens": 1})
+
+    assert trace.calls[0][0] == "astr_agent_complete"
+    assert event._quest_bridge_timing["trace_astr_agent_complete"] >= 0
+    assert event._quest_bridge_timing["trace_event_count"] == 1
+    assert stages[-1][1]["trace_action"] == "astr_agent_complete"
+
+
 class SlowEventStub(CaptureEventStub):
     async def wait_completed(self) -> None:
         await asyncio.sleep(1)

@@ -92,6 +92,7 @@ class AstrBotMessagePipelineAdapter:
         self.last_delivery_visibility_reason = ""
         self.last_event_cleanup_called: bool | None = None
         self.last_event_timing: dict[str, int | str | bool] = {}
+        self.last_event_trace: dict[str, int | str | bool] = {}
 
     @property
     def available(self) -> bool:
@@ -178,6 +179,7 @@ class AstrBotMessagePipelineAdapter:
         self.last_delivery_visibility_reason = ""
         self.last_event_cleanup_called = None
         self.last_event_timing = {}
+        self.last_event_trace = {}
         if not self.enabled:
             self.last_error = "message_pipeline_disabled"
             raise MessagePipelineUnavailable("message_pipeline_disabled")
@@ -231,6 +233,7 @@ class AstrBotMessagePipelineAdapter:
         event._quest_bridge_stage = stage
         event._quest_bridge_timing = timing
         event._quest_bridge_metadata = _event_metadata_snapshot(event)
+        _install_trace_probe(event, stage)
         stage(
             "event_created",
             status="created",
@@ -281,6 +284,7 @@ class AstrBotMessagePipelineAdapter:
         finally:
             stage("event_cleanup_entered", status="entered", event_type="message.event")
             self.last_event_timing = _public_event_timing(timing)
+            self.last_event_trace = _public_event_trace(timing)
 
         self._record_event_outcome(event)
         stage("event_completed", status="ok", event_type="message.event")
@@ -311,6 +315,7 @@ class AstrBotMessagePipelineAdapter:
             self.last_error = ""
             self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
             self.last_event_timing = _public_event_timing(timing)
+            self.last_event_trace = _public_event_trace(timing)
             self._record_action_outcome(
                 selected_intent,
                 source="selected",
@@ -341,6 +346,7 @@ class AstrBotMessagePipelineAdapter:
             self.last_error = ""
             self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
             self.last_event_timing = _public_event_timing(timing)
+            self.last_event_trace = _public_event_trace(timing)
             self._record_fast_action_stopped_outcome(
                 duration_ms=self.last_duration_ms,
                 action_source=(
@@ -372,6 +378,7 @@ class AstrBotMessagePipelineAdapter:
         self.last_error = ""
         self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
         self.last_event_timing = _public_event_timing(timing)
+        self.last_event_trace = _public_event_trace(timing)
         reply = reply[:4000]
         intent = selected_intent or ProposedIntent(
             emotion=Emotion.NEUTRAL,
@@ -545,6 +552,7 @@ class AstrBotMessagePipelineAdapter:
             "last_delivery_visibility_reason": self.last_delivery_visibility_reason,
             "last_event_cleanup_called": self.last_event_cleanup_called,
             "last_event_timing": dict(self.last_event_timing),
+            "last_event_trace": dict(self.last_event_trace),
             "delivery_owner": "embodiment_bridge",
             "capture_required": True,
             "decision_path": "astrbot_event_bus",
@@ -936,6 +944,45 @@ def _queue_size(queue: Any) -> int | None:
     return max(0, min(value, 100_000))
 
 
+def _install_trace_probe(event: Any, stage: Any) -> None:
+    """Observe public AstrBot TraceSpan actions without retaining their fields."""
+    trace = getattr(event, "trace", None)
+    recorder = getattr(trace, "record", None)
+    if not callable(recorder):
+        return
+    timing = getattr(event, "_quest_bridge_timing", None)
+    if not isinstance(timing, dict):
+        return
+
+    def record(action: str, **_fields: Any) -> None:
+        try:
+            elapsed_ms = max(
+                0,
+                int((time.perf_counter() - float(timing["started"])) * 1000),
+            )
+            safe_action = str(action or "unknown")[:64]
+            timing[f"trace_{safe_action}"] = elapsed_ms
+            timing["trace_event_count"] = int(timing.get("trace_event_count", 0)) + 1
+            stage(
+                "event_trace",
+                status="observed",
+                event_type="message.event",
+                trace_action=safe_action,
+                trace_event_count=timing["trace_event_count"],
+            )
+        except Exception:
+            pass
+        try:
+            recorder(action, **_fields)
+        except Exception:
+            return
+
+    try:
+        trace.record = record
+    except (AttributeError, TypeError):
+        return
+
+
 def _event_metadata_snapshot(event: Any) -> dict[str, Any]:
     """Return routing facts without exposing platform/user/session identifiers."""
     try:
@@ -960,6 +1007,20 @@ def _public_event_timing(timing: Any) -> dict[str, int | str | bool]:
     result: dict[str, int | str | bool] = {}
     for key, value in timing.items():
         if key == "started":
+            continue
+        if isinstance(value, bool | str):
+            result[key] = value[:96] if isinstance(value, str) else value
+        elif isinstance(value, int | float):
+            result[key] = max(0, min(int(value), 3_600_000))
+    return result
+
+
+def _public_event_trace(timing: Any) -> dict[str, int | str | bool]:
+    if not isinstance(timing, dict):
+        return {}
+    result: dict[str, int | str | bool] = {}
+    for key, value in timing.items():
+        if not key.startswith("trace_"):
             continue
         if isinstance(value, bool | str):
             result[key] = value[:96] if isinstance(value, str) else value
