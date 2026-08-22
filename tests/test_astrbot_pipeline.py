@@ -110,6 +110,20 @@ class CaptureEventStub:
         return SimpleNamespace(get_plain_text=lambda: self.result_text)
 
 
+class LifecycleEventStub(CaptureEventStub):
+    async def wait_completed(self) -> None:
+        self._quest_cleanup_called = True
+        callback = getattr(self, "_quest_bridge_stage", None)
+        if callable(callback):
+            callback("event_cleanup_called", status="completed")
+        await asyncio.sleep(0)
+
+
+class SlowEventStub(CaptureEventStub):
+    async def wait_completed(self) -> None:
+        await asyncio.sleep(1)
+
+
 class DiagnosticStub:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any]]] = []
@@ -145,6 +159,71 @@ def test_authorized_text_uses_event_bus_and_returns_talk_decision(
         assert decision.reply_text == "现在是通过正式消息管线得到的回复。"
         assert decision.intent.gesture.value == "talk"
         assert adapter.status == "ok"
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_lifecycle_timing_records_cleanup_and_queue_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = LifecycleEventStub("通过 EventBus 的回复")
+        diagnostic = DiagnosticStub()
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+            diagnostic_log=diagnostic,
+        )
+
+        decision = await adapter.generate(session=session(), user_text="你好")
+
+        assert decision.reply_text == "通过 EventBus 的回复"
+        timing = adapter.status_snapshot()["last_event_timing"]
+        assert all(
+            key in timing
+            for key in ("event_created", "event_enqueued", "event_cleanup_called", "event_woken")
+        )
+        assert timing["event_created"] <= timing["event_enqueued"]
+        assert adapter.status_snapshot()["last_event_cleanup_called"] is True
+        stages = [name for name, _fields in diagnostic.events]
+        assert "event_created" in stages
+        assert "event_cleanup_called" in stages
+
+    asyncio.run(scenario())
+
+
+def test_eventbus_timeout_reports_unconsumed_or_missing_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = ContextStub()
+        event = SlowEventStub("")
+        diagnostic = DiagnosticStub()
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            SimpleNamespace(),
+            platform_id="qq",
+            diagnostic_log=diagnostic,
+        )
+        adapter.timeout_seconds = 0.01
+
+        with pytest.raises(
+            astrbot_pipeline.MessagePipelineUnavailable,
+            match="astrbot_pipeline_timeout",
+        ):
+            await adapter.generate(session=session(), user_text="你好")
+
+        timeout_records = [
+            fields for name, fields in diagnostic.events if name == "event_wait_timeout"
+        ]
+        assert timeout_records[-1]["reason_code"] == (
+            "not_consumed_or_scheduler_missing"
+        )
+        assert adapter.status_snapshot()["last_event_cleanup_called"] is False
 
     asyncio.run(scenario())
 

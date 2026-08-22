@@ -90,6 +90,8 @@ class AstrBotMessagePipelineAdapter:
         self.last_selected_intent = "none"
         self.last_delivery_visibility = "unobserved"
         self.last_delivery_visibility_reason = ""
+        self.last_event_cleanup_called: bool | None = None
+        self.last_event_timing: dict[str, int | str | bool] = {}
 
     @property
     def available(self) -> bool:
@@ -135,6 +137,17 @@ class AstrBotMessagePipelineAdapter:
         recorder = getattr(self.diagnostic_log, "record", None)
 
         def stage(event: str, *, status: str, **fields: Any) -> None:
+            timing = getattr(self, "_active_event_timing", None)
+            if isinstance(timing, dict):
+                elapsed_ms = max(
+                    0,
+                    int((time.perf_counter() - float(timing["started"])) * 1000),
+                )
+                fields.setdefault("elapsed_ms", elapsed_ms)
+                timing[event] = elapsed_ms
+                if event == "event_cleanup_called":
+                    self.last_event_cleanup_called = True
+                    self.last_event_timing = _public_event_timing(timing)
             if not callable(recorder):
                 return
             try:
@@ -163,6 +176,8 @@ class AstrBotMessagePipelineAdapter:
         self.last_selected_intent = "none"
         self.last_delivery_visibility = "unobserved"
         self.last_delivery_visibility_reason = ""
+        self.last_event_cleanup_called = None
+        self.last_event_timing = {}
         if not self.enabled:
             self.last_error = "message_pipeline_disabled"
             raise MessagePipelineUnavailable("message_pipeline_disabled")
@@ -208,25 +223,64 @@ class AstrBotMessagePipelineAdapter:
             action_facts=action_facts,
             supported_actions=getattr(session, "supported_actions", None),
         )
+        timing: dict[str, int | str | bool] = {
+            "started": time.perf_counter(),
+            "event_class": type(event).__name__[:96],
+        }
+        self._active_event_timing = timing
+        event._quest_bridge_stage = stage
+        event._quest_bridge_timing = timing
+        event._quest_bridge_metadata = _event_metadata_snapshot(event)
+        stage(
+            "event_created",
+            status="created",
+            event_type="message.event",
+            **event._quest_bridge_metadata,
+        )
+        queue = queue_getter()
+        queue_size_before = _queue_size(queue)
         try:
-            queue_getter().put_nowait(event)
+            queue.put_nowait(event)
         except (AttributeError, asyncio.QueueFull, RuntimeError) as exc:
             self.status = "queue_unavailable"
             self.last_error = "astrbot_event_queue_unavailable"
             raise MessagePipelineUnavailable("astrbot_event_queue_unavailable") from exc
-        stage("event_enqueued", status="queued", event_type="message.event")
+        stage(
+            "event_enqueued",
+            status="queued",
+            event_type="message.event",
+            queue_size_before=queue_size_before,
+            queue_size_after=_queue_size(queue),
+            queue_class=type(queue).__name__[:96],
+        )
 
         self.status = "processing"
         try:
             await asyncio.wait_for(event.wait_completed(), timeout=self.timeout_seconds)
+            self.last_event_cleanup_called = bool(
+                getattr(event, "_quest_cleanup_called", False)
+            )
             stage("event_woken", status="completed", event_type="message.event")
         except TimeoutError as exc:
             self.status = "timeout"
             self.last_error = "astrbot_pipeline_timeout"
+            cleanup_called = bool(getattr(event, "_quest_cleanup_called", False))
+            self.last_event_cleanup_called = cleanup_called
+            stage(
+                "event_wait_timeout",
+                status="timeout",
+                event_type="message.event",
+                reason_code=(
+                    "pipeline_pending"
+                    if cleanup_called
+                    else "not_consumed_or_scheduler_missing"
+                ),
+            )
             self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
         finally:
             stage("event_cleanup_entered", status="entered", event_type="message.event")
+            self.last_event_timing = _public_event_timing(timing)
 
         self._record_event_outcome(event)
         stage("event_completed", status="ok", event_type="message.event")
@@ -256,6 +310,7 @@ class AstrBotMessagePipelineAdapter:
             self.status = "ok"
             self.last_error = ""
             self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            self.last_event_timing = _public_event_timing(timing)
             self._record_action_outcome(
                 selected_intent,
                 source="selected",
@@ -285,6 +340,7 @@ class AstrBotMessagePipelineAdapter:
             self.status = "ok"
             self.last_error = ""
             self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            self.last_event_timing = _public_event_timing(timing)
             self._record_fast_action_stopped_outcome(
                 duration_ms=self.last_duration_ms,
                 action_source=(
@@ -315,6 +371,7 @@ class AstrBotMessagePipelineAdapter:
         self.status = "ok"
         self.last_error = ""
         self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        self.last_event_timing = _public_event_timing(timing)
         reply = reply[:4000]
         intent = selected_intent or ProposedIntent(
             emotion=Emotion.NEUTRAL,
@@ -486,6 +543,8 @@ class AstrBotMessagePipelineAdapter:
             "last_selected_intent": self.last_selected_intent,
             "last_delivery_visibility": self.last_delivery_visibility,
             "last_delivery_visibility_reason": self.last_delivery_visibility_reason,
+            "last_event_cleanup_called": self.last_event_cleanup_called,
+            "last_event_timing": dict(self.last_event_timing),
             "delivery_owner": "embodiment_bridge",
             "capture_required": True,
             "decision_path": "astrbot_event_bus",
@@ -628,6 +687,7 @@ def _build_capture_event(
     event._quest_done = asyncio.Event()
     event._quest_messages = []
     event._quest_stream = ""
+    event._quest_cleanup_called = False
     original_cleanup = event.cleanup_temporary_local_files
 
     async def send(self: Any, outgoing: Any) -> None:
@@ -651,9 +711,22 @@ def _build_capture_event(
         return None
 
     def cleanup(self: Any) -> None:
+        if self._quest_cleanup_called:
+            return
+        self._quest_cleanup_called = True
         try:
             original_cleanup()
         finally:
+            callback = getattr(self, "_quest_bridge_stage", None)
+            if callable(callback):
+                try:
+                    callback(
+                        "event_cleanup_called",
+                        status="completed",
+                        event_type="message.event",
+                    )
+                except Exception:
+                    pass
             self._quest_done.set()
 
     async def wait_completed(self: Any) -> None:
@@ -849,3 +922,47 @@ def _event_result_text(event: Any) -> str:
     except Exception:
         return ""
     return value if isinstance(value, str) else ""
+
+
+def _queue_size(queue: Any) -> int | None:
+    """Read a bounded queue size without depending on a private queue API."""
+    getter = getattr(queue, "qsize", None)
+    if not callable(getter):
+        return None
+    try:
+        value = int(getter())
+    except (TypeError, ValueError, RuntimeError):
+        return None
+    return max(0, min(value, 100_000))
+
+
+def _event_metadata_snapshot(event: Any) -> dict[str, Any]:
+    """Return routing facts without exposing platform/user/session identifiers."""
+    try:
+        origin = str(getattr(event, "unified_msg_origin", "") or "")
+    except Exception:
+        origin = ""
+    parts = origin.split(":", 2) if origin else []
+    return {
+        "event_class": type(event).__name__[:96],
+        "platform_id_configured": bool(getattr(event, "platform_meta", None)),
+        "umo_parts": len(parts),
+        "umo_shape_valid": len(parts) == 3 and all(bool(part) for part in parts),
+        "message_type": str(parts[1])[:48] if len(parts) > 1 else "",
+        "session_id_present": bool(parts[2]) if len(parts) > 2 else False,
+    }
+
+
+def _public_event_timing(timing: Any) -> dict[str, int | str | bool]:
+    """Project monotonic lifecycle data to safe, bounded diagnostic fields."""
+    if not isinstance(timing, dict):
+        return {}
+    result: dict[str, int | str | bool] = {}
+    for key, value in timing.items():
+        if key == "started":
+            continue
+        if isinstance(value, bool | str):
+            result[key] = value[:96] if isinstance(value, str) else value
+        elif isinstance(value, int | float):
+            result[key] = max(0, min(int(value), 3_600_000))
+    return result

@@ -29,6 +29,21 @@ GET /api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge/pairing/diagnost
 
 Operator Page 的“Bridge 脱敏诊断”区域调用该接口并展示固定字段，不展示正文、身份或凭据。
 
+## EventBus 生命周期耗时
+
+具身消息进入 AstrBot EventBus 时会记录一条受限的生命周期时间线：
+
+```text
+event_created -> event_enqueued -> event_cleanup_called -> event_woken -> event_completed
+```
+
+每个阶段只记录相对首个事件的毫秒数、事件类型、UMO 是否为三段合法结构、消息类型和有界队列长度；不会记录原始平台、用户、机器人或会话标识。若达到截止时间，会额外记录 `event_wait_timeout`：
+
+- `not_consumed_or_scheduler_missing`：尚未观察到 AstrBot Scheduler 的 cleanup；优先检查平台实例 ID、UMO 路由和配置 Scheduler。
+- `pipeline_pending`：事件已经进入管线但仍未完成；继续检查 Provider、记忆、工具、后处理或 TTS 阶段。
+
+`last_event_timing` 和 `last_event_cleanup_called` 会随认证后的健康状态返回，便于把“事件未消费”和“管线处理过慢”分开判断。
+
 若 `diagnostic_platform_log_enabled=true`，插件还会向 `astrbot.plugin.astrbot_plugin_embodiment_bridge` 专属 logger 输出同样的结构化摘要，供 AstrBot 平台日志页显示。插件不注册 handler、不修改 root logger，也不把独立文件改成总日志；该开关默认关闭。升级复制的旧 `quest_avatar_bridge.log*` 只作历史保留，新进程不会继续写入。
 
 日志绝不写入 Bridge/API/Provider key、JWT、URL、路径、正文、音频或任何 session/turn/person/platform/user/bot 标识。平台 logger 写入失败同样不会影响插件行为。
