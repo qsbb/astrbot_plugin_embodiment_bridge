@@ -180,13 +180,14 @@ sequenceDiagram
 | POST | `/audio/end` | 202 | 结束输入音频 |
 | POST | `/interaction` | 202 | 上报交互事实 |
 | POST | `/action/result` | 200 | 回报动作意图的客户端执行状态 |
+| POST | `/playback/receipt` | 200 | 回报客户端播放进度与中断，仅作脱敏诊断 |
 | POST | `/interrupt` | 200 | 打断当前轮次 |
 | POST | `/session/close` | 200 | 关闭会话 |
 | POST | `/spatial/context` | 200 | 更新当前会话的脱敏房间语义快照 |
 | GET | `/health` | 200 | 查询协议和适配器状态 |
 
 
-内置 8520 listener 仅代理上表十一个正常接口，并额外直接处理：
+内置 8520 listener 仅代理上表十二个正常接口，并额外直接处理：
 
 `/health` 的 `diagnostic_log` 只返回 `enabled`、`status=disabled|ready|unavailable` 和 `write_failures` 计数，不返回路径、日志正文、身份或密钥。可在启用独立日志后连续调用两次 health，确认第二次仍为 `ready` 且失败数为 0。
 
@@ -618,6 +619,65 @@ planned -> accepted -> started -> completed
 同一 `receipt_id` 与完全相同正文重试会返回 `idempotent=true`，不会重复迁移或重复写入事实；同一 ID 改动任何字段会返回 `409 action_receipt_replay`。未知、过期或因上限被淘汰的计划返回 `action_plan_stale`，轮次/动作不匹配返回 `action_mismatch`，跳过状态或终态后继续迁移返回 `action_transition_invalid`。
 
 服务端只把 `completed`、`rejected`、`interrupted` 保存为最多 8 条、最长 5 分钟的会话内事实，并排除当前轮后注入后续 `protected_context_authorized=true` 的 Bridge EventBus 轮次。`planned`、`accepted`、`started` 从不作为已经发生的事实；回执也不授予身份、管理员、工具、动作或安全权限。普通 QQ、未授权会话、其他会话和直连 Provider 路径不会收到这些事实。会话关闭即全部销毁。
+
+### 11.2 上报播放回执
+
+客户端在本地播放 `reply.audio.chunk` 语音时，可用本接口回报播放进度与中断事实：
+
+```http
+POST /playback/receipt
+```
+
+```json
+{
+  "type": "playback.receipt",
+  "protocol_version": "1.0",
+  "session_id": "s1",
+  "turn_id": "t3",
+  "speech_id": "t3",
+  "event_name": "playback.progress",
+  "played_ms": 1200,
+  "buffered_ms": 480,
+  "underflow_count": 0,
+  "reason_code": ""
+}
+```
+
+字段规则：
+
+| 字段 | 规则 |
+|---|---|
+| `turn_id` | 产生该语音的轮次 ID |
+| `speech_id` | 必须等于 `turn_id`，不一致即拒绝 |
+| `event_name` | `playback.started`、`playback.progress`、`playback.ended`、`playback.interrupted` 之一 |
+| `played_ms` | 已播放毫秒，范围 0-3600000 |
+| `buffered_ms` | 本地已缓冲毫秒，范围 0-3600000 |
+| `underflow_count` | 播放欠载次数，范围 0-100000 |
+| `reason_code` | 可选，去空白后最长 128 字符 |
+
+事件语义：
+
+- `playback.started`：开始播放该轮语音。
+- `playback.progress`：播放过程中的周期性进度心跳。
+- `playback.ended`：该轮语音正常播放完毕。
+- `playback.interrupted`：本地播放被中断，例如用户开始说话或客户端主动停播。
+
+只接受当前轮次，或完成后 90 秒保留窗口内的轮次；服务端最多保留 16 条已完成轮次 ID，超出容量或窗口即被遗忘。成功响应：
+
+```json
+{
+  "status": "ok",
+  "data": {
+    "session_id": "s1",
+    "turn_id": "t3",
+    "event_name": "playback.progress"
+  }
+}
+```
+
+播放回执只写入脱敏诊断（事件名、已播放/缓冲毫秒、欠载计数与 `reason_code`），不进入 EventBus、消息链、记忆或工具，也不授予任何身份或权限。`playback.interrupted` 只说明客户端本地已经停止播放；要真正取消服务端轮次，仍须调用 `/interrupt` 或开启带 `cancel_previous=true` 的新轮（见 12 节）。
+
+错误响应：`speech_id` 与 `turn_id` 不一致返回 `422 playback_receipt_mismatch`；轮次未知或已超出保留窗口返回 `409 session_conflict`；字段缺失、越界或含未知字段按 4.4 节返回 `422 schema_validation_failed`。
 
 ## 12. 打断
 
@@ -1057,6 +1117,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 | 409 | `action_transition_invalid` | 按 planned/accepted/started/terminal 状态机提交，终态后停止 |
 | 413 | `payload_too_large` | 减小请求或音频块 |
 | 415 | `unsupported_media_type` | 使用 `application/json` |
+| 422 | `playback_receipt_mismatch` | 播放回执的 `speech_id` 必须等于对应 `turn_id` |
 | 422 | `schema_validation_failed` | 按本文档修正字段、枚举和范围 |
 | 500 | `internal_error` | 记录请求 ID/状态并查看 AstrBot 日志，不要无限重试 |
 | 503 | `bridge_not_configured` | 配置至少 32 字符的 bridge key |
@@ -1075,6 +1136,7 @@ SSE `error` 是轮次级错误；HTTP 错误是请求级错误，两者必须分
 - 先执行模型能力检查，再映射语义动作；映射表由 Unity 模型适配层持有。
 - 对带 `action_id` 的可执行意图使用唯一 `receipt_id` 依次回报 accepted、started 与终态；网络重试必须原样发送，同一回执 ID 不得改字段。
 - 模型不支持、资源缺失、追踪丢失或用户打断时回报对应 rejected/interrupted 原因，不得把本地降级姿态伪报为原动作 completed。
+- 播放语音时按 started/progress/ended 回报播放回执，本地停止播放时回报 `playback.interrupted`；`speech_id` 必须等于 `turn_id`，回执仅作诊断，不能代替 `interrupt` 取消服务端轮次。
 - 不根据 `head_pat`、`cheek_pinch` 等输入事件预判情绪。
 - 网络断开时停止本地旧音频和动作，重连 SSE；会话不存在时重新执行 `session/start`。
 - 应用退出、切换用户或切换角色时调用 `session/close`。

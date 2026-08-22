@@ -77,8 +77,9 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 ## 功能
 
 - 让具身客户端的普通文字和语音进入 AstrBot EventBus，经过已配置的人格、历史、记忆、知识、工具及后处理插件。
-- 使用 Protocol 1.0 提供 HTTP 上行与 SSE 下行，支持取消、迟到事件隔离、有界队列和慢客户端背压。
-- 接收 PCM16 16 kHz 单声道输入；通过 AstrBot STT Provider 完成整轮识别。
+- 使用 Protocol 1.0 提供 HTTP 上行与 SSE 下行，支持轮次打断、新轮仲裁、迟到事件隔离、有界队列和慢客户端背压。
+- 支持实时打断：`/interrupt` 或新轮 `cancel_previous` 会取消旧轮的回复、快速动作与流式 STT 任务并丢弃其排队事件；客户端可经 `/playback/receipt` 回报播放进度与中断，仅作脱敏诊断。
+- 接收 PCM16 16 kHz 单声道输入；通过 AstrBot STT Provider 完成整轮识别；Provider 提供流式契约时并行产出仅供诊断的实时 partial，非空 final 才进入正式轮次，流式不可用或失败时回退整轮文件式识别。
 - 优先复用“声”的 `voice.audio_output@1.0`，也可回退 AstrBot Core TTS；统一输出 PCM16 24 kHz 单声道音频。
 - 输出受白名单约束的情绪、动作和注视意图，不向客户端发送骨骼、Morph、动画路径或 Unity 对象。
 - 上报握手、摸头、捏脸、注视和说话等交互事实，由后端结合身份、关系和边界决定反应。
@@ -127,7 +128,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作，并与主回复动作工具进行同轮单动作仲裁 |
 | `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
 | `fast_action_timeout_seconds` | `6.0` | 快速动作调用上限；动作决策与文字/TTS并行，正文不等待动作模型；超时只在 `reply.end` 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上。Operator Page 可保存 0.5–15 秒并显示 effective timeout |
-| `fast_action_timeout_policy_revision` | 空 | 审计字段；无 revision 且值为 4.0 时只识别为旧默认并按 6.0 effective 运行，管理页保存后写入 `v2`，显式保存的 4.0 不会被覆盖 |
+| `fast_action_timeout_policy_revision` | 空 | 审计字段；revision 为空或旧版 `v2` 且值为 4.0 时识别为旧默认并按 6.0 effective 运行，管理页保存后写入 `v3`，显式保存的 4.0 不会被覆盖 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
 | `quest_direct_dialogue_mode` | `false` | 无平台身份的基础对话模式；不进入 EventBus，不需要 Bot/User 或“序”，关系/记忆/其他消息插件不会注入 |
@@ -180,6 +181,7 @@ X-Embodiment-Bridge-Key: <bridge_api_key>
 | POST | `/turn/start` | 202 | 开始文字或语音轮次 |
 | POST | `/audio/chunk` | 202 | 上传 PCM16 单声道 16 kHz 输入块 |
 | POST | `/audio/end` | 202 | 完成输入并启动 STT 与决策 |
+| POST | `/playback/receipt` | 200 | 回报客户端播放进度与中断，仅作脱敏诊断 |
 | POST | `/interaction` | 202 | 上报交互事实 |
 | POST | `/action/result` | 200 | 回报服务端动作意图的客户端执行状态 |
 | POST | `/interrupt` | 200 | 取消轮次并阻止迟到事件 |
@@ -187,7 +189,11 @@ X-Embodiment-Bridge-Key: <bridge_api_key>
 | POST | `/spatial/context` | 200 | 更新按会话隔离的脱敏房间语义快照 |
 | GET | `/health` | 200 | 读取协议与能力的脱敏状态 |
 
-SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.delta`、`reply.audio.chunk`、`reply.end` 和 `error`。音频块带 `speech_id`、严格递增 `sequence` 与首块标记，终帧带最后序号，供客户端在打断后丢弃旧轮音频。当前文件式 STT 不产生 `asr.partial`；仅当已选 AstrBot STT Provider 明确提供流式契约时才可产生 partial，且 partial 只用于设备 UI/诊断，绝不进入 EventBus、记忆或工具。输出音频固定为 PCM16 单声道 24 kHz。
+SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.delta`、`reply.audio.chunk`、`reply.end` 和 `error`。音频块带 `speech_id`（当前等于产生该音频的 `turn_id`）、自 0 严格递增 `sequence` 与首块标记，`reply.end` 带最后音频序号（未发送音频时为 `-1`），供客户端在打断后丢弃旧轮迟到音频。当前文件式 STT 不产生 `asr.partial`；仅当已选 AstrBot STT Provider 明确提供流式契约时才可产生 partial，且 partial 只用于设备 UI/诊断，绝不进入 EventBus、记忆或工具；只有非空 final 作为该轮识别结果进入正式消息链，流式无 final、失败或队列背压时回退整轮文件式识别。输出音频固定为 PCM16 单声道 24 kHz。
+
+打断与轮次仲裁：`/interrupt` 的 `turn_id` 可省略，省略时打断当前轮；被打断的轮次不再发送文字、音频、动作或 `reply.end`，目标轮已不是当前轮时返回 `cancelled=false`。`turn/start` 的 `cancel_previous` 默认为 `true`，新轮会取消旧轮的回复、快速动作与流式 STT 任务并丢弃其排队事件；设为 `false` 且已有活动轮时返回 `409 session_conflict`。交互事实使用独立的有界槽位，不抢占进行中的对话轮次。取消、关闭会话或开启新轮时，旧轮的流式 STT 队列与任务会被清空，旧轮音频不再进入处理链。
+
+`/playback/receipt` 接受 `playback.started`、`playback.progress`、`playback.ended` 和 `playback.interrupted`，携带已播放毫秒、缓冲毫秒与欠载计数；`speech_id` 必须等于对应 `turn_id`，只接受当前轮或完成后 90 秒保留窗口内的轮次。回执只写入脱敏诊断，不进入 EventBus、记忆或工具。
 
 空间快照只包含有界的物体计数与能力布尔值，30 秒未刷新即失效；官方客户端以 15 秒低频续租，并对相同内容去重。图像、网格、坐标、尺寸、锚点和自由文本不会进入该通道。
 

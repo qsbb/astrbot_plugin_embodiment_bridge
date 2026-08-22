@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Documentation
+
+- 在 `docs/API_CN.md` 补充 `POST /playback/receipt` 播放回执接口：§5 接口总表、§11.2 正文（字段表、四类事件语义、90 秒保留窗口与错误响应）、§16 错误码与 §17 Unity 实现检查表。
+
 ## 1.1.2 - 2026-08-22
 
 ### Added
