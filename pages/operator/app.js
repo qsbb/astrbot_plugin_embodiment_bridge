@@ -1960,7 +1960,9 @@ function diagnosticEventLabel(value) {
     "reply.completed": "回复交付完成",
     "reply.failed": "回复交付失败",
     "http.health": "健康检查完成",
-    "http.error": "HTTP 请求失败"
+    "http.error": "HTTP 请求失败",
+    "plugin_hook_profiler.scan": "插件钩子扫描完成",
+    "plugin_hook.completed": "插件钩子执行完成"
   };
   return labels[String(value || "")] || String(value || "诊断事件");
 }
@@ -2051,6 +2053,11 @@ function diagnosticMeta(event) {
     parts.push(`来源：${diagnosticActionSourceLabel(event.action_source)}`);
   }
   if (event.method) parts.push(`方式：${String(event.method)}`);
+  if (event.plugin_name) parts.push(`插件：${String(event.plugin_name)}`);
+  if (event.hook) parts.push(`Hook：${String(event.hook)}`);
+  if (event.plugin_module) parts.push(`模块：${String(event.plugin_module)}`);
+  if (Number.isFinite(event.priority)) parts.push(`优先级：${event.priority}`);
+  if (event.stopped === true) parts.push("事件已停止");
   if (event.catalog_status) parts.push(`目录：${String(event.catalog_status)}`);
   if (event.eventbus_tool_called === true) parts.push("EventBus 工具已调用");
   if (event.eventbus_tool_called === false) parts.push("EventBus 工具未调用");

@@ -11,9 +11,17 @@ data/plugin_data/astrbot_plugin_embodiment_bridge/embodiment_bridge.log
 ```text
 diagnostic_log_enabled=true
 diagnostic_platform_log_enabled=false
+diagnostic_plugin_timing_enabled=true
 diagnostic_log_max_bytes=1048576
 diagnostic_log_backup_count=3
 ```
+
+`diagnostic_plugin_timing_enabled` 只在独立诊断日志开启时生效。启用后，临创建的
+EventBus 轮次会对已注册插件的协程钩子记录方法边界耗时：插件显示名、模块、hook、方法名、
+priority、状态、是否停止事件、异常类型和 `duration_ms`。耗时是 wall-clock 时间，包含该钩子
+内部的异步等待、Provider、数据库和网络等待。它不会记录任意私有 helper 的逐函数耗时，也不
+记录正文、提示词、身份、Provider 配置、凭据、音频或路径。默认关闭；关闭后已安装的包装会被
+解除，不保留运行时开销。
 
 文件达到大小上限后轮转为 `.1`、`.2` 等备份。写入使用有界异步队列和进程内锁；目录只读、磁盘满或轮转失败时，日志器进入降级状态并停止继续写入，不影响 HTTP、SSE、LLM、STT、TTS 或插件生命周期。
 
@@ -45,5 +53,15 @@ event_created -> event_enqueued -> event_cleanup_called -> event_woken -> event_
 `last_event_timing` 和 `last_event_cleanup_called` 会随认证后的健康状态返回，便于把“事件未消费”和“管线处理过慢”分开判断。
 
 若 `diagnostic_platform_log_enabled=true`，插件还会向 `astrbot.plugin.astrbot_plugin_embodiment_bridge` 专属 logger 输出同样的结构化摘要，供 AstrBot 平台日志页显示。插件不注册 handler、不修改 root logger，也不把独立文件改成总日志；该开关默认关闭。升级复制的旧 `quest_avatar_bridge.log*` 只作历史保留，新进程不会继续写入。
+
+插件方法记录的事件形如：
+
+```text
+plugin_hook.completed plugin_name=情 plugin_module=... hook=OnLLMRequestEvent method=on_llm_request duration_ms=7385 status=ok
+```
+
+当前覆盖 LLM/Agent/工具/发送阶段的 10 类 AstrBot 协程 hook，不覆盖普通平台消息、命令、
+插件加载生命周期或异步生成器；因此它是“具身对话链钩子耗时”而不是任意 Python 函数的全量
+profiler。需要进一步定位某个插件内部 helper，应由该插件提供自己的脱敏 span。
 
 日志绝不写入 Bridge/API/Provider key、JWT、URL、路径、正文、音频或任何 session/turn/person/platform/user/bot 标识。平台 logger 写入失败同样不会影响插件行为。

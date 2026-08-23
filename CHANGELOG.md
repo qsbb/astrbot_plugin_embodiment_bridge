@@ -2,9 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- 新增默认关闭的插件钩子耗时诊断：按临创建的 EventBus 轮次记录已注册插件的
+  LLM/Agent/工具/发送协程 hook、方法名、优先级、状态和 wall-clock 耗时；兼容 AstrBot
+  热加载的 Handler 绑定，并在停用或卸载时恢复原始回调。
+
 ### Documentation
 
 - 在 `docs/API_CN.md` 补充 `POST /playback/receipt` 播放回执接口：§5 接口总表、§11.2 正文（字段表、四类事件语义、90 秒保留窗口与错误响应）、§16 错误码与 §17 Unity 实现检查表。
+
+## 1.1.3 - 2026-08-23
+
+### Added
+
+- 增加插件 EventBus Hook 方法耗时诊断，支持在脱敏日志和 Operator 页面查看插件、方法、Hook、优先级和 wall-clock 耗时。
+- 兼容 AstrBot Handler 热加载、partial 绑定、运行时停用和插件卸载，避免重复包装或旧实例残留。
 
 ## 1.1.2 - 2026-08-22
 

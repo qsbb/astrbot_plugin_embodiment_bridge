@@ -259,10 +259,15 @@ class AstrBotMessagePipelineAdapter:
 
         self.status = "processing"
         try:
+            # This marker separates queue admission from the scheduler's
+            # completion path. It lets the client distinguish an EventBus
+            # wait from STT/LLM/TTS work when a turn is slow.
+            stage("event_wait_started", status="waiting", event_type="message.event")
             await asyncio.wait_for(event.wait_completed(), timeout=self.timeout_seconds)
             self.last_event_cleanup_called = bool(
                 getattr(event, "_quest_cleanup_called", False)
             )
+            stage("event_wait_completed", status="completed", event_type="message.event")
             stage("event_woken", status="completed", event_type="message.event")
         except TimeoutError as exc:
             self.status = "timeout"

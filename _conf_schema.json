@@ -433,6 +433,12 @@
     "hint": "日志仅写入插件自有 data/plugin_data 目录；默认关闭，不接入 AstrBot 总日志。",
     "default": false
   },
+  "diagnostic_plugin_timing_enabled": {
+    "description": "记录 AstrBot 插件钩子耗时",
+    "type": "bool",
+    "hint": "仅在诊断日志开启时生效。对临创建的 EventBus 轮次记录已注册插件的 hook 方法耗时、状态、优先级和异常类型；不记录消息、提示词、身份或密钥。默认关闭以避免额外开销。",
+    "default": false
+  },
   "server_timing_enabled": {
     "description": "在既有 reply.end 中附加服务端耗时摘要",
     "type": "bool",

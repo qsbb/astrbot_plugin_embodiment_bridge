@@ -47,6 +47,7 @@ from .core.persona_service import (
     QuestPersonaService,
     build_eventbus_persona_overlay,
 )
+from .core.plugin_hook_profiler import PluginHookProfiler
 from .core.plugin_identity import (
     BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
@@ -72,7 +73,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -231,6 +232,14 @@ class EmbodimentBridgePlugin(Star):
         )
         self.diagnostic_log.record("plugin.constructed", component="plugin")
         self._component_logger = DiagnosticLogSink(self.diagnostic_log)
+        self.plugin_hook_profiler = PluginHookProfiler(
+            self.diagnostic_log,
+            enabled=self._bool_config("diagnostic_plugin_timing_enabled", False),
+        )
+        # AstrBot binds registered handlers to the Star instance between
+        # construction and initialize(). Do not wrap raw functions during
+        # __init__, otherwise the framework can bind a profiler wrapper twice.
+        self._plugin_hook_profiler_ready = False
 
         bridge_api_key = str(config.get("bridge_api_key", "") or "")
         trusted_client_id = str(config.get("trusted_client_id", "") or "")
@@ -588,6 +597,14 @@ class EmbodimentBridgePlugin(Star):
                 effective["diagnostic_platform_log_enabled"]
             ),
         )
+        self.plugin_hook_profiler.configure(
+            enabled=(
+                self._bool_config("diagnostic_plugin_timing_enabled", False)
+                and bool(effective["diagnostic_log_enabled"])
+            )
+        )
+        if self._plugin_hook_profiler_ready and self.plugin_hook_profiler.enabled:
+            self.plugin_hook_profiler.install()
 
         max_audio_seconds = max(1, int(effective["max_audio_seconds"]))
         self.sessions.max_sessions = max(1, int(effective["max_sessions"]))
@@ -619,6 +636,10 @@ class EmbodimentBridgePlugin(Star):
 
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
+        # Install after all currently loaded plugin handlers are registered.
+        # Later plugin reloads are picked up by the optional loaded hook below.
+        self._plugin_hook_profiler_ready = True
+        self.plugin_hook_profiler.install()
         if self._legacy_plugin_config_changes:
             if not config_is_writable(self.config):
                 raise RuntimeError("legacy_plugin_config_persistence_unavailable")
@@ -721,6 +742,24 @@ class EmbodimentBridgePlugin(Star):
                 else persona.name_configured
             ),
         )
+
+    # AstrBot exposes this decorator in production. The fallback keeps older
+    # AstrBot versions and the plugin's isolated test harness compatible.
+    _on_plugin_loaded = getattr(filter, "on_plugin_loaded", None)
+    if not callable(_on_plugin_loaded):
+        def _on_plugin_loaded(**_kwargs):
+            del _kwargs
+
+            def decorator(handler):
+                return handler
+
+            return decorator
+
+    @_on_plugin_loaded(priority=-100000)
+    async def refresh_plugin_hook_profiler(self, metadata: Any = None) -> None:
+        del metadata
+        if self.plugin_hook_profiler.enabled:
+            self.plugin_hook_profiler.install()
 
     @filter.on_llm_request(priority=250)
     async def inject_quest_persona(self, event: Any, req: Any) -> None:
@@ -950,6 +989,7 @@ class EmbodimentBridgePlugin(Star):
         if self._terminated:
             return
         self._terminated = True
+        self.plugin_hook_profiler.uninstall()
         self.diagnostic_log.record(
             "plugin.terminate", component="plugin", status="start"
         )

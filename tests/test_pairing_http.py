@@ -1425,6 +1425,18 @@ def test_diagnostics_projection_is_dashboard_protected_and_redacted(
             user_id="identity-secret",
             reply_text="reply-secret",
         )
+        bundle.plugin.diagnostic_log.record(
+            "plugin_hook.completed",
+            component="plugin_hook",
+            plugin_name="情",
+            plugin_module="data.plugins.relationship.main",
+            hook="OnLLMRequestEvent",
+            method="on_llm_request",
+            priority=600,
+            stopped=False,
+            duration_ms=7385,
+            status="ok",
+        )
         async with LiveHttpServer(bundle) as server:
             async with ClientSession() as client:
                 denied = await client.get(server.url("/pairing/diagnostics"))
@@ -1448,6 +1460,17 @@ def test_diagnostics_projection_is_dashboard_protected_and_redacted(
                 assert llm_error["duration_ms"] == 12.5
                 assert llm_error["status"] == "failed"
                 assert llm_error["timestamp"]
+                hook_event = next(
+                    event
+                    for event in body["diagnostics"]["events"]
+                    if event["event"] == "plugin_hook.completed"
+                )
+                assert hook_event["plugin_name"] == "情"
+                assert hook_event["plugin_module"] == "data.plugins.relationship.main"
+                assert hook_event["hook"] == "OnLLMRequestEvent"
+                assert hook_event["method"] == "on_llm_request"
+                assert hook_event["priority"] == 600
+                assert hook_event["stopped"] is False
                 assert body["diagnostics"]["root_cause"] == {
                     "stage": "llm",
                     "code": "llm_failed",

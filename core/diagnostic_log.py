@@ -92,6 +92,12 @@ _SAFE_FIELD_NAMES = frozenset(
         "umo_shape_valid",
         "session_id_present",
         "trace_id",
+        "plugin_name",
+        "plugin_module",
+        "hook",
+        "method",
+        "priority",
+        "stopped",
     }
 )
 _SENSITIVE_NAME_RE = re.compile(
@@ -117,6 +123,7 @@ _SAFE_BOOLEAN_STATUS_FIELDS = frozenset(
         "platform_id_configured",
         "umo_shape_valid",
         "session_id_present",
+        "stopped",
     }
 )
 _SAFE_AGGREGATE_FIELDS = frozenset({"active_sessions", "attached_streams"})
@@ -485,6 +492,11 @@ class DiagnosticLog:
     def _safe_value(cls, name: str, value: Any) -> Any:
         if name in _SAFE_BOOLEAN_STATUS_FIELDS:
             return value if isinstance(value, bool) else None
+        if name == "plugin_name":
+            candidate = str(value or "")[:96]
+            if candidate and not any(ord(char) < 32 for char in candidate):
+                return candidate
+            return None
         if name in _SAFE_PERSONA_ENUM_FIELDS:
             return value if value in _SAFE_PERSONA_ENUM_VALUES else None
         if name in _SAFE_ACTION_ENUM_FIELDS:
