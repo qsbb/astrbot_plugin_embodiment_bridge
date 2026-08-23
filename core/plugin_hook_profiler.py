@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable
 
 from .plugin_identity import BRIDGE_EVENT_MARKER, LEGACY_BRIDGE_EVENT_MARKER
+from .timing_trace import TimingTrace
 
 
 _PROFILED_EVENT_NAMES = frozenset(
@@ -243,6 +244,25 @@ class PluginHookProfiler:
             started = time.perf_counter()
             status = "ok"
             error_type = ""
+            bridge_trace = getattr(event, "_quest_bridge_trace", None)
+            span_id = ""
+            parent_span_id = ""
+            if isinstance(bridge_trace, TimingTrace):
+                parent_span_id = str(
+                    getattr(event, "_quest_bridge_processing_span_id", "") or ""
+                )
+                if not parent_span_id:
+                    parent_span_id = bridge_trace.mark_event_consumed()
+                    try:
+                        setattr(event, "_quest_bridge_processing_span_id", parent_span_id)
+                    except Exception:
+                        pass
+                span_id = bridge_trace.start_span(
+                    f"plugin.{method_name}",
+                    kind="plugin_hook",
+                    parent_id=parent_span_id,
+                    category="await",
+                )
             try:
                 return await original(*args, **kwargs)
             except asyncio.CancelledError:
@@ -254,6 +274,17 @@ class PluginHookProfiler:
                 error_type = type(exc).__name__
                 raise
             finally:
+                if isinstance(bridge_trace, TimingTrace) and span_id:
+                    bridge_trace.finish_span(
+                        span_id,
+                        status=status,
+                        plugin_name=plugin_name,
+                        plugin_module=module_path,
+                        hook=hook,
+                        method=method_name,
+                        priority=priority,
+                        stopped=self._event_stopped(event),
+                    )
                 fields: dict[str, Any] = {
                     "component": "plugin_hook",
                     "status": status,
@@ -265,6 +296,31 @@ class PluginHookProfiler:
                     "duration_ms": max(0, int((time.perf_counter() - started) * 1000)),
                     "stopped": self._event_stopped(event),
                 }
+                # Keep the legacy hook event useful to existing dashboard
+                # consumers while exposing the same fixed timing vocabulary as
+                # ``timing.span.completed``.  The method-boundary event has no
+                # independent queue/lock/provider markers, so those remain
+                # conservative zero/default values; the nested span carries
+                # the full parent relationship and loop-lag data.
+                duration_ms = fields["duration_ms"]
+                fields.update(
+                    {
+                        "span_id": span_id,
+                        "parent_span_id": parent_span_id,
+                        "span_name": f"plugin.{method_name}",
+                        "span_kind": "plugin_hook",
+                        "wall_ms": duration_ms,
+                        "active_ms": duration_ms,
+                        "queue_wait_ms": 0,
+                        "lock_wait_ms": 0,
+                        "provider_wait_ms": 0,
+                        "cache_hit": False,
+                        "retry_count": 0,
+                        "timeout": False,
+                        "fallback": False,
+                        "active_ms_estimated": True,
+                    }
+                )
                 if error_type:
                     fields["error_type"] = error_type
                 self._record("plugin_hook.completed", **fields)

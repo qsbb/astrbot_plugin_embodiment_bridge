@@ -4,7 +4,7 @@ import asyncio
 import base64
 import re
 import time
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from typing import Any
 
 from ..adapters.astrbot_llm import DecisionGenerator
@@ -51,6 +51,7 @@ from .plugin_identity import (
     BRIDGE_FAST_ACTION_SELECTED,
 )
 from .session_manager import SessionManager, SessionState, TurnState
+from .timing_trace import TimingTrace
 
 
 _PUBLIC_PIPELINE_REASONS = frozenset(
@@ -354,10 +355,28 @@ class TurnOrchestrator:
         async def runner() -> None:
             await gate.wait()
             turn.server_timing.start_processing()
+            trace = TimingTrace(
+                self.diagnostic_log,
+                enabled=bool(getattr(self.diagnostic_log, "enabled", False)),
+                trace_id=turn.trace_id,
+            )
+            turn.timing_trace = trace
+            trace.start_event_loop_monitor()
+            turn_span = trace.start_named_span("turn.processing", kind="turn")
             try:
                 await operation()
+                trace.finish_span(turn_span, status="completed")
+            except asyncio.CancelledError:
+                trace.finish_span(turn_span, status="cancelled")
+                raise
+            except BaseException:
+                trace.finish_span(turn_span, status="error")
+                raise
             finally:
-                await self.sessions.complete_turn(session, turn)
+                try:
+                    await self.sessions.complete_turn(session, turn)
+                finally:
+                    await trace.close()
 
         task = asyncio.create_task(
             runner(),
@@ -377,6 +396,13 @@ class TurnOrchestrator:
     ) -> None:
         started = time.perf_counter()
         turn.server_timing.start_stt()
+        stt_span = self._start_trace_span(
+            turn,
+            "stt.turn",
+            kind="stt",
+            category="await",
+        )
+        stt_status = "completed"
         try:
             self._diagnostic(
                 "stt.started",
@@ -389,7 +415,13 @@ class TurnOrchestrator:
             use_file_fallback = stream_task is None
             if stream_task is not None:
                 try:
-                    await stream_task
+                    await self._await_traced(
+                        turn,
+                        "stt.streaming_wait",
+                        stream_task,
+                        kind="stt",
+                        category="provider",
+                    )
                 except asyncio.CancelledError:
                     if not self.sessions.is_current(session, turn.turn_id, turn.generation):
                         raise
@@ -408,7 +440,13 @@ class TurnOrchestrator:
                         bytes=len(pcm16),
                     )
             if use_file_fallback:
-                text = await self.stt.transcribe(pcm16, sample_rate=16_000)
+                text = await self._await_traced(
+                    turn,
+                    "stt.provider_request",
+                    self.stt.transcribe(pcm16, sample_rate=16_000),
+                    kind="stt_provider",
+                    category="provider",
+                )
             turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.completed",
@@ -419,18 +457,26 @@ class TurnOrchestrator:
                 duration_ms=(time.perf_counter() - started) * 1000,
                 bytes=len(pcm16),
             )
+            self._finish_trace_span(turn, stt_span, status="completed")
+            stt_span = ""
             if not text.strip():
                 await self._emit_terminal_error(
                     session, turn, "stt_empty", "Speech was not recognized"
                 )
                 return
-            emitted = await self._emit(
-                session,
+            emitted = await self._await_traced(
                 turn,
-                {
-                    "type": "asr.final",
-                    "text": text,
-                },
+                "stt.final_emit",
+                self._emit(
+                    session,
+                    turn,
+                    {
+                        "type": "asr.final",
+                        "text": text,
+                    },
+                ),
+                kind="delivery",
+                category="await",
             )
             if not emitted:
                 return
@@ -443,14 +489,17 @@ class TurnOrchestrator:
                 ),
             )
         except asyncio.CancelledError:
+            stt_status = "cancelled"
             self._diagnostic(
                 "turn_cancelled", component="turn", phase="audio", status="cancelled", trace_id=turn.trace_id
             )
             turn.server_timing.finish_stt()
             raise
         except MessagePipelineEmpty as exc:
+            stt_status = "error"
             await self._emit_pipeline_empty_error(session, turn, exc, phase="voice")
         except MessagePipelineUnavailable as exc:
+            stt_status = "error"
             reason = self._public_pipeline_reason(session, exc)
             self._diagnostic(
                 "message_pipeline.blocked",
@@ -465,6 +514,7 @@ class TurnOrchestrator:
                 self._pipeline_error_message(reason),
             )
         except AdapterUnavailable:
+            stt_status = "error"
             turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.error",
@@ -480,6 +530,7 @@ class TurnOrchestrator:
                 "PCM16 STT is not configured",
             )
         except Exception as exc:
+            stt_status = "error"
             turn.server_timing.finish_stt()
             self._diagnostic(
                 "stt.error",
@@ -495,6 +546,9 @@ class TurnOrchestrator:
             await self._emit_terminal_error(
                 session, turn, "stt_failed", "Speech recognition failed"
             )
+        finally:
+            if stt_span:
+                self._finish_trace_span(turn, stt_span, status=stt_status)
 
     async def _run_text_turn(
         self,
@@ -604,28 +658,18 @@ class TurnOrchestrator:
         user_text: str,
         operation: Callable[[], Coroutine[Any, Any, None]],
     ) -> None:
-        """Run the reply path while an optional action-only LLM runs beside it.
+        """Run dialogue while reserving only explicit, local actions.
 
-        The action task never owns reply text, EventBus dispatch, history, STT,
-        or TTS. When it is active, it races the request-scoped EventBus action
-        tool through a one-action reservation; the regular reply path keeps
-        streaming while the selector races, then settles one intent before
-        ``reply.end``.
+        Ordinary turns stay dialogue-only. An explicit imperative is parsed
+        before the EventBus request and dispatched through the deterministic
+        action controller; the main LLM never selects an autonomous action.
         """
         fast_task: asyncio.Task[None] | None = None
-        adapter = self.fast_action
         explicit = parse_explicit_action(user_text)
         explicit_action = (
             explicit.action
             if explicit.status == "matched" and explicit.action is not None
             else None
-        )
-        autonomous_fallback = AvatarSkillRegistry.autonomous_fallback(
-            user_text,
-            session.supported_actions,
-        )
-        fast_provider_configured = bool(
-            str(getattr(adapter, "provider_id", "") or "").strip()
         )
         if explicit_action is not None:
             turn.fast_action_active = True
@@ -660,29 +704,20 @@ class TurnOrchestrator:
                     reason_code="client_action_unsupported",
                     action_source="explicit_request",
                 )
-        elif (
-            adapter is not None
-            and bool(getattr(adapter, "enabled", False))
-            and (
-                adapter.available
-                or (
-                    fast_provider_configured
-                    and autonomous_fallback is not None
-                )
+        else:
+            # Autonomous action selection is deliberately outside the main
+            # dialogue path. Ordinary turns must not spend provider time
+            # analysing whether the avatar should move. Explicit commands
+            # are handled by the deterministic branch above; touch/gesture
+            # events arrive through the interaction path separately.
+            self._diagnostic(
+                "fast_action.skipped",
+                component="action",
+                phase="parallel",
+                status="skipped",
+                reason_code="autonomous_action_disabled",
+                action_source="none",
             )
-        ):
-            turn.fast_action_active = True
-            self._set_fast_action_feedback(turn, status="processing")
-            fast_task = asyncio.create_task(
-                self._run_fast_action(
-                    session,
-                    turn,
-                    user_text,
-                    autonomous_fallback=autonomous_fallback,
-                ),
-                name=f"embodiment-bridge:fast-action:{session.session_id}:{turn.turn_id}",
-            )
-            turn.fast_action_task = fast_task
         completed = False
         try:
             await operation()
@@ -779,12 +814,24 @@ class TurnOrchestrator:
                     )
                     proposed = None
                 else:
-                    history = await self.sessions.history_snapshot(session)
+                    history = await self._await_traced(
+                        turn,
+                        "context.history_snapshot.fast_action",
+                        self.sessions.history_snapshot(session),
+                        kind="storage",
+                        category="await",
+                    )
                     try:
-                        proposed = await adapter.decide(
-                            user_text=user_text,
-                            history=history,
-                            supported_actions=session.supported_actions,
+                        proposed = await self._await_traced(
+                            turn,
+                            "action.provider_request",
+                            adapter.decide(
+                                user_text=user_text,
+                                history=history,
+                                supported_actions=session.supported_actions,
+                            ),
+                            kind="action_provider",
+                            category="provider",
                         )
                     except FastActionUnavailable as exc:
                         provider_failure = (
@@ -1010,7 +1057,13 @@ class TurnOrchestrator:
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
         turn.server_timing.start_decision("direct_provider")
-        history = await self.sessions.history_snapshot(session)
+        history = await self._await_traced(
+            turn,
+            "context.history_snapshot",
+            self.sessions.history_snapshot(session),
+            kind="storage",
+            category="await",
+        )
         use_message_pipeline = bool(
             interaction is None
             and session.protected_context_authorized
@@ -1065,13 +1118,25 @@ class TurnOrchestrator:
                 reason_code=reason,
             )
             raise MessagePipelineUnavailable(reason)
-        relationship = await self._read_relationship(session)
+        relationship = await self._await_traced(
+            turn,
+            "context.relationship_snapshot",
+            self._read_relationship(session),
+            kind="adapter",
+            category="await",
+        )
         knowledge: list[dict[str, Any]] = []
         environment: dict[str, Any] | None = None
         if not use_message_pipeline:
-            knowledge, environment = await asyncio.gather(
-                self._read_knowledge(user_text, interaction),
-                self._read_environment(),
+            knowledge, environment = await self._await_traced(
+                turn,
+                "context.knowledge_environment",
+                asyncio.gather(
+                    self._read_knowledge(user_text, interaction),
+                    self._read_environment(),
+                ),
+                kind="adapter",
+                category="await",
             )
         llm_started = time.perf_counter()
         try:
@@ -1084,10 +1149,6 @@ class TurnOrchestrator:
                         phase="eventbus",
                         status="processing",
                     )
-                    action_facts = await self.sessions.action_facts_snapshot(
-                        session,
-                        exclude_turn_id=turn.turn_id,
-                    )
                     self._diagnostic(
                         "event_enqueued",
                         component="eventbus",
@@ -1097,15 +1158,25 @@ class TurnOrchestrator:
                         trace_id=turn.trace_id,
                     )
                     try:
-                        decision = await asyncio.wait_for(
-                            self.message_pipeline.generate(
-                                session=session,
-                                user_text=user_text,
-                                fast_action_active=turn.fast_action_active,
-                                fast_action_feedback=turn.fast_action_feedback,
-                                action_facts=action_facts,
+                        decision = await self._await_traced(
+                            turn,
+                            "eventbus.generate",
+                            asyncio.wait_for(
+                                self.message_pipeline.generate(
+                                    session=session,
+                                    user_text=user_text,
+                                    fast_action_active=turn.fast_action_active,
+                                    fast_action_feedback=turn.fast_action_feedback,
+                                    # Verified action receipts stay in the
+                                    # local controller.  They are deliberately
+                                    # not attached to the main EventBus/LLM
+                                    # request, which must remain dialogue-only.
+                                    action_facts=None,
+                                ),
+                                timeout=self.eventbus_terminal_deadline_seconds,
                             ),
-                            timeout=self.eventbus_terminal_deadline_seconds,
+                            kind="eventbus",
+                            category="await",
                         )
                         self._diagnostic(
                             "event_woken",
@@ -1164,28 +1235,46 @@ class TurnOrchestrator:
                     if not self.allow_direct_provider_fallback:
                         raise
                     turn.server_timing.start_decision("direct_provider")
-                    knowledge, environment = await asyncio.gather(
-                        self._read_knowledge(user_text, interaction),
-                        self._read_environment(),
+                    knowledge, environment = await self._await_traced(
+                        turn,
+                        "context.knowledge_environment.fallback",
+                        asyncio.gather(
+                            self._read_knowledge(user_text, interaction),
+                            self._read_environment(),
+                        ),
+                        kind="adapter",
+                        category="await",
                     )
-                    decision = await self.llm.generate(
+                    decision = await self._await_traced(
+                        turn,
+                        "llm.provider_request",
+                        self.llm.generate(
+                            user_text=user_text,
+                            history=history,
+                            interaction=interaction,
+                            relationship=relationship,
+                            knowledge=knowledge,
+                            environment=environment,
+                        ),
+                        kind="llm_provider",
+                        category="provider",
+                    )
+                except MessagePipelineEmpty:
+                    raise
+            else:
+                decision = await self._await_traced(
+                    turn,
+                    "llm.provider_request",
+                    self.llm.generate(
                         user_text=user_text,
                         history=history,
                         interaction=interaction,
                         relationship=relationship,
                         knowledge=knowledge,
                         environment=environment,
-                    )
-                except MessagePipelineEmpty:
-                    raise
-            else:
-                decision = await self.llm.generate(
-                    user_text=user_text,
-                    history=history,
-                    interaction=interaction,
-                    relationship=relationship,
-                    knowledge=knowledge,
-                    environment=environment,
+                    ),
+                    kind="llm_provider",
+                    category="provider",
                 )
             turn.server_timing.finish_decision()
             self._diagnostic(
@@ -1217,7 +1306,38 @@ class TurnOrchestrator:
             raise
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
-        await self.sessions.append_history(session, "user", user_text)
+        # Keep the action boundary fail-closed even when a direct/fallback
+        # adapter returns a legacy ModelDecision object instead of going
+        # through AstrBotLLMAdapter's dialogue-only parser.  Explicit local
+        # requests and a separately reserved EventBus action retain ownership;
+        # an ordinary reply can only produce a talk/idle presentation.
+        eventbus_action_reserved = isinstance(
+            turn.fast_action_feedback.get(BRIDGE_FAST_ACTION_EVENT_SELECTED),
+            str,
+        )
+        if (
+            interaction is None
+            and not turn.fast_action_active
+            and not eventbus_action_reserved
+        ):
+            sanitized = self._dialogue_only_decision(decision)
+            if sanitized.intent != decision.intent or sanitized.action is not None:
+                self._diagnostic(
+                    "avatar.action.sanitized",
+                    component="action",
+                    phase="decision",
+                    status="sanitized",
+                    reason_code="main_llm_action_analysis_disabled",
+                    action_source="dialogue_only",
+                )
+            decision = sanitized
+        await self._await_traced(
+            turn,
+            "context.history_append_user",
+            self.sessions.append_history(session, "user", user_text),
+            kind="storage",
+            category="await",
+        )
         await self._deliver_decision(
             session,
             turn,
@@ -1397,10 +1517,16 @@ class TurnOrchestrator:
         if text:
             first_text_emitted = False
             for chunk in self._text_chunks(text):
-                accepted = await self._emit(
-                    session,
+                accepted = await self._await_traced(
                     turn,
-                    {"type": "reply.text.delta", "text": chunk},
+                    "reply.text_emit",
+                    self._emit(
+                        session,
+                        turn,
+                        {"type": "reply.text.delta", "text": chunk},
+                    ),
+                    kind="delivery",
+                    category="await",
                 )
                 if accepted and not first_text_emitted:
                     first_text_emitted = True
@@ -1416,7 +1542,13 @@ class TurnOrchestrator:
                     session, turn.turn_id, turn.generation
                 ):
                     return
-            await self.sessions.append_history(session, "assistant", text)
+            await self._await_traced(
+                turn,
+                "context.history_append_assistant",
+                self.sessions.append_history(session, "assistant", text),
+                kind="storage",
+                category="await",
+            )
 
         audio_sent = False
         audio_bytes = 0
@@ -1425,24 +1557,36 @@ class TurnOrchestrator:
         if text and self.tts.available:
             turn.server_timing.start_tts()
             tts_started = time.perf_counter()
+            tts_span = self._start_trace_span(
+                turn,
+                "tts.pipeline",
+                kind="tts",
+                category="provider",
+            )
             try:
                 async for pcm_chunk in self._tts_pipeline(
                     text,
                     emotion=intent.emotion.value,
                 ):
-                    accepted = await self._emit(
-                        session,
+                    accepted = await self._await_traced(
                         turn,
-                        {
-                            "type": "reply.audio.chunk",
-                            "speech_id": turn.turn_id,
-                            "sequence": audio_sequence,
-                            "first": audio_sequence == 0,
-                            "format": OUTPUT_FORMAT,
-                            "sample_rate": OUTPUT_SAMPLE_RATE,
-                            "channels": OUTPUT_CHANNELS,
-                            "data": base64.b64encode(pcm_chunk).decode("ascii"),
-                        },
+                        "reply.audio_emit",
+                        self._emit(
+                            session,
+                            turn,
+                            {
+                                "type": "reply.audio.chunk",
+                                "speech_id": turn.turn_id,
+                                "sequence": audio_sequence,
+                                "first": audio_sequence == 0,
+                                "format": OUTPUT_FORMAT,
+                                "sample_rate": OUTPUT_SAMPLE_RATE,
+                                "channels": OUTPUT_CHANNELS,
+                                "data": base64.b64encode(pcm_chunk).decode("ascii"),
+                            },
+                        ),
+                        kind="delivery",
+                        category="await",
                     )
                     audio_sequence += 1
                     if accepted:
@@ -1495,6 +1639,11 @@ class TurnOrchestrator:
 
             finally:
                 turn.server_timing.finish_tts()
+                self._finish_trace_span(
+                    turn,
+                    tts_span,
+                    status="completed" if audio_sent else "error",
+                )
 
         if not intent_emitted and turn.fast_action_active:
             if fast_task is not None and not fast_task.done():
@@ -1559,7 +1708,12 @@ class TurnOrchestrator:
         }
         if self.server_timing_enabled:
             reply_end_payload["server_timing"] = turn.server_timing.snapshot()
-        async with turn.terminal_lock:
+        await self._acquire_traced_lock(
+            turn,
+            turn.terminal_lock,
+            "reply.terminal_lock",
+        )
+        try:
             if turn.reply_ended:
                 self._diagnostic(
                     "reply_end_dropped",
@@ -1572,6 +1726,8 @@ class TurnOrchestrator:
                 return
             turn.reply_ended = True
             emitted = await self._emit(session, turn, reply_end_payload)
+        finally:
+            turn.terminal_lock.release()
         self._diagnostic(
             "reply_end_emitted" if emitted else "reply_end_dropped",
             component="reply",
@@ -1615,6 +1771,26 @@ class TurnOrchestrator:
                 intensity=0.38 if speaking else 0.0,
                 duration_ms=duration_ms,
                 reason_code=reason_code,
+            ),
+        )
+
+    @staticmethod
+    def _dialogue_only_decision(decision: ModelDecision) -> ModelDecision:
+        """Strip legacy autonomous-action fields from any ordinary reply."""
+        text = decision.reply_text.strip() if decision.should_reply else ""
+        speaking = bool(text)
+        return ModelDecision(
+            should_reply=decision.should_reply,
+            reply_text=text,
+            intent=ProposedIntent(
+                emotion=Emotion.NEUTRAL,
+                gesture=Gesture.TALK if speaking else Gesture.IDLE,
+                look_at=LookAt.USER if speaking else LookAt.NONE,
+                intensity=0.38 if speaking else 0.0,
+                duration_ms=min(8_000, max(1_200, len(text) * 85))
+                if speaking
+                else 0,
+                reason_code="dialogue_only",
             ),
         )
 
@@ -1905,7 +2081,23 @@ class TurnOrchestrator:
         payload = intent.model_dump(mode="json")
         if action_id is None:
             payload.pop("action_id", None)
-        emitted = await self._emit(session, turn, payload)
+        emit_span = self._start_trace_span(
+            turn,
+            "reply.intent_emit",
+            kind="delivery",
+            category="await",
+        )
+        try:
+            emitted = await self._emit(session, turn, payload)
+        except BaseException:
+            self._finish_trace_span(turn, emit_span, status="error")
+            raise
+        else:
+            self._finish_trace_span(
+                turn,
+                emit_span,
+                status="completed" if emitted else "dropped",
+            )
         self._diagnostic(
             "avatar_intent_emitted" if emitted else "avatar_intent_dropped",
             component="action",
@@ -1948,7 +2140,12 @@ class TurnOrchestrator:
             text_sent=False,
             audio_sent=False,
         )
-        async with turn.terminal_lock:
+        await self._acquire_traced_lock(
+            turn,
+            turn.terminal_lock,
+            "reply.error_terminal_lock",
+        )
+        try:
             if turn.reply_ended:
                 self._diagnostic(
                     "reply_end_dropped",
@@ -1971,6 +2168,8 @@ class TurnOrchestrator:
             if self.server_timing_enabled:
                 reply_end_payload["server_timing"] = turn.server_timing.snapshot()
             emitted = await self._emit(session, turn, reply_end_payload)
+        finally:
+            turn.terminal_lock.release()
         self._diagnostic(
             "reply_end_emitted" if emitted else "reply_end_dropped",
             component="reply",
@@ -2106,6 +2305,96 @@ class TurnOrchestrator:
             ),
             return_exceptions=True,
         )
+
+    async def _await_traced(
+        self,
+        turn: TurnState,
+        name: str,
+        awaitable: Awaitable[Any],
+        *,
+        kind: str = "await",
+        category: str = "await",
+        parent_id: str = "",
+        **finish_fields: Any,
+    ) -> Any:
+        """Await an operation and attach a bounded span to the turn trace."""
+        trace = turn.timing_trace
+        if not isinstance(trace, TimingTrace):
+            return await awaitable
+        span_id = trace.start_span(
+            name,
+            kind=kind,
+            parent_id=parent_id,
+            category=category,
+        )
+        try:
+            result = await awaitable
+        except asyncio.CancelledError:
+            trace.finish_span(span_id, status="cancelled", **finish_fields)
+            raise
+        except BaseException:
+            trace.finish_span(span_id, status="error", **finish_fields)
+            raise
+        else:
+            trace.finish_span(span_id, status="completed", **finish_fields)
+            return result
+
+    async def _acquire_traced_lock(
+        self,
+        turn: TurnState,
+        lock: asyncio.Lock,
+        name: str,
+    ) -> str:
+        """Acquire a turn lock while measuring only the lock wait interval."""
+        trace = turn.timing_trace
+        if not isinstance(trace, TimingTrace):
+            await lock.acquire()
+            return ""
+        span_id = trace.start_span(name, kind="lock", category="lock")
+        try:
+            await lock.acquire()
+        except asyncio.CancelledError:
+            trace.finish_span(span_id, status="cancelled")
+            raise
+        except BaseException:
+            trace.finish_span(span_id, status="error")
+            raise
+        else:
+            trace.finish_span(span_id, status="acquired")
+            return span_id
+
+    def _start_trace_span(
+        self,
+        turn: TurnState,
+        name: str,
+        *,
+        kind: str = "await",
+        category: str = "await",
+        parent_id: str = "",
+    ) -> str:
+        trace = turn.timing_trace
+        return (
+            trace.start_span(
+                name,
+                kind=kind,
+                parent_id=parent_id,
+                category=category,
+            )
+            if isinstance(trace, TimingTrace)
+            else ""
+        )
+
+    def _finish_trace_span(
+        self,
+        turn: TurnState,
+        span_id: str,
+        *,
+        status: str = "completed",
+        **fields: Any,
+    ) -> None:
+        trace = turn.timing_trace
+        if isinstance(trace, TimingTrace) and span_id:
+            trace.finish_span(span_id, status=status, **fields)
 
     def _diagnostic(self, event: str, **fields: Any) -> None:
         if self.diagnostic_log is None:

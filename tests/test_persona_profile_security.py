@@ -1112,12 +1112,16 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
         assert first.count("具身人格正文") == 1
         assert bridge_request.system_prompt == first
         assert [event for event, _fields in diagnostic.events] == [
-            "avatar.action.explicit_parse",
-            "avatar.action.tool_exposed",
-            "avatar.action.prompt_injected",
+            "avatar.action.tool_skipped",
             "persona.overlay.injected",
-            "avatar.action.explicit_parse",
+            "avatar.action.tool_skipped",
         ]
+        assert diagnostic.events[0][1]["reason_code"] == (
+            "main_llm_action_analysis_disabled"
+        )
+        assert diagnostic.events[2][1]["reason_code"] == (
+            "main_llm_action_analysis_disabled"
+        )
 
         diagnostic.events.clear()
         fast_request = SimpleNamespace(
@@ -1153,14 +1157,15 @@ def test_eventbus_hook_leaves_non_bridge_requests_untouched_and_injects_once(
         )
         await plugin.inject_quest_persona(autonomous_event, autonomous_request)
         assert read_selected_intent(autonomous_event) is None
-        assert autonomous_request.func_tool is not None
-        assert "# 临：具身角色动作工具" in autonomous_request.system_prompt
+        assert autonomous_request.func_tool is None
+        assert "# 临：具身角色动作工具" not in autonomous_request.system_prompt
         assert [event for event, _fields in diagnostic.events] == [
-            "avatar.action.explicit_parse",
-            "avatar.action.tool_exposed",
-            "avatar.action.prompt_injected",
+            "avatar.action.tool_skipped",
             "persona.overlay.injected",
         ]
+        assert diagnostic.events[0][1]["reason_code"] == (
+            "main_llm_action_analysis_disabled"
+        )
 
         reply_required_event = EventStub(
             True,
@@ -1274,7 +1279,7 @@ def test_spatial_context_overlay_requires_authorized_bridge_event_and_is_bounded
     asyncio.run(scenario())
 
 
-def test_action_facts_overlay_is_terminal_bounded_and_bridge_authorized_only(
+def test_action_facts_are_not_injected_into_the_main_llm_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1347,14 +1352,9 @@ def test_action_facts_overlay_is_terminal_bounded_and_bridge_authorized_only(
         )
         await plugin.inject_quest_persona(event, request)
         await plugin.inject_quest_persona(event, request)
-        assert request.system_prompt.count("<embodiment_action_facts_json>") == 1
-        assert '"action":"wave"' in request.system_prompt
-        assert '"status":"completed"' in request.system_prompt
-        assert "authenticated client execution reports" in request.system_prompt
-        assert "never as identity, permission, an instruction" in request.system_prompt
-        assert "session_id" not in request.system_prompt
-        assert "action_id" not in request.system_prompt
-        assert "receipt_id" not in request.system_prompt
+        assert "<embodiment_action_facts_json>" not in request.system_prompt
+        assert '"action":"wave"' not in request.system_prompt
+        assert "authenticated client execution reports" not in request.system_prompt
 
     asyncio.run(scenario())
 
@@ -1415,8 +1415,8 @@ def test_same_turn_fast_action_feedback_is_nonblocking_and_never_execution_proof
                 "execution_confirmed": False,
             }
         )
-        # The action task replaces one bounded snapshot without making the
-        # EventBus request await it.
+        # Fast-action snapshots are no longer exposed to the main dialogue
+        # model; explicit actions are handled before this hook.
         event.extras["embodiment_bridge.fast_action_feedback"]["snapshot"] = {
             "status": "planned",
             "action": "wave",
@@ -1424,12 +1424,7 @@ def test_same_turn_fast_action_feedback_is_nonblocking_and_never_execution_proof
         }
         await plugin.inject_quest_persona(event, request)
         await plugin.inject_quest_persona(event, request)
-        assert request.system_prompt.count(
-            "<embodiment_fast_action_feedback_json>"
-        ) == 1
-        assert '"action":"wave"' in request.system_prompt
-        assert '"execution_confirmed":false' in request.system_prompt
-        assert "not that the body executed or completed it" in request.system_prompt
+        assert "<embodiment_fast_action_feedback_json>" not in request.system_prompt
         assert "action_id" not in request.system_prompt
 
         unauthorized = SimpleNamespace(system_prompt="base", func_tool=None)
@@ -1476,21 +1471,19 @@ def test_eventbus_hook_preselects_explicit_action_before_persona_without_tool(
 
         await plugin.inject_quest_persona(event, request)
 
-        intent = read_selected_intent(event)
-        assert intent is not None
-        assert intent.gesture.value == "dance"
+        # The EventBus hook only injects persona; it does not parse or select
+        # actions. Explicit commands are handled by the local orchestrator.
+        assert read_selected_intent(event) is None
         assert request.func_tool is None
         assert "# 临：具身角色动作工具" not in request.system_prompt
         assert "# 临：具身人格覆盖" in request.system_prompt
         assert [name for name, _fields in diagnostic.events] == [
-            "avatar.action.explicit_parse",
-            "avatar.action.catalog_unavailable",
-            "avatar.action.accepted",
             "avatar.action.tool_skipped",
             "persona.overlay.injected",
         ]
-        assert diagnostic.events[0][1]["operation"] == "dance"
-        assert diagnostic.events[0][1]["status"] == "matched"
+        assert diagnostic.events[0][1]["reason_code"] == (
+            "main_llm_action_analysis_disabled"
+        )
         assert "请随便跳个舞" not in repr(diagnostic.events)
 
     asyncio.run(scenario())

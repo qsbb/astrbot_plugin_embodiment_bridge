@@ -145,22 +145,22 @@
     "default": ""
   },
   "fast_action_enabled": {
-    "description": "启用独立的异步快速动作决策",
+    "description": "保留旧版快速动作配置（兼容）",
     "type": "bool",
-    "hint": "默认开启。它只用来判断是否执行动作，不生成回复，也不绕过 AstrBot EventBus；未选择快速模型时自动保持不可用。",
+    "hint": "仅保留旧安装的配置与状态兼容性。普通文字/语音轮次不会启动该 Provider；明确动作由本地严格解析器处理，触碰/手势由独立交互通道处理。",
     "default": true
   },
   "fast_action_provider_id": {
-    "description": "异步快速动作决策使用的 Provider ID",
+    "description": "旧版快速动作 Provider ID（兼容）",
     "type": "string",
     "_special": "select_provider",
-    "hint": "请在具身服务控制台选择一个响应较快的已实例化聊天 Provider。它与普通对话模型独立，留空时快速动作不会调用模型。",
+    "hint": "仅供旧安装迁移和状态展示。当前普通对话不会调用它；明确动作不等待动作 Provider，触碰/手势使用独立交互通道。",
     "default": ""
   },
   "fast_action_timeout_seconds": {
-    "description": "快速动作模型超时秒数",
+    "description": "旧版快速动作超时秒数（兼容）",
     "type": "float",
-    "hint": "仅限制动作决策调用；动作与正文/TTS并行，超时不阻塞正文，并在 reply.end 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上。",
+    "hint": "仅保留旧配置兼容性；当前普通对话不会调用快速动作模型，明确动作也不等待该 Provider。",
     "default": 6.0,
     "minimum": 0.5,
     "maximum": 15.0

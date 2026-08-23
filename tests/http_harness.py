@@ -280,6 +280,7 @@ class FakeLLMAdapter:
         return True
 
     async def generate(self, *, user_text: str, **kwargs: Any) -> ModelDecision:
+        interaction = kwargs.get("interaction")
         del kwargs
         if user_text == "hold-old-turn":
             self.late_started.set()
@@ -288,6 +289,19 @@ class FakeLLMAdapter:
             except asyncio.CancelledError:
                 self.late_cancelled.set()
                 await self.late_release.wait()
+        if interaction is None:
+            return ModelDecision(
+                should_reply=True,
+                reply_text="请轻一点。",
+                intent=ProposedIntent(
+                    emotion=Emotion.NEUTRAL,
+                    gesture=Gesture.TALK,
+                    look_at=LookAt.USER,
+                    intensity=0.38,
+                    duration_ms=1_200,
+                    reason_code="dialogue_only",
+                ),
+            )
         return ModelDecision(
             should_reply=True,
             reply_text="请轻一点。",
@@ -347,7 +361,7 @@ class FakeTTSAdapter:
         emotion: str,
     ) -> AsyncIterator[bytes]:
         assert text == "请轻一点。"
-        assert emotion == "shy"
+        assert emotion in {"neutral", "shy"}
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("contract TTS failure")

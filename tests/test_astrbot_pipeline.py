@@ -12,14 +12,15 @@ import pytest
 from astrbot_plugin_embodiment_bridge.adapters import astrbot_pipeline
 from astrbot_plugin_embodiment_bridge.core.avatar_action_tool import (
     QUEST_ACTION_INTENT_EXTRA,
-    QUEST_ACTION_PARSE_EXTRA,
     prepare_quest_action_request,
 )
 from astrbot_plugin_embodiment_bridge.core.avatar_skills import AvatarSkillRegistry
 from astrbot_plugin_embodiment_bridge.core.plugin_identity import (
+    BRIDGE_ACTION_FACTS,
     BRIDGE_CAPTURE_REQUIRED,
     BRIDGE_DELIVERY_OWNER,
     BRIDGE_FAST_ACTION_SELECTED,
+    BRIDGE_SUPPORTED_ACTIONS,
 )
 
 
@@ -156,6 +157,10 @@ class DiagnosticStub:
         self.events.append((event, fields))
 
 
+class EnabledDiagnosticStub(DiagnosticStub):
+    enabled = True
+
+
 def session(*, authorized: bool = True) -> Any:
     return SimpleNamespace(
         protected_context_authorized=authorized,
@@ -182,6 +187,8 @@ def test_authorized_text_uses_event_bus_and_returns_talk_decision(
         assert decision.should_reply is True
         assert decision.reply_text == "现在是通过正式消息管线得到的回复。"
         assert decision.intent.gesture.value == "talk"
+        assert event.get_extra(BRIDGE_ACTION_FACTS) is None
+        assert event.get_extra(BRIDGE_SUPPORTED_ACTIONS) is None
         assert adapter.status == "ok"
 
     asyncio.run(scenario())
@@ -215,6 +222,41 @@ def test_eventbus_lifecycle_timing_records_cleanup_and_queue_snapshot(
         stages = [name for name, _fields in diagnostic.events]
         assert "event_created" in stages
         assert "event_cleanup_called" in stages
+
+
+def test_eventbus_marker_without_trace_probe_closes_queue_and_processing_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MarkerOnlyEvent(CaptureEventStub):
+        async def wait_completed(self) -> None:
+            # This models AstrBot versions that expose the cleanup marker but
+            # do not provide a TraceSpan recorder callback.
+            self._quest_cleanup_called = True
+            await asyncio.sleep(0)
+
+    async def scenario() -> None:
+        context = ContextStub()
+        event = MarkerOnlyEvent("通过无 Trace probe 的回复")
+        diagnostic = EnabledDiagnosticStub()
+        monkeypatch.setattr(astrbot_pipeline, "_build_capture_event", lambda **_: event)
+        adapter = astrbot_pipeline.AstrBotMessagePipelineAdapter(
+            context,
+            diagnostic,
+            platform_id="qq",
+            diagnostic_log=diagnostic,
+        )
+
+        decision = await adapter.generate(session=session(), user_text="你好")
+
+        assert decision.reply_text == "通过无 Trace probe 的回复"
+        spans = {
+            fields["span_name"]: fields
+            for name, fields in diagnostic.events
+            if name == "timing.span.completed"
+        }
+        assert spans["eventbus.queue_wait"]["status"] == "consumed"
+        assert spans["eventbus.processing"]["status"] == "completed"
+        assert all(fields["status"] != "abandoned" for fields in spans.values())
 
     asyncio.run(scenario())
 
@@ -919,32 +961,15 @@ def test_build_capture_event_uses_public_platform_factory_and_trusted_context(
     assert message.get_extra("_api_key_allow_admin_role") is False
     assert message.get_extra(BRIDGE_DELIVERY_OWNER) == "embodiment_bridge"
     assert message.get_extra(BRIDGE_CAPTURE_REQUIRED) is True
-    staged_action = message.get_extra(QUEST_ACTION_PARSE_EXTRA)
-    assert staged_action.status == "not_explicit"
-    assert staged_action.action is None
     identity = message.get_extra("embodiment_bridge.identity_context")
     assert identity["platform_id"] == "trusted-platform"
     assert identity["user_id"] == "bound-user"
     assert identity["trusted"] is True
     assert message.get_extra("embodiment_bridge.protected_context_authorized") is True
-    assert message.get_extra("embodiment_bridge.fast_action_active") is True
-    feedback = message.get_extra("embodiment_bridge.fast_action_feedback")
-    assert feedback is fast_action_feedback
-    fast_action_feedback["snapshot"] = {
-        "status": "planned",
-        "action": "wave",
-        "execution_confirmed": False,
-    }
-    assert feedback["snapshot"]["action"] == "wave"
+    assert message.get_extra("embodiment_bridge.fast_action_active") is None
+    assert message.get_extra("embodiment_bridge.fast_action_feedback") is None
     assert message.get_extra("embodiment_bridge.spatial_context")["revision"] == 3
-    assert message.get_extra("embodiment_bridge.action_facts") == [
-        {
-            "action": "wave",
-            "status": "completed",
-            "reason_code": "completed",
-            "duration_ms": 1_250,
-        }
-    ]
+    assert message.get_extra("embodiment_bridge.action_facts") is None
 
 
 def test_build_capture_event_keeps_action_arbitration_when_context_unauthorized(
@@ -1028,10 +1053,7 @@ def test_build_capture_event_keeps_action_arbitration_when_context_unauthorized(
     )
 
     assert event.get_extra("embodiment_bridge.protected_context_authorized") is False
-    assert (
-        event.get_extra("embodiment_bridge.fast_action_feedback")
-        is fast_action_feedback
-    )
+    assert event.get_extra("embodiment_bridge.fast_action_feedback") is None
     identity = event.get_extra("embodiment_bridge.identity_context")
     assert identity["trusted"] is True
     assert identity["user_id"] == "bound-user"

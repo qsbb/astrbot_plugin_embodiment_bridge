@@ -24,6 +24,7 @@ from .models import (
     VerifiedActionFact,
 )
 from .server_timing import ServerTimingState
+from .timing_trace import TimingTrace
 
 
 CRITICAL_EVENT_TYPES = frozenset(
@@ -224,6 +225,10 @@ class TurnState:
     reply_ended: bool = False
     terminal_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    # One bounded diagnostic tree is shared by STT, EventBus/direct Provider,
+    # TTS and terminal delivery for this turn.  It is created by the
+    # orchestrator only when diagnostic logging is enabled.
+    timing_trace: TimingTrace | None = None
 
 
 @dataclass(slots=True)

@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
+
 from astrbot_plugin_embodiment_bridge.adapters.stt import DisabledSTTAdapter
 from astrbot_plugin_embodiment_bridge.adapters.fast_action import FastActionUnavailable
 from astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline import (
@@ -702,7 +704,7 @@ def test_tts_pipeline_prefetch_is_bounded() -> None:
     asyncio.run(scenario())
 
 
-def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
+def test_unity_mock_protocol_sanitizes_main_action_and_keeps_reply_order() -> None:
     async def scenario() -> None:
         diagnostic = DiagnosticStub()
         result = decision(
@@ -738,13 +740,13 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
         )
         assert intent_record == {
             "component": "action",
-            "operation": "step_back",
+            "operation": "talk",
             "status": "planned",
-            "reason_code": "boundary_soft_refusal",
-            "emotion": "shy",
-            "gesture": "step_back",
-            "look_at": "away",
-            "intensity": 0.6,
+            "reason_code": "dialogue_only",
+            "emotion": "neutral",
+            "gesture": "talk",
+            "look_at": "user",
+            "intensity": 0.38,
             "duration_ms": 1200,
         }
         await orchestrator.close()
@@ -752,6 +754,110 @@ def test_unity_mock_protocol_contains_text_audio_intent_and_end() -> None:
     asyncio.run(scenario())
 
 
+def test_normal_dialogue_does_not_start_fast_action_or_autonomous_intent() -> None:
+    """A configured fast-action adapter is idle for an ordinary text turn."""
+
+    async def scenario() -> None:
+        diagnostic = DiagnosticStub()
+        release = asyncio.Event()
+        fast = FastActionStub(
+            ProposedIntent(
+                emotion=Emotion.HAPPY,
+                gesture=Gesture.DANCE,
+                look_at=LookAt.USER,
+                intensity=0.7,
+                duration_ms=7_000,
+                reason_code="must_not_be_used",
+            ),
+            release=release,
+        )
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "dialogue_only",
+                    "普通回复",
+                )
+            ),
+            fast_action=fast,
+            diagnostic=diagnostic,
+            tts=TTSStub(available=False),
+        )
+
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-dialogue-only", text="你好"),
+        )
+        events = await collect_until_end(session)
+
+        assert fast.calls == []
+        assert fast.started.is_set() is False
+        intents = [event for event in events if event["type"] == "avatar.intent"]
+        assert len(intents) == 1
+        assert intents[0]["gesture"] == "talk"
+        assert intents[0]["reason_code"] == "dialogue_only"
+        skipped = [
+            fields
+            for event, fields in diagnostic.records
+            if event == "fast_action.skipped"
+        ]
+        assert skipped
+        assert skipped[-1]["reason_code"] == "autonomous_action_disabled"
+        assert not any(
+            event in {"fast_action.started", "fast_action.completed"}
+            for event, _fields in diagnostic.records
+        )
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+def test_explicit_action_still_runs_locally_without_calling_provider() -> None:
+    """An imperative action is parsed locally and never delegated to a model."""
+
+    async def scenario() -> None:
+        diagnostic = DiagnosticStub()
+        release = asyncio.Event()
+        fast = FastActionStub(None, release=release)
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "dialogue_only",
+                    "我会回复你。",
+                )
+            ),
+            fast_action=fast,
+            diagnostic=diagnostic,
+            tts=TTSStub(available=False),
+        )
+
+        await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-explicit-wave", text="请挥手"),
+        )
+        events = await collect_until_end(session)
+
+        assert fast.calls == []
+        intent = next(event for event in events if event["type"] == "avatar.intent")
+        assert intent["gesture"] == "wave"
+        assert intent["reason_code"] == "explicit_request"
+        assert intent["source"] == "explicit_request"
+        assert any(
+            event == "fast_action.explicit_selected"
+            and fields["action_source"] == "explicit_request"
+            for event, fields in diagnostic.records
+        )
+        await orchestrator.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skip(reason="旧测试验证已移除的自主 fast-action 并行路径")
 def test_fast_action_runs_beside_reply_and_emits_at_most_one_intent() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -805,6 +911,7 @@ def test_fast_action_runs_beside_reply_and_emits_at_most_one_intent() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="主 LLM 不再暴露动作工具，旧 EventBus 竞态契约已移除")
 def test_eventbus_action_wins_when_fast_selector_has_not_selected() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -863,6 +970,7 @@ def test_eventbus_action_wins_when_fast_selector_has_not_selected() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="主 LLM 不再暴露动作工具，旧 EventBus 竞态契约已移除")
 def test_eventbus_action_remains_single_when_fast_selector_finishes_late() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -945,10 +1053,10 @@ def test_fast_action_failure_does_not_guess_negated_or_discussed_action() -> Non
         sessions, session, orchestrator = await build_orchestrator(
             DecisionStub(
                 decision(
-                    Emotion.HAPPY,
-                    Gesture.WAVE,
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
                     LookAt.USER,
-                    "main_action_must_be_ignored",
+                    "dialogue_only",
                     "hello",
                 )
             ),
@@ -966,12 +1074,13 @@ def test_fast_action_failure_does_not_guess_negated_or_discussed_action() -> Non
         intents = [event for event in events if event["type"] == "avatar.intent"]
         assert len(intents) == 1
         assert intents[0]["gesture"] == "talk"
-        assert intents[0]["reason_code"] == "fast_action_no_action"
+        assert intents[0]["reason_code"] == "dialogue_only"
         await orchestrator.close()
 
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="普通轮次不再使用自主社会动作 fallback")
 def test_fast_action_timeout_uses_conservative_autonomous_social_fallback() -> None:
     async def scenario() -> None:
         diagnostic = DiagnosticStub()
@@ -1016,6 +1125,7 @@ def test_fast_action_timeout_uses_conservative_autonomous_social_fallback() -> N
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="普通轮次不再调用 fast-action Provider 或本地自主 fallback")
 def test_unavailable_fast_provider_uses_local_social_fallback_but_disabled_does_not() -> None:
     async def scenario() -> None:
         diagnostic = DiagnosticStub()
@@ -1119,6 +1229,7 @@ def test_unavailable_fast_provider_uses_local_social_fallback_but_disabled_does_
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="由新的 dialogue-only 测试覆盖主模型动作字段隔离")
 def test_fast_action_no_action_ignores_main_reply_action_fields() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -1158,6 +1269,7 @@ def test_fast_action_no_action_ignores_main_reply_action_fields() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="普通轮次不再启动并行 fast-action 任务")
 def test_main_reply_delivers_text_while_fast_action_is_pending() -> None:
     async def scenario() -> None:
         release = asyncio.Event()
@@ -1209,6 +1321,7 @@ def test_main_reply_delivers_text_while_fast_action_is_pending() -> None:
     asyncio.run(scenario())
 
 
+@pytest.mark.skip(reason="普通轮次不再启动 fast-action 任务；保留队列测试待重写")
 def test_fast_action_stays_before_reply_end_under_critical_queue_backpressure() -> None:
     async def scenario() -> None:
         release = asyncio.Event()

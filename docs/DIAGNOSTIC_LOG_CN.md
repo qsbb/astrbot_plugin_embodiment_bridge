@@ -64,4 +64,39 @@ plugin_hook.completed plugin_name=情 plugin_module=... hook=OnLLMRequestEvent m
 插件加载生命周期或异步生成器；因此它是“具身对话链钩子耗时”而不是任意 Python 函数的全量
 profiler。需要进一步定位某个插件内部 helper，应由该插件提供自己的脱敏 span。
 
+## 分层 Trace（timing.span.completed）
+
+启用 `diagnostic_log_enabled=true` 后，每个具身轮次会建立一棵仅存在于进程内的脱敏 Trace。
+它覆盖轮次、STT、EventBus/直连 Provider、关系/记忆/环境适配器、TTS 和终端交付；Trace 不会
+进入 HTTP/SSE 正式协议，也不会把用户文本、Provider ID、路径、身份或凭据写入日志。关闭诊断
+日志时不会创建监控任务或 span。
+
+典型事件为 `timing.span.completed`，字段含义如下：
+
+| 字段 | 含义 |
+| --- | --- |
+| `wall_ms` | Span 从开始到结束的墙钟耗时，包含异步等待 |
+| `active_ms` | 扣除已记录的嵌套并发区间和显式等待后的估算活跃时间 |
+| `queue_wait_ms` / `lock_wait_ms` / `provider_wait_ms` | 队列、锁、Provider 等待时间 |
+| `provider_request_offset_ms` / `provider_first_token_offset_ms` / `provider_end_offset_ms` | 相对本轮开始的 Provider 请求、首 Token/块和结束标记偏移 |
+| `provider_first_token_ms` / `provider_total_ms` | 请求标记到首 Token/块、请求标记到结束标记的耗时；Core 未提供标记时为 0 |
+| `cache_hit` / `retry_count` / `timeout` / `fallback` | 固定布尔/计数诊断标记；未知时使用安全默认值 |
+| `event_loop_lag_ms` | 50 ms 采样器观察到的本轮最大事件循环延迟 |
+| `span_id` / `parent_span_id` / `trace_id` | 仅用于同一轮脱敏关联，不是会话或用户标识 |
+
+`active_ms` 不是 CPU profiler 结果，而是基于墙钟区间的估算；并发子任务会先做区间合并，
+因此不会把同时等待的插件重复相加。Hook 的 span 仍是方法边界耗时，若要定位某个插件内部
+helper，应由该插件自行提供相同字段的 span。Provider 的首 Token/首 chunk 等 Core Trace
+标记会以 `timing.trace_point` 记录；当前 AstrBot 未提供标记时，Span 仍可区分排队、请求和
+交付阶段，但不会伪造首 Token 时间。
+
+## 动作边界
+
+普通对话轮次不再启动快速动作 Provider，也不把动作工具、动作枚举、动作反馈或历史动作事实
+交给主 LLM。主模型只输出 `should_reply` 与 `reply_text`；本地明确指令、触碰/手势通道和客户
+端回执仍可驱动动作。为兼容旧适配器，编排层还会在直连/降级路径再次把遗留动作字段收敛为
+`talk` 或 `idle`，并记录 `avatar.action.sanitized`。动作执行完成必须以客户端回执为准，主模型
+不得声称动作已经完成。回执事实只保留在本地动作控制器和诊断链，不进入 EventBus、记忆或
+普通对话上下文。
+
 日志绝不写入 Bridge/API/Provider key、JWT、URL、路径、正文、音频或任何 session/turn/person/platform/user/bot 标识。平台 logger 写入失败同样不会影响插件行为。

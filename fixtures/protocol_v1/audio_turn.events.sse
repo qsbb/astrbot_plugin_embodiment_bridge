@@ -2,7 +2,7 @@ event: asr.final
 data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"asr.final","text":"你好"}
 
 event: avatar.intent
-data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"avatar.intent","action_id":"a_contract-action","in_reply_to_event_id":null,"emotion":"shy","gesture":"step_back","look_at":"away","intensity":0.65,"duration_ms":1800,"reason_code":"boundary_soft_refusal","method":"step_back","parameters":{"angle_degrees":null,"depth":null,"hold_ms":null,"style":"natural"},"transition":{"enter_ms":350,"exit_ms":350,"easing":"smoothstep"},"source":"direct_model"}
+data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"avatar.intent","in_reply_to_event_id":null,"emotion":"neutral","gesture":"talk","look_at":"user","intensity":0.38,"duration_ms":1200,"reason_code":"dialogue_only","method":"talk","parameters":{"angle_degrees":null,"depth":null,"hold_ms":null,"style":"natural"},"transition":{"enter_ms":350,"exit_ms":350,"easing":"smoothstep"},"source":"direct_model"}
 
 event: reply.text.delta
 data: {"protocol_version":"1.0","session_id":"audio-session","turn_id":"audio-turn","type":"reply.text.delta","text":"请轻一点。"}

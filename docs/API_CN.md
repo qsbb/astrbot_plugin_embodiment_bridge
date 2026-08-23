@@ -6,11 +6,15 @@
 
 ## 1.0.8 动作与诊断补充
 
-快速动作仍只使用 Protocol 1.0 的模型无关 `avatar.intent`。动作模型和 AstrBot EventBus 工具共享同一轮唯一仲裁：任何一方先取得动作槽，另一方记录为 `deferred`/`superseded`，不会重复下发动作。快速动作任务与正文、TTS 并行；当 Provider 超时或返回空动作时，文字和音频继续发送，并在 `reply.end` 前下发 `talk`/`idle` 安全回退。
+> 当前版本边界：普通对话主 LLM 只输出 `should_reply` 与 `reply_text`，不接收动作工具、动作
+> 快照或动作字段。快速动作配置接口仍保留用于旧安装兼容和状态迁移，但普通轮次不会调用其
+> Provider。明确动作由本地严格解析器处理，客户端执行结果仍通过 `/action/result` 回传。
 
-临独立诊断会记录 `fast_action.*`、`avatar.action.*` 的阶段、状态、来源、白名单动作、超时/空结果、仲裁胜者和意图下发状态。不会记录用户文本、Provider ID、身份、密钥或音频。`audio/chunk` 的成功 202 不逐块记录；一次 `audio/end` 后输出一条 `audio.upload.completed`，包含块数、字节数、HTTP 状态和耗时。
+动作仍只使用 Protocol 1.0 的模型无关 `avatar.intent`。普通对话不启动快速动作 Provider，也不向主 LLM 暴露动作工具或动作快照；明确动作由本地严格解析器处理，触碰/手势由独立交互通道处理。普通输入在 `reply.end` 前保持 `talk`/`idle` 安全姿态。
 
-快速动作设置接口 `GET/POST /pairing/fast-action-settings` 的 `timeout_seconds` 范围为 `0.5..15`；旧版客户端省略该字段时保留当前配置，不会默默写回 6 秒。响应同时返回 `configured_timeout_seconds`、`effective_timeout_seconds`、`timeout_policy_revision` 和 `timeout_migrated`。旧安装中 revision 为空、`v2` 或 `legacy_default_v1` 且配置值为 4.0 时只进行运行时兼容迁移：响应保留 configured=4.0，并返回 effective=6.0、revision=`legacy_default_v2`、migrated=true，不直接修改原配置。管理页会把迁移后的有效 6 秒作为默认保存值；再次保存时写入 `v3`，之后管理员明确输入的 4.0 会按 4 秒生效。流式动作 Provider 在严格完整 JSON 通过 schema/allowlist 后立即关闭上游迭代器，不等待流尾；增量片段与累计前缀片段均支持，多 JSON 或尾部垃圾不会被提前接受。Provider 超时、不可用或明确返回无动作时，仅对短且无歧义的问候、告别、自我介绍、感谢/道歉、赞同和庆祝语境使用白名单内的本地社交动作兜底，并对相同自主动作做短时防抖；EventBus/模型动作仍优先，普通事实问答、引用、翻译与元语言不会触发。EventBus 一旦赢得单动作仲裁，会取消仍在运行的独立动作请求，避免继续占用 Provider。
+临独立诊断会记录 `fast_action.*`、`avatar.action.*` 的阶段、状态、来源、白名单动作、超时/空结果和意图下发状态；普通轮次会记录 `fast_action.skipped` 与 `autonomous_action_disabled`。不会记录用户文本、Provider ID、身份、密钥或音频。`audio/chunk` 的成功 202 不逐块记录；一次 `audio/end` 后输出一条 `audio.upload.completed`，包含块数、字节数、HTTP 状态和耗时。
+
+快速动作设置接口 `GET/POST /pairing/fast-action-settings` 的 `timeout_seconds` 范围为 `0.5..15`；旧版客户端省略该字段时保留当前配置，不会默默写回 6 秒。响应同时返回 `configured_timeout_seconds`、`effective_timeout_seconds`、`timeout_policy_revision` 和 `timeout_migrated`。这些字段保留用于旧安装兼容和状态迁移；当前普通对话不会启动该 Provider。明确动作不等待快速 Provider，其他输入保持 `talk/idle`。
 
 ## 1. 协议概览
 
@@ -251,7 +255,7 @@ sequenceDiagram
 {"chat_provider_id":"provider-instance-id"}
 ```
 
-快速动作通道与上述普通直连 Provider 分离。启用后，它会在文字识别完成时与 AstrBot EventBus 主回复并行调用所选快速 Provider，只解析严格白名单动作并尽早发送 `avatar.intent`；它不生成回复、不写入对话历史，也不代替记忆、人格、工具或后处理插件。主回复请求仍可使用同轮动作工具，二者通过请求级有界保留标记仲裁，确保每轮最多一个动作；明确动作命令优先，快速动作已经保留本轮时 EventBus 工具会失败关闭。关闭、未配置或所选实例缺失时，继续使用原有请求级动作工具。快速 Provider 超时、失败、返回空动作或与保守整句解析结果冲突时，只有明确、单一、非否定的白名单命令可以由解析器兜底；其他输入生成本地 `talk/idle`。保存请求严格为：
+快速动作配置通道与普通 Provider 分离，但当前普通对话不会调用它，也不会向主回复请求注入动作工具或动作快照。配置接口保留用于旧安装兼容和状态迁移；明确、单一、非否定的白名单命令由本地严格解析器直接处理，其他输入生成本地 `talk/idle`。保存请求严格为：
 
 ```json
 {"enabled":true,"provider_id":"fast-provider-instance-id"}
@@ -259,7 +263,7 @@ sequenceDiagram
 
 启用时 `provider_id` 必须精确命中当前已实例化 Chat Completion Provider；关闭时可以留空。快速调用默认 4 秒超时，失败只记录脱敏状态和耗时，不记录用户正文、Provider ID 或模型输出。
 
-同轮 EventBus 请求不会等待快速动作。它只能非阻塞地读取当时已经产生的严格快照：`processing | planned | no_action | unavailable | error`，其中 `planned` 可带一个白名单动作，`execution_confirmed` 永远为 `false`。该快照只让回复模型知道动作控制器的当前计划，不能证明客户端已经执行；如果快照尚未产生，主回复照常继续。实际身体事实只来自下述 `/action/result` 认证终态，并在后续轮次注入。
+普通 EventBus 请求不会读取快速动作快照。实际身体事实只来自下述 `/action/result` 认证终态，并在后续轮次注入；主 LLM 不得根据语言内容自行声称动作已完成。
 
 STT 枚举同样只返回 `id`、`model`、`adapter_type` 和 `provider_type`；不会代理 AstrBot Dashboard Provider API，也不会读取 Provider 私有配置。保存请求只允许：
 
@@ -618,7 +622,7 @@ planned -> accepted -> started -> completed
 
 同一 `receipt_id` 与完全相同正文重试会返回 `idempotent=true`，不会重复迁移或重复写入事实；同一 ID 改动任何字段会返回 `409 action_receipt_replay`。未知、过期或因上限被淘汰的计划返回 `action_plan_stale`，轮次/动作不匹配返回 `action_mismatch`，跳过状态或终态后继续迁移返回 `action_transition_invalid`。
 
-服务端只把 `completed`、`rejected`、`interrupted` 保存为最多 8 条、最长 5 分钟的会话内事实，并排除当前轮后注入后续 `protected_context_authorized=true` 的 Bridge EventBus 轮次。`planned`、`accepted`、`started` 从不作为已经发生的事实；回执也不授予身份、管理员、工具、动作或安全权限。普通 QQ、未授权会话、其他会话和直连 Provider 路径不会收到这些事实。会话关闭即全部销毁。
+服务端只把 `completed`、`rejected`、`interrupted` 保存为最多 8 条、最长 5 分钟的本地会话事实，并排除当前轮。它们只供动作控制器和脱敏诊断使用，不注入 EventBus、主 LLM、记忆或普通对话上下文。`planned`、`accepted`、`started` 从不作为已经发生的事实；回执也不授予身份、管理员、工具、动作或安全权限。普通 QQ、未授权会话、其他会话和直连 Provider 路径不会收到这些事实。会话关闭即全部销毁。
 
 ### 11.2 上报播放回执
 

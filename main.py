@@ -30,7 +30,7 @@ from .adapters.runtime import SeriesRuntimeAdapter
 from .adapters.stt import AstrBotSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
-from .core.avatar_action_tool import execute_quest_action, prepare_quest_action_request
+from .core.avatar_action_tool import execute_quest_action
 from .core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
@@ -778,44 +778,34 @@ class EmbodimentBridgePlugin(Star):
                 event.set_extra(BRIDGE_EVENT_MARKER, True)
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 return
-        if fast_action_active and fast_action_explicit:
-            self.diagnostic_log.record(
-                "avatar.action.tool_skipped",
-                component="action",
-                operation="none",
-                status="skipped",
-                reason_code="explicit_action_reserved",
-                result="explicit_request",
-                action_source="explicit_request",
-            )
-        else:
-            # Keep the request-scoped tool available while the optional fast
-            # selector is in flight. The shared feedback holder arbitrates
-            # whichever action source wins first; explicit commands are the
-            # only case where this fallback is intentionally suppressed.
-            await prepare_quest_action_request(
-                req,
-                event,
-                self._execute_quest_avatar_action,
-                self.diagnostic_log.record,
-            )
-        fast_action_feedback_overlay = _build_fast_action_feedback_overlay(event)
-        if fast_action_feedback_overlay:
-            current = str(getattr(req, "system_prompt", "") or "")
-            if "<embodiment_fast_action_feedback_json>" not in current:
-                req.system_prompt = current + fast_action_feedback_overlay
+        # The main dialogue model is never an action selector. Explicit text
+        # commands are reserved and dispatched by the deterministic action
+        # controller before this hook; ordinary turns receive no avatar action
+        # tool, no autonomous selector snapshot and no action-analysis prompt.
+        self.diagnostic_log.record(
+            "avatar.action.tool_skipped",
+            component="action",
+            operation="none",
+            status="skipped",
+            reason_code=(
+                "explicit_action_reserved"
+                if fast_action_active and fast_action_explicit
+                else "main_llm_action_analysis_disabled"
+            ),
+            result=("explicit_request" if fast_action_active and fast_action_explicit else "dialogue_only"),
+            action_source=("explicit_request" if fast_action_active and fast_action_explicit else "none"),
+        )
         spatial_overlay = _build_spatial_context_overlay(event)
         if spatial_overlay:
             current = str(getattr(req, "system_prompt", "") or "")
             if "<embodiment_spatial_context_json>" not in current:
                 req.system_prompt = current + spatial_overlay
-        action_facts_overlay = (
-            _build_action_facts_overlay(event) if formal_marker else ""
-        )
-        if action_facts_overlay:
-            current = str(getattr(req, "system_prompt", "") or "")
-            if "<embodiment_action_facts_json>" not in current:
-                req.system_prompt = current + action_facts_overlay
+        # Client action receipts remain local controller state.  They are not
+        # injected into the main LLM prompt; otherwise a historical gesture
+        # could be mistaken for an instruction or invite autonomous action
+        # analysis.  Keep ``_build_action_facts_overlay`` as a compatibility
+        # helper for older isolated callers, but the production hook never
+        # invokes it.
         overlay = build_eventbus_persona_overlay(self.llm.quest_persona_prompt)
         if not overlay:
             diagnostic = getattr(self, "diagnostic_log", None)

@@ -7,6 +7,16 @@
 - 新增默认关闭的插件钩子耗时诊断：按临创建的 EventBus 轮次记录已注册插件的
   LLM/Agent/工具/发送协程 hook、方法名、优先级、状态和 wall-clock 耗时；兼容 AstrBot
   热加载的 Handler 绑定，并在停用或卸载时恢复原始回调。
+- 新增每轮脱敏分层 Trace：记录 EventBus 队列、插件 Hook、记忆/关系适配器、LLM、STT、TTS、
+  锁等待和终端交付的 `wall_ms`、`active_ms`、等待、重试、超时、回退与事件循环延迟；诊断
+  默认关闭，Trace 不进入公开 HTTP/SSE 协议。
+
+### Changed
+
+- 普通对话不再启动快速动作 Provider，也不向主 LLM 暴露动作工具或动作反馈。明确动作继续由
+  本地严格解析器处理；直连/降级适配器返回遗留动作字段时，编排层会收敛为 `talk/idle`。
+- 客户端动作枚举与已验证回执事实改为仅留在本地动作控制器和诊断链，不再随普通 EventBus
+  轮次进入主 LLM 或其他对话上下文。
 
 ### Documentation
 

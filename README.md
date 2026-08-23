@@ -125,9 +125,9 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 |---|---:|---|
 | `bridge_service_enabled` | `true` | 启停具身对话服务；关闭时清理现有会话和 listener |
 | `chat_provider_id` | 空 | 触碰/动作决策及显式直连回退使用的 Provider；不覆盖正常 EventBus 对话的默认模型 |
-| `fast_action_enabled` | `true` | 使用独立快速模型异步判断动作，并与主回复动作工具进行同轮单动作仲裁 |
+| `fast_action_enabled` | `true` | 保留旧版快速动作配置兼容性；当前普通对话不会启动该 Provider，动作只由明确本地指令、交互通道或客户端回执驱动 |
 | `fast_action_provider_id` | 空 | 快速动作专用 Chat Completion Provider；与普通对话模型独立，建议选择低延迟模型 |
-| `fast_action_timeout_seconds` | `6.0` | 快速动作调用上限；动作决策与文字/TTS并行，正文不等待动作模型；超时只在 `reply.end` 前安全回退。Provider 首 token 较慢时建议保持 6 秒以上。Operator Page 可保存 0.5–15 秒并显示 effective timeout |
+| `fast_action_timeout_seconds` | `6.0` | 旧配置保留；普通对话不再发起快速动作请求。明确动作不等待该 Provider。Operator Page 仍可读取兼容状态 |
 | `fast_action_timeout_policy_revision` | 空 | 审计字段；revision 为空或旧版 `v2` 且值为 4.0 时识别为旧默认并按 6.0 effective 运行，管理页保存后写入 `v3`，显式保存的 4.0 不会被覆盖 |
 | `enable_astrbot_message_pipeline` | `true` | 让普通文字和语音进入 AstrBot 正式消息链 |
 | `allow_direct_provider_fallback` | `false` | 正式链路失败时是否允许直连 Provider；不建议用它掩盖配置问题 |
@@ -151,11 +151,11 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 
 Provider 下拉列表和管理响应只返回必要的安全摘要，不返回 API Key、Base URL、请求头或原始 Provider 配置。完整配置项和人格边界见 [API 文档](docs/API_CN.md) 与 [人格集成文档](docs/PERSONA_INTEGRATION_CN.md)。
 
-快速动作结果分为两层：快速动作模型与 AstrBot EventBus 动作工具可以并行准备，但同一轮只允许一个白名单动作保留；明确动作命令优先，快速模型与主回复工具通过有界保留标记互斥。主回复最多看到“动作计划已发送、尚未确认执行”的有界快照，因此不得声称动作已经完成；客户端通过双重认证回报 `completed/rejected/interrupted` 后，后续同会话 EventBus 轮次才会把该终态作为身体事实读取。明确的整句动作命令（包括“下蹲/蹲下/crouch/squat”）直接由严格解析器选择，不等待快速 Provider；否定、引用、假设、讨论或多动作表达不会猜测执行。
+动作边界分为两层：普通对话由主 LLM 只生成自然语言回复，动作工具、动作反馈和遗留动作字段都不会暴露给它；即使直连/降级适配器返回旧动作字段，编排层也会收敛为 `talk` 或 `idle`。明确的整句动作命令（包括“下蹲/蹲下/crouch/squat”）由严格解析器在本地选择，不等待任何动作 Provider；触碰/手势由独立交互通道处理。否定、引用、假设、讨论或多动作表达不会猜测执行。客户端通过双重认证回报 `completed/rejected/interrupted` 后，后续同会话 EventBus 轮次才会把该终态作为身体事实读取。
 
 ## 使用
 
-- 本插件不注册聊天命令，也没有独立的 LLM 工具入口；对话与动作决策通过 AstrBot 正式消息链中的钩子与动作工具完成，客户端经 HTTP/SSE 交互。
+- 本插件不注册聊天命令，也不让主对话 LLM 自主选择动作；对话通过 AstrBot 正式消息链中的钩子完成，明确动作由本地解析器、触碰/手势通道和客户端回执驱动，客户端经 HTTP/SSE 交互。
 - 管理页面：“具身服务控制台”管理模型、平台、身份、人格、STT/TTS、端口与诊断；“具身客户端快速绑定”生成一次性二维码与 6 位短码完成配对。
 - 运行状态通过控制台状态区、认证后的 `/health` 接口与脱敏日志确认。
 
@@ -199,7 +199,7 @@ SSE 事件包括 `asr.partial`、`asr.final`、`avatar.intent`、`reply.text.del
 
 交互事实只接受 `handshake`、`head_pat`、`cheek_pinch`、`gaze` 和 `speaking`。角色意图使用受控的 `action_id + method + parameters + transition + source`，并保留 `gesture` 等旧字段。转身只允许有界角度，下蹲只允许深度与保持时间，未知字段、枚举或越界值不会透传给客户端。
 
-`session.start.supported_actions` 是可选能力声明；服务端和模型只使用声明值与服务端注册动作的交集。省略它的旧客户端继续使用旧动作集，但不会收到新增 `crouch`。可执行动作的 `avatar.intent` 会附带服务端生成的 `action_id`。客户端以 `/action/result` 回报 `accepted -> started -> completed`，或回报 `rejected` / `interrupted`；`idle`、`talk` 无需回执。只有经过双层认证且匹配原动作计划的终态，才会作为有界、短时的身体事实注入后续具身 EventBus 轮次。
+`session.start.supported_actions` 是可选能力声明；服务端只在本地动作控制器中使用声明值与注册表的交集，绝不把动作枚举交给主 LLM。省略它的旧客户端继续使用旧动作集，但不会收到新增 `crouch`。可执行动作的 `avatar.intent` 会附带服务端生成的 `action_id`。客户端以 `/action/result` 回报 `accepted -> started -> completed`，或回报 `rejected` / `interrupted`；`idle`、`talk` 无需回执。经过双层认证且匹配原动作计划的终态只保存在本地回执状态，用于控制器和诊断，不注入 EventBus、主 LLM、记忆或普通对话上下文。
 
 内置 listener 的匿名能力只限新插件 ID 下的精确 `POST .../pairing/exchange`。它接受一次性 token 或 6 位短码，并实施凭据过期、单次消费、正文限制、来源限速和全局限速；其他运行接口仍必须携带双层认证。
 

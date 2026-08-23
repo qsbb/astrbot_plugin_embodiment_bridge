@@ -112,7 +112,7 @@ def test_turn_start_accepts_unity_text_and_audio_shapes() -> None:
 
 
 def test_intent_parser_accepts_whitelist_and_rejects_drift() -> None:
-    parser = IntentParser()
+    parser = IntentParser(allow_model_actions=True)
     valid = parser.parse(
         '{"should_reply":true,"reply_text":"你好",'
         '"intent":{"emotion":"shy","gesture":"step_back",'
@@ -140,6 +140,19 @@ def test_intent_parser_rejects_markdown_wrapped_json() -> None:
         '```json\n{"should_reply":false,"reply_text":"","intent":{}}\n```'
     )
     assert decision.intent.reason_code == "invalid_model_output"
+
+
+def test_default_intent_parser_is_dialogue_only_even_for_legacy_action_fields() -> None:
+    decision = IntentParser().parse(
+        '{"should_reply":true,"reply_text":"我来挥手",'
+        '"action":{"name":"wave","arguments":{}},'
+        '"intent":{"emotion":"happy","gesture":"dance",'
+        '"look_at":"user","intensity":1,"duration_ms":5000,'
+        '"reason_code":"model_choice"}}'
+    )
+    assert decision.action is None
+    assert decision.intent.gesture is Gesture.TALK
+    assert decision.intent.reason_code == "dialogue_only"
 
 
 def test_avatar_action_method_must_match_compatibility_gesture() -> None:

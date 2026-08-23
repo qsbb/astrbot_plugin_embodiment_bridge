@@ -61,7 +61,7 @@ def test_autonomous_fallback_is_social_conservative_and_capability_bounded() -> 
 
 
 def test_intent_parser_accepts_action_call_without_trusting_animation_paths() -> None:
-    parsed = IntentParser().parse(
+    parsed = IntentParser(allow_model_actions=True).parse(
         '{"should_reply":true,"reply_text":"我来跳舞","action":'
         '{"name":"dance","arguments":{}},"intent":'
         '{"emotion":"neutral","gesture":"idle","look_at":"none",'
@@ -71,11 +71,11 @@ def test_intent_parser_accepts_action_call_without_trusting_animation_paths() ->
     assert parsed.intent.gesture.value == "dance"
 
 
-def test_llm_prompt_advertises_skill_calls() -> None:
+def test_llm_prompt_is_dialogue_only_and_does_not_advertise_skill_calls() -> None:
     adapter = AstrBotLLMAdapter(
         object(), chat_provider_id="provider", persona_prompt=""
     )
     prompt = adapter._system_prompt()
-    assert '"action": null' in prompt
-    assert "Available skills" in prompt
-    assert "dance" in prompt
+    assert '"action"' not in prompt
+    assert "只负责输出自然的对话回复" in prompt
+    assert "不要分析、选择、建议或声称任何自主动作" in prompt

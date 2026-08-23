@@ -12,34 +12,27 @@ from ..core.models import (
     LookAt,
     ModelDecision,
     ProposedIntent,
-    FastActionFeedback,
-    VerifiedActionFacts,
 )
 from ..core.avatar_action_tool import (
     MODEL_TOOL_SOURCE,
     read_selected_intent,
     read_selected_source,
-    stage_explicit_action,
 )
 from ..core.explicit_action_parser import requires_text_reply
 from ..core.plugin_identity import (
-    BRIDGE_ACTION_FACTS,
     BRIDGE_EVENT_MARKER,
-    BRIDGE_FAST_ACTION_ACTIVE,
-    BRIDGE_FAST_ACTION_EXPLICIT,
-    BRIDGE_FAST_ACTION_FEEDBACK,
     BRIDGE_FAST_ACTION_SELECTED,
     BRIDGE_CAPTURE_REQUIRED,
     BRIDGE_DELIVERY_OWNER,
     BRIDGE_IDENTITY_CONTEXT,
     BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
     BRIDGE_SPATIAL_CONTEXT,
-    BRIDGE_SUPPORTED_ACTIONS,
     BRIDGE_TEXT_REPLY_REQUIRED,
     LEGACY_BRIDGE_EVENT_MARKER,
     LEGACY_BRIDGE_IDENTITY_CONTEXT,
 )
 from ..core.session_manager import SPATIAL_CONTEXT_TTL_SECONDS, SessionState
+from ..core.timing_trace import TimingTrace, safe_trace_action
 
 
 class MessagePipelineUnavailable(RuntimeError):
@@ -93,6 +86,20 @@ class AstrBotMessagePipelineAdapter:
         self.last_event_cleanup_called: bool | None = None
         self.last_event_timing: dict[str, int | str | bool] = {}
         self.last_event_trace: dict[str, int | str | bool] = {}
+        self._status_generation = 0
+        self._status_generation_counter = 0
+
+    def _begin_status_generation(self) -> int:
+        self._status_generation_counter += 1
+        self._status_generation = self._status_generation_counter
+        return self._status_generation
+
+    def _publish_status(self, generation: int, **fields: Any) -> bool:
+        if generation != self._status_generation:
+            return False
+        for name, value in fields.items():
+            setattr(self, name, value)
+        return True
 
     @property
     def available(self) -> bool:
@@ -133,22 +140,60 @@ class AstrBotMessagePipelineAdapter:
         action_facts: list[dict[str, Any]] | None = None,
     ) -> ModelDecision:
         started = time.perf_counter()
+        generation = self._begin_status_generation()
+
+        def publish(**fields: Any) -> bool:
+            return self._publish_status(generation, **fields)
+
+        visibility = "unobserved"
+
+        def set_visibility(value: str, source: str = "") -> None:
+            nonlocal visibility
+            visibility = value if value in DELIVERY_VISIBILITY_VALUES else "unobserved"
+            self._set_delivery_visibility(value, source, generation=generation)
+
         current_turn = getattr(session, "current_turn", None)
         trace_id = str(getattr(current_turn, "trace_id", "") or "")[:16]
         recorder = getattr(self.diagnostic_log, "record", None)
+        shared_trace = getattr(current_turn, "timing_trace", None)
+        owns_trace = not isinstance(shared_trace, TimingTrace)
+        trace = (
+            shared_trace
+            if isinstance(shared_trace, TimingTrace)
+            else TimingTrace(
+                self.diagnostic_log,
+                enabled=bool(getattr(self.diagnostic_log, "enabled", False)),
+                trace_id=trace_id,
+            )
+        )
+
+        async def close_owned_trace() -> None:
+            if owns_trace:
+                await trace.close()
+
+        # Keep lifecycle state in this invocation's closure.  The adapter can
+        # serve concurrent sessions; a shared timing dictionary would let one
+        # event overwrite another event's spans.
+        timing: dict[str, int | str | bool] | None = None
 
         def stage(event: str, *, status: str, **fields: Any) -> None:
-            timing = getattr(self, "_active_event_timing", None)
-            if isinstance(timing, dict):
+            current_timing = timing
+            if isinstance(current_timing, dict):
                 elapsed_ms = max(
                     0,
-                    int((time.perf_counter() - float(timing["started"])) * 1000),
+                    int(
+                        (time.perf_counter() - float(current_timing["started"]))
+                        * 1000
+                    ),
                 )
                 fields.setdefault("elapsed_ms", elapsed_ms)
-                timing[event] = elapsed_ms
+                current_timing[event] = elapsed_ms
                 if event == "event_cleanup_called":
-                    self.last_event_cleanup_called = True
-                    self.last_event_timing = _public_event_timing(timing)
+                    publish(
+                        last_event_cleanup_called=True,
+                        last_event_timing=_public_event_timing(current_timing),
+                    )
+                    trace.finish_eventbus(status="completed")
             if not callable(recorder):
                 return
             try:
@@ -163,75 +208,101 @@ class AstrBotMessagePipelineAdapter:
             except Exception:
                 return
 
-        self.last_error = ""
-        self.last_event_woken = None
-        self.last_event_wake_match = None
-        self.last_event_processed = None
-        self.last_event_stopped = None
-        self.last_send_observed = None
-        self.last_event_class = ""
-        self.last_captured_chars = 0
-        self.last_result_chars = 0
-        self.last_delivery_plan_chars = 0
-        self.last_result_chain_count = 0
-        self.last_selected_intent = "none"
-        self.last_delivery_visibility = "unobserved"
-        self.last_delivery_visibility_reason = ""
-        self.last_event_cleanup_called = None
-        self.last_event_timing = {}
-        self.last_event_trace = {}
+        publish(
+            last_error="",
+            last_event_woken=None,
+            last_event_wake_match=None,
+            last_event_processed=None,
+            last_event_stopped=None,
+            last_send_observed=None,
+            last_event_class="",
+            last_captured_chars=0,
+            last_result_chars=0,
+            last_delivery_plan_chars=0,
+            last_result_chain_count=0,
+            last_selected_intent="none",
+            last_delivery_visibility="unobserved",
+            last_delivery_visibility_reason="",
+            last_event_cleanup_called=None,
+            last_event_timing={},
+            last_event_trace={},
+        )
         if not self.enabled:
-            self.last_error = "message_pipeline_disabled"
+            publish(last_error="message_pipeline_disabled")
             raise MessagePipelineUnavailable("message_pipeline_disabled")
         if not session.protected_context_authorized:
-            self.last_error = "protected_context_not_authorized"
+            publish(last_error="protected_context_not_authorized")
             raise MessagePipelineUnavailable("protected_context_not_authorized")
         if not self.platform_id:
-            self.last_error = "trusted_platform_not_configured"
+            publish(last_error="trusted_platform_not_configured")
             raise MessagePipelineUnavailable("trusted_platform_not_configured")
 
         try:
             platform_getter = self.context.get_platform_inst
             queue_getter = self.context.get_event_queue
         except AttributeError:
-            self.last_error = "astrbot_event_api_unavailable"
+            await close_owned_trace()
+            publish(last_error="astrbot_event_api_unavailable")
             raise MessagePipelineUnavailable("astrbot_event_api_unavailable")
-        platform = platform_getter(self.platform_id)
+        try:
+            platform = platform_getter(self.platform_id)
+        except BaseException:
+            await close_owned_trace()
+            raise
         if platform is None:
-            self.last_error = "trusted_platform_unavailable"
+            await close_owned_trace()
+            publish(last_error="trusted_platform_unavailable")
             raise MessagePipelineUnavailable("trusted_platform_unavailable")
         try:
             event_factory = platform.create_event
         except AttributeError as exc:
-            self.last_error = "astrbot_event_factory_unavailable"
+            await close_owned_trace()
+            publish(last_error="astrbot_event_factory_unavailable")
             raise MessagePipelineUnavailable(
                 "astrbot_event_factory_unavailable"
             ) from exc
         if not callable(event_factory):
-            self.last_error = "astrbot_event_factory_unavailable"
+            await close_owned_trace()
+            publish(last_error="astrbot_event_factory_unavailable")
             raise MessagePipelineUnavailable("astrbot_event_factory_unavailable")
 
-        event = _build_capture_event(
-            platform=platform,
-            platform_meta=platform.meta(),
-            user_text=user_text,
-            user_id=session.user_id,
-            bot_id=session.bot_id,
-            group_id=session.group_id,
-            protected_context_authorized=session.protected_context_authorized,
-            spatial_context=_session_spatial_context(session),
-            fast_action_active=fast_action_active,
-            fast_action_feedback=fast_action_feedback,
-            action_facts=action_facts,
-            supported_actions=getattr(session, "supported_actions", None),
-        )
-        timing: dict[str, int | str | bool] = {
+        # The shared turn trace is started by the orchestrator.  A direct
+        # adapter invocation in tests/older callers owns its local trace.
+        trace.start_event_loop_monitor()
+
+        try:
+            with trace.span("eventbus.event_create", kind="eventbus"):
+                event = _build_capture_event(
+                    platform=platform,
+                    platform_meta=platform.meta(),
+                    user_text=user_text,
+                    user_id=session.user_id,
+                    bot_id=session.bot_id,
+                    group_id=session.group_id,
+                    protected_context_authorized=session.protected_context_authorized,
+                    spatial_context=_session_spatial_context(session),
+                    fast_action_active=fast_action_active,
+                    fast_action_feedback=fast_action_feedback,
+                    # ``action_facts`` remains an accepted compatibility
+                    # argument, but verified receipts are local controller
+                    # state and never enter a main EventBus request.
+                    action_facts=None,
+                    # Client capability declarations are consumed by the
+                    # local action controller.  Do not copy them into the
+                    # synthetic EventBus event where downstream LLM hooks
+                    # could treat them as an action prompt.
+                    supported_actions=None,
+                )
+        except BaseException:
+            await close_owned_trace()
+            raise
+        timing = {
             "started": time.perf_counter(),
             "event_class": type(event).__name__[:96],
         }
-        self._active_event_timing = timing
         event._quest_bridge_stage = stage
         event._quest_bridge_timing = timing
+        event._quest_bridge_trace = trace
         event._quest_bridge_metadata = _event_metadata_snapshot(event)
         _install_trace_probe(event, stage)
         stage(
@@ -240,13 +311,29 @@ class AstrBotMessagePipelineAdapter:
             event_type="message.event",
             **event._quest_bridge_metadata,
         )
-        queue = queue_getter()
-        queue_size_before = _queue_size(queue)
         try:
-            queue.put_nowait(event)
-        except (AttributeError, asyncio.QueueFull, RuntimeError) as exc:
-            self.status = "queue_unavailable"
-            self.last_error = "astrbot_event_queue_unavailable"
+            queue = queue_getter()
+        except BaseException:
+            await close_owned_trace()
+            raise
+        queue_size_before = _queue_size(queue)
+        trace.start_named_span(
+            "eventbus.queue_wait",
+            kind="eventbus",
+            category="queue",
+        )
+        try:
+            with trace.span("eventbus.enqueue", kind="eventbus"):
+                queue.put_nowait(event)
+        except asyncio.CancelledError:
+            trace.finish_eventbus(status="cancelled")
+            await close_owned_trace()
+            raise
+        except Exception as exc:
+            trace.finish_eventbus(status="error", fallback=True)
+            await close_owned_trace()
+            publish(status="queue_unavailable")
+            publish(last_error="astrbot_event_queue_unavailable")
             raise MessagePipelineUnavailable("astrbot_event_queue_unavailable") from exc
         stage(
             "event_enqueued",
@@ -257,23 +344,25 @@ class AstrBotMessagePipelineAdapter:
             queue_class=type(queue).__name__[:96],
         )
 
-        self.status = "processing"
+        publish(status="processing")
         try:
             # This marker separates queue admission from the scheduler's
             # completion path. It lets the client distinguish an EventBus
             # wait from STT/LLM/TTS work when a turn is slow.
             stage("event_wait_started", status="waiting", event_type="message.event")
             await asyncio.wait_for(event.wait_completed(), timeout=self.timeout_seconds)
-            self.last_event_cleanup_called = bool(
-                getattr(event, "_quest_cleanup_called", False)
+            publish(
+                last_event_cleanup_called=bool(
+                    getattr(event, "_quest_cleanup_called", False)
+                )
             )
             stage("event_wait_completed", status="completed", event_type="message.event")
             stage("event_woken", status="completed", event_type="message.event")
         except TimeoutError as exc:
-            self.status = "timeout"
-            self.last_error = "astrbot_pipeline_timeout"
+            publish(status="timeout")
+            publish(last_error="astrbot_pipeline_timeout")
             cleanup_called = bool(getattr(event, "_quest_cleanup_called", False))
-            self.last_event_cleanup_called = cleanup_called
+            publish(last_event_cleanup_called=cleanup_called)
             stage(
                 "event_wait_timeout",
                 status="timeout",
@@ -284,49 +373,63 @@ class AstrBotMessagePipelineAdapter:
                     else "not_consumed_or_scheduler_missing"
                 ),
             )
-            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
+            trace.finish_eventbus(status="timeout", timeout=True)
+            set_visibility("unobserved", "external_direct_send_or_empty")
             raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
         finally:
             stage("event_cleanup_entered", status="entered", event_type="message.event")
-            self.last_event_timing = _public_event_timing(timing)
-            self.last_event_trace = _public_event_trace(timing)
+            if bool(getattr(event, "_quest_cleanup_called", False)):
+                # Some AstrBot releases set the cleanup marker but do not
+                # expose a TraceSpan callback.  The marker is still enough to
+                # close the queue/processing spans accurately.
+                trace.finish_eventbus(status="completed")
+            publish(
+                last_event_timing=_public_event_timing(timing),
+                last_event_trace=_public_event_trace(timing),
+            )
+            await close_owned_trace()
 
-        self._record_event_outcome(event)
+        event_outcome = self._record_event_outcome(event, generation=generation)
         stage("event_completed", status="ok", event_type="message.event")
         text_reply_required = requires_text_reply(user_text)
-        selected_intent = read_selected_intent(event)
+        selected_intent = event_outcome["selected_intent"]
         reply = event.captured_text().strip()
         if not reply:
             reply = _event_result_text(event).strip()
             if reply:
                 self._record_reply_recovered(source="event_result")
-                self._set_delivery_visibility("result_recovered", "event_result")
+                set_visibility("result_recovered", "event_result")
         if not reply:
             reply = _delivery_plan_text(event).strip()
             if reply:
                 self._record_reply_recovered(source="delivery_plan")
-                self._set_delivery_visibility("plan_recovered", "delivery_plan")
+                set_visibility("plan_recovered", "delivery_plan")
         if not reply and text_reply_required:
-            self.status = "empty_reply"
-            self.last_error = "astrbot_pipeline_reply_required_missing"
-            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
+            publish(
+                status="empty_reply",
+                last_error="astrbot_pipeline_reply_required_missing",
+            )
+            set_visibility("unobserved", "external_direct_send_or_empty")
             self._record_required_reply_missing()
-            raise MessagePipelineEmpty(self.last_error)
+            raise MessagePipelineEmpty("astrbot_pipeline_reply_required_missing")
         # A tool-only action is still a valid turn. AstrBot may finish after
         # executing the action tool without emitting a textual assistant reply;
         # do not discard the selected dance/turn intent as an empty response.
         if not reply and selected_intent is not None:
-            self.status = "ok"
-            self.last_error = ""
-            self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-            self.last_event_timing = _public_event_timing(timing)
-            self.last_event_trace = _public_event_trace(timing)
+            duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            publish(
+                status="ok",
+                last_error="",
+                last_duration_ms=duration_ms,
+                last_event_timing=_public_event_timing(timing),
+                last_event_trace=_public_event_trace(timing),
+            )
             self._record_action_outcome(
                 selected_intent,
                 source="selected",
-                duration_ms=self.last_duration_ms,
+                duration_ms=duration_ms,
             )
-            self._set_delivery_visibility("action_only", "selected_action")
+            set_visibility("action_only", "selected_action")
             self._record_eventbus_action_outcome(event, selected_intent)
             return ModelDecision(
                 should_reply=False,
@@ -346,21 +449,24 @@ class AstrBotMessagePipelineAdapter:
         # EventBus result is a legitimate action-only turn rather than a
         # dialogue transport failure. The orchestrator owns and delivers the
         # reserved intent; this placeholder is never emitted as a second one.
-        if not reply and self.last_event_stopped is True and fast_action_selected:
-            self.status = "ok"
-            self.last_error = ""
-            self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-            self.last_event_timing = _public_event_timing(timing)
-            self.last_event_trace = _public_event_trace(timing)
+        if not reply and event_outcome["event_stopped"] is True and fast_action_selected:
+            duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+            publish(
+                status="ok",
+                last_error="",
+                last_duration_ms=duration_ms,
+                last_event_timing=_public_event_timing(timing),
+                last_event_trace=_public_event_trace(timing),
+            )
             self._record_fast_action_stopped_outcome(
-                duration_ms=self.last_duration_ms,
+                duration_ms=duration_ms,
                 action_source=(
                     "explicit_request"
                     if fast_action_feedback.get("explicit_action") is True
                     else "fast_provider"
                 ),
             )
-            self._set_delivery_visibility("action_only", "fast_action_selected")
+            set_visibility("action_only", "fast_action_selected")
             return ModelDecision(
                 should_reply=False,
                 reply_text="",
@@ -374,16 +480,20 @@ class AstrBotMessagePipelineAdapter:
                 ),
             )
         if not reply:
-            self.status = "empty_reply"
-            self._set_delivery_visibility("unobserved", "external_direct_send_or_empty")
-            self.last_error = self._empty_reply_reason()
-            raise MessagePipelineEmpty(self.last_error)
+            publish(status="empty_reply")
+            set_visibility("unobserved", "external_direct_send_or_empty")
+            empty_reason = self._empty_reply_reason(generation=generation)
+            publish(last_error=empty_reason)
+            raise MessagePipelineEmpty(empty_reason)
 
-        self.status = "ok"
-        self.last_error = ""
-        self.last_duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-        self.last_event_timing = _public_event_timing(timing)
-        self.last_event_trace = _public_event_trace(timing)
+        duration_ms = max(0, int((time.perf_counter() - started) * 1000))
+        publish(
+            status="ok",
+            last_error="",
+            last_duration_ms=duration_ms,
+            last_event_timing=_public_event_timing(timing),
+            last_event_trace=_public_event_trace(timing),
+        )
         reply = reply[:4000]
         intent = selected_intent or ProposedIntent(
             emotion=Emotion.NEUTRAL,
@@ -396,13 +506,13 @@ class AstrBotMessagePipelineAdapter:
         self._record_action_outcome(
             intent,
             source="selected" if selected_intent is not None else "default_talk",
-            duration_ms=self.last_duration_ms,
+            duration_ms=duration_ms,
         )
-        if self.last_delivery_visibility == "unobserved":
-            if self.last_send_observed is True:
-                self._set_delivery_visibility("captured", "event_send")
+        if visibility == "unobserved":
+            if event_outcome["send_observed"] is True:
+                set_visibility("captured", "event_send")
             else:
-                self._set_delivery_visibility(
+                set_visibility(
                     "unobserved", "external_direct_send_or_empty"
                 )
         self._record_eventbus_action_outcome(event, selected_intent)
@@ -427,7 +537,13 @@ class AstrBotMessagePipelineAdapter:
         except Exception:
             return
 
-    def _set_delivery_visibility(self, visibility: str, source: str = "") -> None:
+    def _set_delivery_visibility(
+        self,
+        visibility: str,
+        source: str = "",
+        *,
+        generation: int | None = None,
+    ) -> None:
         """Record only whether this adapter can observe its own delivery.
 
         External plugins may call platform/context send APIs which this synthetic
@@ -436,10 +552,18 @@ class AstrBotMessagePipelineAdapter:
         """
         if visibility not in DELIVERY_VISIBILITY_VALUES:
             visibility = "unobserved"
-        self.last_delivery_visibility = visibility
-        self.last_delivery_visibility_reason = (
+        reason = (
             "external_direct_send_or_empty" if visibility == "unobserved" else ""
         )
+        if generation is None:
+            self.last_delivery_visibility = visibility
+            self.last_delivery_visibility_reason = reason
+        else:
+            self._publish_status(
+                generation,
+                last_delivery_visibility=visibility,
+                last_delivery_visibility_reason=reason,
+            )
         recorder = getattr(self.diagnostic_log, "record", None)
         if not callable(recorder):
             return
@@ -449,7 +573,7 @@ class AstrBotMessagePipelineAdapter:
                 component="message_pipeline",
                 phase="eventbus",
                 status=visibility,
-                reason_code=self.last_delivery_visibility_reason,
+                reason_code=reason,
                 source=source
                 if source
                 in {
@@ -569,43 +693,76 @@ class AstrBotMessagePipelineAdapter:
     async def close(self) -> None:
         return None
 
-    def _record_event_outcome(self, event: Any) -> None:
-        self.last_event_wake_match = bool(
+    def _record_event_outcome(
+        self,
+        event: Any,
+        *,
+        generation: int | None = None,
+    ) -> dict[str, Any]:
+        wake_match = bool(
             getattr(event, "is_wake", False)
             or getattr(event, "is_at_or_wake_command", False)
         )
         # Keep the legacy field for protocol compatibility. It is a wake/@
         # match, not a claim that EventBus processing happened.
-        self.last_event_woken = self.last_event_wake_match
-        self.last_event_processed = True
-        self.last_event_class = type(event).__name__[:96]
+        event_class = type(event).__name__[:96]
         stopped = getattr(event, "is_stopped", None)
         try:
-            self.last_event_stopped = bool(stopped()) if callable(stopped) else False
+            event_stopped = bool(stopped()) if callable(stopped) else False
         except Exception:
-            self.last_event_stopped = None
-        self.last_send_observed = bool(getattr(event, "_has_send_oper", False))
+            event_stopped = None
+        send_observed = bool(getattr(event, "_has_send_oper", False))
         try:
             captured = event.captured_text() if callable(getattr(event, "captured_text", None)) else ""
         except Exception:
             captured = ""
-        self.last_captured_chars = len(captured.strip()) if isinstance(captured, str) else 0
+        captured_chars = len(captured.strip()) if isinstance(captured, str) else 0
         result_text = _event_result_text(event)
         plan_text = _delivery_plan_text(event)
-        self.last_result_chars = len(result_text.strip())
-        self.last_delivery_plan_chars = len(plan_text.strip())
+        result_chars = len(result_text.strip())
+        plan_chars = len(plan_text.strip())
         selected_intent = read_selected_intent(event)
-        self.last_selected_intent = (
+        selected_intent_name = (
             selected_intent.gesture.value
             if selected_intent is not None
             else "none"
         )
+        result_chain_count = 0
         try:
             result = event.get_result() if callable(getattr(event, "get_result", None)) else None
             chain = getattr(result, "chain", None)
-            self.last_result_chain_count = len(chain) if isinstance(chain, (list, tuple)) else 0
+            result_chain_count = len(chain) if isinstance(chain, (list, tuple)) else 0
         except Exception:
-            self.last_result_chain_count = 0
+            result_chain_count = 0
+        outcome = {
+            "event_wake_match": wake_match,
+            "event_stopped": event_stopped,
+            "send_observed": send_observed,
+            "event_class": event_class,
+            "captured_chars": captured_chars,
+            "result_chars": result_chars,
+            "delivery_plan_chars": plan_chars,
+            "selected_intent": selected_intent,
+            "selected_intent_name": selected_intent_name,
+            "result_chain_count": result_chain_count,
+            "delivery_visibility": self.last_delivery_visibility,
+        }
+        if generation is not None:
+            self._publish_status(
+                generation,
+                last_event_wake_match=wake_match,
+                last_event_woken=wake_match,
+                last_event_processed=True,
+                last_event_stopped=event_stopped,
+                last_send_observed=send_observed,
+                last_event_class=event_class,
+                last_captured_chars=captured_chars,
+                last_result_chars=result_chars,
+                last_delivery_plan_chars=plan_chars,
+                last_selected_intent=selected_intent_name,
+                last_result_chain_count=result_chain_count,
+            )
+        return outcome
 
     def _record_eventbus_action_outcome(
         self,
@@ -629,7 +786,9 @@ class AstrBotMessagePipelineAdapter:
         except Exception:
             return
 
-    def _empty_reply_reason(self) -> str:
+    def _empty_reply_reason(self, *, generation: int | None = None) -> str:
+        if generation is not None and generation != self._status_generation:
+            return "astrbot_pipeline_empty_reply"
         if self.last_event_stopped is True:
             return (
                 "astrbot_pipeline_not_woken"
@@ -767,50 +926,18 @@ def _build_capture_event(
     # the bound raw account. Authorization remains the identity plugin's job.
     event.set_extra("_api_key_allow_admin_role", False)
     event.set_extra(BRIDGE_EVENT_MARKER, True)
-    if supported_actions is not None:
-        event.set_extra(BRIDGE_SUPPORTED_ACTIONS, tuple(supported_actions))
-    event.set_extra(BRIDGE_FAST_ACTION_ACTIVE, bool(fast_action_active))
     event.set_extra(BRIDGE_TEXT_REPLY_REQUIRED, requires_text_reply(user_text))
     event.set_extra(BRIDGE_DELIVERY_OWNER, "embodiment_bridge")
     event.set_extra(BRIDGE_CAPTURE_REQUIRED, True)
-    if (
-        fast_action_active
-        and isinstance(fast_action_feedback, dict)
-        and fast_action_feedback.get("explicit_action") is True
-    ):
-        event.set_extra(BRIDGE_FAST_ACTION_EXPLICIT, True)
     event.set_extra(
         BRIDGE_PROTECTED_CONTEXT_AUTHORIZED,
         bool(protected_context_authorized),
     )
-    if fast_action_active and isinstance(fast_action_feedback, dict):
-        snapshot = fast_action_feedback.get("snapshot")
-        try:
-            FastActionFeedback.model_validate(snapshot)
-        except (TypeError, ValueError):
-            pass
-        else:
-            # Keep the bounded holder by reference for same-turn action
-            # arbitration. This internal coordination is independent from
-            # protected persona/relationship context authorization; only the
-            # prompt overlay below remains authorization-gated.
-            event.set_extra(BRIDGE_FAST_ACTION_FEEDBACK, fast_action_feedback)
     if protected_context_authorized and spatial_context is not None:
         event.set_extra(BRIDGE_SPATIAL_CONTEXT, dict(spatial_context))
-    if protected_context_authorized and action_facts:
-        try:
-            verified_facts = VerifiedActionFacts.model_validate({"facts": action_facts})
-        except (TypeError, ValueError):
-            verified_facts = None
-        if verified_facts is not None and verified_facts.facts:
-            event.set_extra(
-                BRIDGE_ACTION_FACTS,
-                verified_facts.model_dump(mode="json")["facts"],
-            )
     # Deprecated compatibility markers are emitted for one major release so
     # existing series plugins can migrate without losing authorized context.
     event.set_extra(LEGACY_BRIDGE_EVENT_MARKER, True)
-    stage_explicit_action(event, user_text)
     identity_context = {
         "platform_id": str(platform_meta.id),
         "bot_id": str(bot_id),
@@ -961,11 +1088,48 @@ def _install_trace_probe(event: Any, stage: Any) -> None:
 
     def record(action: str, **_fields: Any) -> None:
         try:
+            bridge_trace = getattr(event, "_quest_bridge_trace", None)
+            if isinstance(bridge_trace, TimingTrace):
+                bridge_trace.mark_event_consumed()
+                safe_action = safe_trace_action(action)
+                if safe_action in {"astr_agent_prepare", "agent.prepare"}:
+                    bridge_trace.start_named_span(
+                        "agent.provider",
+                        kind="agent_provider",
+                        category="provider",
+                    )
+                    bridge_trace.trace_point("provider.request_sent")
+                elif safe_action in {"astr_agent_complete", "agent.complete"}:
+                    bridge_trace.trace_point("provider.completed")
+                    bridge_trace.finish_named_span(
+                        "agent.provider",
+                        status="completed",
+                    )
+                elif "provider" in safe_action and any(
+                    marker in safe_action for marker in ("queue", "queued", "wait")
+                ):
+                    bridge_trace.start_named_span(
+                        "provider.queue_wait",
+                        kind="provider_queue",
+                        category="queue",
+                    )
+                elif "provider" in safe_action and any(
+                    marker in safe_action
+                    for marker in ("first_token", "first_chunk", "request_sent")
+                ):
+                    bridge_trace.finish_named_span(
+                        "provider.queue_wait",
+                        status="completed",
+                    )
+                bridge_trace.trace_point(
+                    safe_action,
+                    status="observed",
+                )
             elapsed_ms = max(
                 0,
                 int((time.perf_counter() - float(timing["started"])) * 1000),
             )
-            safe_action = str(action or "unknown")[:64]
+            safe_action = safe_trace_action(action)
             timing[f"trace_{safe_action}"] = elapsed_ms
             timing["trace_event_count"] = int(timing.get("trace_event_count", 0)) + 1
             stage(
@@ -1025,10 +1189,16 @@ def _public_event_trace(timing: Any) -> dict[str, int | str | bool]:
         return {}
     result: dict[str, int | str | bool] = {}
     for key, value in timing.items():
+        if key == "trace_event_count":
+            if isinstance(value, int | float):
+                result[key] = max(0, min(int(value), 10_000))
+            continue
         if not key.startswith("trace_"):
             continue
+        action = safe_trace_action(key[6:])
+        safe_key = f"trace_{action}"
         if isinstance(value, bool | str):
-            result[key] = value[:96] if isinstance(value, str) else value
+            result[safe_key] = value[:96] if isinstance(value, str) else value
         elif isinstance(value, int | float):
-            result[key] = max(0, min(int(value), 3_600_000))
+            result[safe_key] = max(0, min(int(value), 3_600_000))
     return result

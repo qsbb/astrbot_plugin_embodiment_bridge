@@ -62,6 +62,10 @@ def test_profiler_records_wall_clock_duration_for_bridge_event() -> None:
     assert fields["priority"] == 500
     assert fields["status"] == "ok"
     assert int(fields["duration_ms"]) >= 15
+    assert fields["wall_ms"] == fields["duration_ms"]
+    assert fields["active_ms"] == fields["duration_ms"]
+    assert fields["queue_wait_ms"] == 0
+    assert fields["parent_span_id"] == ""
 
 
 def test_profiler_ignores_non_bridge_event() -> None:

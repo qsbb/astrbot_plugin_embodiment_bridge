@@ -112,7 +112,7 @@ def test_eventbus_action_only_http_has_one_intent_and_terminal(monkeypatch: Any,
     asyncio.run(scenario())
 
 
-def test_eventbus_tool_only_action_without_fast_selection_has_one_intent_and_terminal(
+def test_eventbus_legacy_action_fields_are_sanitized_for_dialogue(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -136,7 +136,8 @@ def test_eventbus_tool_only_action_without_fast_selection_has_one_intent_and_ter
                     frames.append(await read_sse_frame(events, timeout=2))
                 event_types = [frame.event for frame in frames]
                 assert event_types == ["avatar.intent", "reply.end"]
-                assert frames[0].data["gesture"] == "dance"
+                assert frames[0].data["gesture"] == "idle"
+                assert frames[0].data["reason_code"] == "dialogue_only"
                 assert frames[-1].data["status"] == "completed"
                 events.close()
 

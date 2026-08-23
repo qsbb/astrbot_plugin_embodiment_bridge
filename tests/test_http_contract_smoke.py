@@ -13,6 +13,13 @@ import pytest
 from astrbot_plugin_embodiment_bridge.adapters.fast_action import (
     FastActionUnavailable,
 )
+from astrbot_plugin_embodiment_bridge.core.models import (
+    Emotion,
+    Gesture,
+    LookAt,
+    ModelDecision,
+    ProposedIntent,
+)
 
 from .http_harness import (
     AUTH_HEADERS,
@@ -41,8 +48,12 @@ class TimeoutFastActionStub:
     enabled = True
     available = True
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def decide(self, **kwargs: Any) -> None:
         del kwargs
+        self.calls += 1
         raise FastActionUnavailable("fast_action_timeout")
 
     async def close(self) -> None:
@@ -72,7 +83,9 @@ def normalize_action_id(payload: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_sse_action_ids(raw: str) -> str:
     observed = re.findall(r'"action_id":"(a_[0-9a-f]{24})"', raw)
-    assert observed
+    # Dialogue-only turns intentionally carry no action plan or action ID.
+    if not observed:
+        return raw
     assert all(ACTION_ID_PATTERN.fullmatch(value) for value in observed)
     return re.sub(
         r'"action_id":"a_[0-9a-f]{24}"',
@@ -873,7 +886,7 @@ def test_sse_reconnect_and_late_old_turn_do_not_leak(
     asyncio.run(scenario())
 
 
-def test_http_sse_emits_autonomous_social_action_when_fast_model_times_out(
+def test_http_sse_does_not_run_autonomous_action_when_fast_model_times_out(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -881,6 +894,27 @@ def test_http_sse_emits_autonomous_social_action_when_fast_model_times_out(
         bundle = build_plugin(monkeypatch, tmp_path)
         timeout_action = TimeoutFastActionStub()
         tts = GenericTTSStub()
+
+        async def dialogue_only_generate(**kwargs: Any) -> ModelDecision:
+            del kwargs
+            return ModelDecision(
+                should_reply=True,
+                reply_text="你好呀。",
+                intent=ProposedIntent(
+                    emotion=Emotion.NEUTRAL,
+                    gesture=Gesture.TALK,
+                    look_at=LookAt.USER,
+                    intensity=0.38,
+                    duration_ms=1_200,
+                    reason_code="dialogue_only",
+                ),
+            )
+
+        # This smoke case verifies the ordinary dialogue path.  Keep the
+        # harness's boundary-refusal fixture for interaction tests, but make
+        # this turn's model result match the production parser contract.
+        bundle.plugin.llm.generate = dialogue_only_generate
+        bundle.plugin.orchestrator.llm = bundle.plugin.llm
         bundle.plugin.fast_action = timeout_action
         bundle.plugin.orchestrator.fast_action = timeout_action
         bundle.plugin.tts = tts
@@ -920,10 +954,11 @@ def test_http_sse_emits_autonomous_social_action_when_fast_model_times_out(
                     frames.append(await read_sse_frame(events, timeout=2))
                 intent = next(frame for frame in frames if frame.event == "avatar.intent")
                 assert intent.data is not None
-                assert intent.data["gesture"] == "wave"
-                assert intent.data["method"] == "wave"
-                assert intent.data["reason_code"] == "autonomous_greeting"
-                assert intent.data["source"] == "fallback"
+                assert intent.data["gesture"] == "talk"
+                assert intent.data["method"] == "talk"
+                assert intent.data["reason_code"] == "dialogue_only"
+                assert intent.data["source"] == "direct_model"
+                assert timeout_action.calls == 0
                 event_types = [frame.event for frame in frames]
                 assert event_types.count("avatar.intent") == 1
                 assert "reply.text.delta" in event_types
