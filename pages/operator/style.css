@@ -34,6 +34,10 @@ select, input, textarea {
 }
 textarea { resize: vertical; line-height: 1.55; }
 .persona-source-fields, .manual-persona-fields { display: grid; gap: 14px; }
+.quest-chain-fields { display: grid; gap: 14px; margin-top: 14px; }
+.quest-chain-fields .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.quest-chain-fields .field-grid > div, .quest-chain-fields > div { display: grid; gap: 6px; }
+.field-note { color: #8aa39d; font-size: 13px; line-height: 1.6; margin: 0; }
 [hidden] { display: none !important; }
 label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .shell { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 48px; }

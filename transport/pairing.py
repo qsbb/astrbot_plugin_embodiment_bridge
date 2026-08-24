@@ -61,6 +61,17 @@ class STTProviderSelectionRequest(BaseModel):
     provider_id: str = Field(default="", max_length=256)
 
 
+class QuestChainSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    mode: str = Field(default="main", max_length=16)
+    per_hook_budget_seconds: float | None = Field(default=None, ge=0.5, le=30.0)
+    total_hook_budget_seconds: float | None = Field(default=None, ge=1.0, le=60.0)
+    llm_timeout_seconds: float | None = Field(default=None, ge=5.0, le=120.0)
+    memory_cache_ttl_seconds: float | None = Field(default=None, ge=0.0, le=600.0)
+    excluded_plugins: str = Field(default="", max_length=512)
+
+
 class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -248,6 +259,18 @@ class PairingHttpApi:
                 self.save_operator_settings,
                 ["POST"],
                 "Save Quest chat model selection",
+            ),
+            (
+                "pairing/quest-chain-settings",
+                self.quest_chain_settings_overview,
+                ["GET"],
+                "Read Quest dialogue chain mode settings",
+            ),
+            (
+                "pairing/quest-chain-settings",
+                self.save_quest_chain_settings,
+                ["POST"],
+                "Save Quest dialogue chain mode settings",
             ),
             (
                 "pairing/fast-action-settings",
@@ -543,6 +566,34 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "fast_action": settings})
         except Exception as exc:
             return self._error(exc, "save_fast_action_settings")
+
+    async def quest_chain_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "quest_chain": self.operator_settings.quest_chain_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "quest_chain_settings_overview")
+
+    async def save_quest_chain_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(QuestChainSettingsRequest)
+            settings = await self.operator_settings.save_quest_chain_settings(
+                mode=payload.mode,
+                per_hook_budget_seconds=payload.per_hook_budget_seconds,
+                total_hook_budget_seconds=payload.total_hook_budget_seconds,
+                llm_timeout_seconds=payload.llm_timeout_seconds,
+                memory_cache_ttl_seconds=payload.memory_cache_ttl_seconds,
+                excluded_plugins=payload.excluded_plugins,
+            )
+            return _json_no_store({"success": True, "quest_chain": settings})
+        except Exception as exc:
+            return self._error(exc, "save_quest_chain_settings")
 
     async def save_stt_settings(self) -> Any:
         try:

@@ -14,6 +14,7 @@ from astrbot.api.star import Context, Star, StarTools
 from .adapters.astrbot_llm import AstrBotLLMAdapter
 from .adapters.astrbot_persona import AstrBotPersonaAdapter
 from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
+from .adapters.quest_enriched_pipeline import QuestEnrichedPipelineAdapter
 from .adapters.persona_converter import PersonaConverter
 from .adapters.api_principal import AstrBotApiPrincipalVerifier
 from .adapters.environment import CachedEnvironmentAdapter
@@ -379,6 +380,31 @@ class EmbodimentBridgePlugin(Star):
             platform_id=trusted_platform_id,
             diagnostic_log=self.diagnostic_log,
         )
+        # 临独立链路（Quest 专用富化直管链）。默认不启用，仅在
+        # quest_chain_mode 为 bridge/auto 时接管普通对话；main 模式下它保持
+        # disabled，Quest 仍走共享事件总线（现状基线）。
+        quest_chain_mode = self._quest_chain_mode()
+        self.quest_enriched_pipeline = QuestEnrichedPipelineAdapter(
+            context,
+            self._component_logger,
+            enabled=quest_chain_mode in {"bridge", "auto"},
+            platform_id=trusted_platform_id,
+            chat_provider_id=str(config.get("chat_provider_id", "") or ""),
+            per_hook_budget_seconds=self._float_config(
+                "quest_chain_per_hook_budget_seconds", 6.0, 0.5, 30.0
+            ),
+            total_hook_budget_seconds=self._float_config(
+                "quest_chain_total_hook_budget_seconds", 10.0, 1.0, 60.0
+            ),
+            llm_timeout_seconds=self._float_config(
+                "quest_chain_llm_timeout_seconds", 30.0, 5.0, 120.0
+            ),
+            memory_cache_ttl_seconds=self._float_config(
+                "quest_chain_memory_cache_ttl_seconds", 30.0, 0.0, 600.0
+            ),
+            excluded_plugins=self._quest_chain_excluded_plugins(),
+            diagnostic_log=self.diagnostic_log,
+        )
         self.knowledge = GlobalKnowledgeAdapter(
             context,
             self._component_logger,
@@ -430,6 +456,8 @@ class EmbodimentBridgePlugin(Star):
             runtime=self.runtime,
             voice_audio=self.voice_hub_tts,
             message_pipeline=self.message_pipeline,
+            quest_enriched_pipeline=self.quest_enriched_pipeline,
+            quest_chain_mode=quest_chain_mode,
             fast_action=self.fast_action,
             allow_direct_provider_fallback=self._bool_config(
                 "allow_direct_provider_fallback", False
@@ -1018,6 +1046,17 @@ class EmbodimentBridgePlugin(Star):
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
+
+    def _quest_chain_mode(self) -> str:
+        value = str(self.config.get("quest_chain_mode", "main") or "main")
+        value = value.strip().lower()
+        return value if value in {"main", "bridge", "auto"} else "main"
+
+    def _quest_chain_excluded_plugins(self) -> tuple[str, ...]:
+        raw = str(self.config.get("quest_chain_excluded_plugins", "") or "")
+        return tuple(
+            name.strip() for name in raw.split(",") if name.strip()
+        )
 
     def _float_config(
         self,

@@ -133,6 +133,8 @@ class TurnOrchestrator:
         runtime: SeriesRuntimeAdapter | None = None,
         voice_audio: VoiceHubTTSAdapter | None = None,
         message_pipeline: AstrBotMessagePipelineAdapter | None = None,
+        quest_enriched_pipeline: Any | None = None,
+        quest_chain_mode: str = "main",
         fast_action: FastActionDecisionAdapter | None = None,
         allow_direct_provider_fallback: bool = True,
         output_chunk_ms: int = 50,
@@ -153,6 +155,9 @@ class TurnOrchestrator:
         self.runtime = runtime
         self.voice_audio = voice_audio
         self.message_pipeline = message_pipeline
+        self.quest_enriched_pipeline = quest_enriched_pipeline
+        mode = str(quest_chain_mode or "main").strip().lower()
+        self.quest_chain_mode = mode if mode in {"main", "bridge", "auto"} else "main"
         self.fast_action = fast_action
         self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
@@ -1071,13 +1076,26 @@ class TurnOrchestrator:
             kind="storage",
             category="await",
         )
+        quest_bridge_ready = bool(
+            interaction is None
+            and session.protected_context_authorized
+            and self.quest_chain_mode in {"bridge", "auto"}
+            and self.quest_enriched_pipeline is not None
+            and self.quest_enriched_pipeline.available
+        )
+        # main 模式下不启用临独立链路；bridge/auto 模式下优先临独立链路。
         use_message_pipeline = bool(
             interaction is None
             and session.protected_context_authorized
             and self.message_pipeline is not None
             and self.message_pipeline.available
+            and not quest_bridge_ready
         )
-        if use_message_pipeline:
+        if quest_bridge_ready:
+            selected_phase = "quest_bridge"
+            selected_status = "ready"
+            selected_reason = f"quest_chain_{self.quest_chain_mode}"
+        elif use_message_pipeline:
             selected_phase = "eventbus"
             selected_status = "ready"
             selected_reason = "ready"
@@ -1098,9 +1116,12 @@ class TurnOrchestrator:
                     else "astrbot_event_api_unavailable"
                 ),
             )
-        turn.server_timing.start_decision(
-            "astrbot_event_bus" if use_message_pipeline else "direct_provider"
+        decision_label = (
+            "quest_enriched_pipeline"
+            if quest_bridge_ready
+            else "astrbot_event_bus" if use_message_pipeline else "direct_provider"
         )
+        turn.server_timing.start_decision(decision_label)
         self._diagnostic(
             "message_pipeline.selected",
             component="message_pipeline",
@@ -1112,12 +1133,21 @@ class TurnOrchestrator:
         pipeline_required = (
             interaction is None and not self.allow_direct_provider_fallback
         )
-        if pipeline_required and not use_message_pipeline:
-            reason = (
-                self.message_pipeline.availability_reason
-                if self.message_pipeline is not None
-                else "astrbot_event_api_unavailable"
-            )
+        # 临独立链路（quest_bridge）也是一条完整的插件富化链路，满足"必须走
+        # 链路"的要求；只有两条链路都不可用时才按未授权/不可用阻断。
+        if pipeline_required and not use_message_pipeline and not quest_bridge_ready:
+            if self.quest_chain_mode in {"bridge", "auto"}:
+                reason = (
+                    self.quest_enriched_pipeline.availability_reason
+                    if self.quest_enriched_pipeline is not None
+                    else "quest_enriched_pipeline_unavailable"
+                )
+            else:
+                reason = (
+                    self.message_pipeline.availability_reason
+                    if self.message_pipeline is not None
+                    else "astrbot_event_api_unavailable"
+                )
             self._diagnostic(
                 "message_pipeline.blocked",
                 component="message_pipeline",
@@ -1134,7 +1164,9 @@ class TurnOrchestrator:
         )
         knowledge: list[dict[str, Any]] = []
         environment: dict[str, Any] | None = None
-        if not use_message_pipeline:
+        # 仅直管路径需要预读 knowledge/environment；bridge 链路由钩子自行富化，
+        # 其回退直管时在 _read_knowledge_env 中惰性读取，避免 bridge 下重复拉取。
+        if not use_message_pipeline and not quest_bridge_ready:
             knowledge, environment = await self._await_traced(
                 turn,
                 "context.knowledge_environment",
@@ -1148,90 +1180,65 @@ class TurnOrchestrator:
         llm_started = time.perf_counter()
         try:
             operation = "direct_provider"
-            if use_message_pipeline and self.message_pipeline is not None:
+            if quest_bridge_ready and self.quest_enriched_pipeline is not None:
+                # 临独立链路（bridge/auto）。bridge 模式失败即抛（便于暴露问题）；
+                # auto 模式失败回退主链路，主链路再不行回退直管 JSON。
                 try:
-                    self._diagnostic(
-                        "message_pipeline.started",
-                        component="message_pipeline",
-                        phase="eventbus",
-                        status="processing",
+                    decision = await self._attempt_quest_bridge(
+                        session, turn, user_text, llm_started
                     )
-                    self._diagnostic(
-                        "event_enqueued",
-                        component="eventbus",
-                        phase="pipeline",
-                        status="queued",
-                        event_type="message.event",
-                        trace_id=turn.trace_id,
+                    operation = "quest_enriched_pipeline"
+                except MessagePipelineEmpty:
+                    raise
+                except MessagePipelineUnavailable as exc:
+                    main_available = bool(
+                        self.message_pipeline is not None
+                        and self.message_pipeline.available
                     )
-                    try:
-                        decision = await self._await_traced(
-                            turn,
-                            "eventbus.generate",
-                            asyncio.wait_for(
-                                self.message_pipeline.generate(
-                                    session=session,
-                                    user_text=user_text,
-                                    fast_action_active=turn.fast_action_active,
-                                    fast_action_feedback=turn.fast_action_feedback,
-                                    # Verified action receipts stay in the
-                                    # local controller.  They are deliberately
-                                    # not attached to the main EventBus/LLM
-                                    # request, which must remain dialogue-only.
-                                    action_facts=None,
-                                ),
-                                timeout=self.eventbus_terminal_deadline_seconds,
-                            ),
-                            kind="eventbus",
-                            category="await",
-                        )
+                    if self.quest_chain_mode == "auto" and main_available:
                         self._diagnostic(
-                            "event_woken",
-                            component="eventbus",
-                            phase="pipeline",
-                            status="completed",
-                            event_type="message.event",
+                            "quest_chain.fallback",
+                            component="quest_chain",
+                            status="fallback",
+                            fallback_to="astrbot_event_bus",
+                            reason_code=str(exc)[:64] or "unknown",
                             trace_id=turn.trace_id,
                         )
-                    except TimeoutError as exc:
-                        self._diagnostic(
-                            "event_completed",
-                            component="eventbus",
-                            phase="terminal",
-                            status="timeout",
-                            reason_code="astrbot_pipeline_timeout",
-                            deadline_ms=self.eventbus_terminal_deadline_seconds * 1000,
-                            trace_id=turn.trace_id,
-                        )
-                        if self.message_pipeline is not None:
-                            self.message_pipeline.abort_current_event(
-                                "astrbot_pipeline_timeout"
+                        try:
+                            decision = await self._attempt_eventbus(
+                                session, turn, user_text, llm_started
                             )
-                        raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
-                    finally:
-                        self._diagnostic(
-                            "event_cleanup_entered",
-                            component="eventbus",
-                            phase="pipeline",
-                            status="entered",
-                            event_type="message.event",
-                            trace_id=turn.trace_id,
+                            operation = "astrbot_event_bus"
+                        except MessagePipelineEmpty:
+                            raise
+                        except MessagePipelineUnavailable:
+                            if not self.allow_direct_provider_fallback:
+                                raise
+                            knowledge, environment = await self._read_knowledge_env(
+                                turn, user_text, interaction
+                            )
+                            decision = await self._attempt_direct(
+                                turn, user_text, history, interaction,
+                                relationship, knowledge, environment,
+                            )
+                            operation = "direct_provider"
+                    elif self.allow_direct_provider_fallback:
+                        knowledge, environment = await self._read_knowledge_env(
+                            turn, user_text, interaction
                         )
+                        decision = await self._attempt_direct(
+                            turn, user_text, history, interaction,
+                            relationship, knowledge, environment,
+                        )
+                        operation = "direct_provider"
+                    else:
+                        raise
+            elif use_message_pipeline and self.message_pipeline is not None:
+                try:
+                    decision = await self._attempt_eventbus(
+                        session, turn, user_text, llm_started
+                    )
                     operation = "astrbot_event_bus"
-                    self._diagnostic(
-                        "message_pipeline.completed",
-                        component="message_pipeline",
-                        phase="eventbus",
-                        status="ok",
-                        duration_ms=(time.perf_counter() - llm_started) * 1000,
-                    )
-                    self._diagnostic(
-                        "decision_ready",
-                        component="eventbus",
-                        phase="decision",
-                        status="ready",
-                        trace_id=turn.trace_id,
-                    )
                 except MessagePipelineUnavailable as exc:
                     self._diagnostic(
                         "message_pipeline.fallback",
@@ -1246,46 +1253,19 @@ class TurnOrchestrator:
                     if not self.allow_direct_provider_fallback:
                         raise
                     turn.server_timing.start_decision("direct_provider")
-                    knowledge, environment = await self._await_traced(
-                        turn,
-                        "context.knowledge_environment.fallback",
-                        asyncio.gather(
-                            self._read_knowledge(user_text, interaction),
-                            self._read_environment(),
-                        ),
-                        kind="adapter",
-                        category="await",
+                    knowledge, environment = await self._read_knowledge_env(
+                        turn, user_text, interaction
                     )
-                    decision = await self._await_traced(
-                        turn,
-                        "llm.provider_request",
-                        self.llm.generate(
-                            user_text=user_text,
-                            history=history,
-                            interaction=interaction,
-                            relationship=relationship,
-                            knowledge=knowledge,
-                            environment=environment,
-                        ),
-                        kind="llm_provider",
-                        category="provider",
+                    decision = await self._attempt_direct(
+                        turn, user_text, history, interaction,
+                        relationship, knowledge, environment,
                     )
                 except MessagePipelineEmpty:
                     raise
             else:
-                decision = await self._await_traced(
-                    turn,
-                    "llm.provider_request",
-                    self.llm.generate(
-                        user_text=user_text,
-                        history=history,
-                        interaction=interaction,
-                        relationship=relationship,
-                        knowledge=knowledge,
-                        environment=environment,
-                    ),
-                    kind="llm_provider",
-                    category="provider",
+                decision = await self._attempt_direct(
+                    turn, user_text, history, interaction,
+                    relationship, knowledge, environment,
                 )
             turn.server_timing.finish_decision()
             self._diagnostic(
@@ -1355,6 +1335,198 @@ class TurnOrchestrator:
             decision,
             interaction=interaction,
             relationship=relationship,
+        )
+
+    async def _attempt_quest_bridge(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        user_text: str,
+        llm_started: float,
+    ) -> ModelDecision:
+        """Run the bridge-owned enriched chain (quest_chain_mode bridge/auto)."""
+        self._diagnostic(
+            "quest_chain.started",
+            component="quest_chain",
+            phase="bridge",
+            status="processing",
+            trace_id=turn.trace_id,
+        )
+        try:
+            decision = await self._await_traced(
+                turn,
+                "quest_chain.generate",
+                asyncio.wait_for(
+                    self.quest_enriched_pipeline.generate(
+                        session=session,
+                        user_text=user_text,
+                        fast_action_active=turn.fast_action_active,
+                        fast_action_feedback=turn.fast_action_feedback,
+                        action_facts=None,
+                    ),
+                    timeout=self.eventbus_terminal_deadline_seconds,
+                ),
+                kind="quest_chain",
+                category="await",
+            )
+        except TimeoutError as exc:
+            if self.quest_enriched_pipeline is not None:
+                self.quest_enriched_pipeline.abort_current_event(
+                    "quest_chain_timeout"
+                )
+            self._diagnostic(
+                "quest_chain.completed",
+                component="quest_chain",
+                phase="terminal",
+                status="timeout",
+                reason_code="quest_enriched_pipeline_timeout",
+                deadline_ms=self.eventbus_terminal_deadline_seconds * 1000,
+                trace_id=turn.trace_id,
+            )
+            raise MessagePipelineUnavailable(
+                "quest_enriched_pipeline_timeout"
+            ) from exc
+        self._diagnostic(
+            "quest_chain.completed",
+            component="quest_chain",
+            phase="bridge",
+            status="ok",
+            duration_ms=(time.perf_counter() - llm_started) * 1000,
+            trace_id=turn.trace_id,
+        )
+        return decision
+
+    async def _attempt_eventbus(
+        self,
+        session: SessionState,
+        turn: TurnState,
+        user_text: str,
+        llm_started: float,
+    ) -> ModelDecision:
+        """Run the shared AstrBot EventBus chain (quest_chain_mode main)."""
+        self._diagnostic(
+            "message_pipeline.started",
+            component="message_pipeline",
+            phase="eventbus",
+            status="processing",
+        )
+        self._diagnostic(
+            "event_enqueued",
+            component="eventbus",
+            phase="pipeline",
+            status="queued",
+            event_type="message.event",
+            trace_id=turn.trace_id,
+        )
+        try:
+            decision = await self._await_traced(
+                turn,
+                "eventbus.generate",
+                asyncio.wait_for(
+                    self.message_pipeline.generate(
+                        session=session,
+                        user_text=user_text,
+                        fast_action_active=turn.fast_action_active,
+                        fast_action_feedback=turn.fast_action_feedback,
+                        # Verified action receipts stay in the local controller.
+                        # They are deliberately not attached to the main
+                        # EventBus/LLM request, which must remain dialogue-only.
+                        action_facts=None,
+                    ),
+                    timeout=self.eventbus_terminal_deadline_seconds,
+                ),
+                kind="eventbus",
+                category="await",
+            )
+            self._diagnostic(
+                "event_woken",
+                component="eventbus",
+                phase="pipeline",
+                status="completed",
+                event_type="message.event",
+                trace_id=turn.trace_id,
+            )
+        except TimeoutError as exc:
+            self._diagnostic(
+                "event_completed",
+                component="eventbus",
+                phase="terminal",
+                status="timeout",
+                reason_code="astrbot_pipeline_timeout",
+                deadline_ms=self.eventbus_terminal_deadline_seconds * 1000,
+                trace_id=turn.trace_id,
+            )
+            if self.message_pipeline is not None:
+                self.message_pipeline.abort_current_event(
+                    "astrbot_pipeline_timeout"
+                )
+            raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
+        finally:
+            self._diagnostic(
+                "event_cleanup_entered",
+                component="eventbus",
+                phase="pipeline",
+                status="entered",
+                event_type="message.event",
+                trace_id=turn.trace_id,
+            )
+        self._diagnostic(
+            "message_pipeline.completed",
+            component="message_pipeline",
+            phase="eventbus",
+            status="ok",
+            duration_ms=(time.perf_counter() - llm_started) * 1000,
+        )
+        self._diagnostic(
+            "decision_ready",
+            component="eventbus",
+            phase="decision",
+            status="ready",
+            trace_id=turn.trace_id,
+        )
+        return decision
+
+    async def _attempt_direct(
+        self,
+        turn: TurnState,
+        user_text: str,
+        history: list[dict[str, str]],
+        interaction: InteractionEvent | None,
+        relationship: dict[str, Any] | None,
+        knowledge: list[dict[str, Any]],
+        environment: dict[str, Any] | None,
+    ) -> ModelDecision:
+        """Run the direct-provider dialogue-only chain (fallback)."""
+        return await self._await_traced(
+            turn,
+            "llm.provider_request",
+            self.llm.generate(
+                user_text=user_text,
+                history=history,
+                interaction=interaction,
+                relationship=relationship,
+                knowledge=knowledge,
+                environment=environment,
+            ),
+            kind="llm_provider",
+            category="provider",
+        )
+
+    async def _read_knowledge_env(
+        self,
+        turn: TurnState,
+        user_text: str,
+        interaction: InteractionEvent | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        return await self._await_traced(
+            turn,
+            "context.knowledge_environment.fallback",
+            asyncio.gather(
+                self._read_knowledge(user_text, interaction),
+                self._read_environment(),
+            ),
+            kind="adapter",
+            category="await",
         )
 
     async def _deliver_decision(

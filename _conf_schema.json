@@ -189,6 +189,55 @@
     "hint": "开启后不进入 AstrBot EventBus，不需要 Bot/User 或“序”；Quest 只使用临已选择的聊天 Provider。关系、记忆和其他消息插件不会注入。默认关闭。",
     "default": false
   },
+  "quest_chain_mode": {
+    "description": "Quest 对话链路模式",
+    "type": "string",
+    "options": [
+      "main",
+      "bridge",
+      "auto"
+    ],
+    "hint": "main=AstrBot 主链路（共享事件总线，完整插件钩子，无钩子超时，现状基线）；bridge=临独立链路（复刻钩子富化但逐钩子超时熔断+直管 LLM，隔离 QQ 洪峰）；auto=先试 bridge 失败回退 main。默认 main。可在临 operator 页切换。",
+    "default": "main"
+  },
+  "quest_chain_per_hook_budget_seconds": {
+    "description": "临独立链·单个插件钩子超时秒数",
+    "type": "float",
+    "hint": "仅 quest_chain_mode 为 bridge/auto 时生效。任一 on_llm_request 钩子超过该时长即熔断跳过，用该插件最近一次成功注入的缓存兜底。",
+    "default": 6.0,
+    "minimum": 0.5,
+    "maximum": 30.0
+  },
+  "quest_chain_total_hook_budget_seconds": {
+    "description": "临独立链·钩子链总预算秒数",
+    "type": "float",
+    "hint": "仅 bridge/auto 生效。所有请求钩子的累计时间上限，超出后剩余钩子跳过，直接进入 LLM。",
+    "default": 10.0,
+    "minimum": 1.0,
+    "maximum": 60.0
+  },
+  "quest_chain_llm_timeout_seconds": {
+    "description": "临独立链·直管 LLM 超时秒数",
+    "type": "float",
+    "hint": "仅 bridge/auto 生效。直管调用聊天 Provider 的超时。",
+    "default": 30.0,
+    "minimum": 5.0,
+    "maximum": 120.0
+  },
+  "quest_chain_memory_cache_ttl_seconds": {
+    "description": "临独立链·钩子贡献缓存有效期秒数",
+    "type": "float",
+    "hint": "仅 bridge/auto 生效。钩子超时熔断时，回退注入该插件在此有效期内的最近一次成功富化片段（如记忆），过期则放弃兜底。",
+    "default": 30.0,
+    "minimum": 0.0,
+    "maximum": 600.0
+  },
+  "quest_chain_excluded_plugins": {
+    "description": "临独立链·跳过的插件名列表",
+    "type": "string",
+    "hint": "仅 bridge/auto 生效。英文逗号分隔的插件名；这些插件的钩子不参与临独立链。留空表示不跳过任何插件。",
+    "default": ""
+  },
   "persona_source_mode": {
     "description": "具身角色人格来源",
     "type": "string",

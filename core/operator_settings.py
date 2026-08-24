@@ -447,6 +447,117 @@ class OperatorSettings:
             "eventbus_enabled": not enabled,
         }
 
+    def quest_chain_snapshot(self) -> dict[str, Any]:
+        mode = str(self.config.get("quest_chain_mode", "main") or "main")
+        mode = mode.strip().lower()
+        if mode not in {"main", "bridge", "auto"}:
+            mode = "main"
+        pipeline = getattr(self.orchestrator, "quest_enriched_pipeline", None)
+        available = bool(getattr(pipeline, "available", False))
+        availability_reason = (
+            str(getattr(pipeline, "availability_reason", "") or "")
+            if pipeline is not None
+            else "quest_enriched_pipeline_unavailable"
+        )
+        return {
+            "mode": mode,
+            "bridge_available": available,
+            "bridge_availability_reason": availability_reason,
+            "per_hook_budget_seconds": self._float_cfg(
+                "quest_chain_per_hook_budget_seconds", 6.0
+            ),
+            "total_hook_budget_seconds": self._float_cfg(
+                "quest_chain_total_hook_budget_seconds", 10.0
+            ),
+            "llm_timeout_seconds": self._float_cfg(
+                "quest_chain_llm_timeout_seconds", 30.0
+            ),
+            "memory_cache_ttl_seconds": self._float_cfg(
+                "quest_chain_memory_cache_ttl_seconds", 30.0
+            ),
+            "excluded_plugins": str(
+                self.config.get("quest_chain_excluded_plugins", "") or ""
+            ),
+            "config_writable": config_is_writable(self.config),
+        }
+
+    async def save_quest_chain_settings(
+        self,
+        *,
+        mode: str,
+        per_hook_budget_seconds: float | None = None,
+        total_hook_budget_seconds: float | None = None,
+        llm_timeout_seconds: float | None = None,
+        memory_cache_ttl_seconds: float | None = None,
+        excluded_plugins: str = "",
+    ) -> dict[str, Any]:
+        normalized_mode = str(mode or "main").strip().lower()
+        if normalized_mode not in {"main", "bridge", "auto"}:
+            raise OperatorSettingsError(
+                "invalid_quest_chain_mode",
+                422,
+                "无效的链路模式，仅支持 main / bridge / auto",
+            )
+        excluded = str(excluded_plugins or "")[:512]
+        changes: dict[str, Any] = {
+            "quest_chain_mode": normalized_mode,
+            "quest_chain_excluded_plugins": excluded,
+        }
+        if per_hook_budget_seconds is not None:
+            changes["quest_chain_per_hook_budget_seconds"] = float(
+                per_hook_budget_seconds
+            )
+        if total_hook_budget_seconds is not None:
+            changes["quest_chain_total_hook_budget_seconds"] = float(
+                total_hook_budget_seconds
+            )
+        if llm_timeout_seconds is not None:
+            changes["quest_chain_llm_timeout_seconds"] = float(llm_timeout_seconds)
+        if memory_cache_ttl_seconds is not None:
+            changes["quest_chain_memory_cache_ttl_seconds"] = float(
+                memory_cache_ttl_seconds
+            )
+        await self._persist_many(changes)
+        # 热更新：直接改写运行时 orchestrator 与临独立链适配器，下一轮对话即生效。
+        orchestrator = self.orchestrator
+        if orchestrator is not None:
+            orchestrator.quest_chain_mode = normalized_mode
+            pipeline = getattr(orchestrator, "quest_enriched_pipeline", None)
+            if pipeline is not None:
+                pipeline.configure(
+                    enabled=normalized_mode in {"bridge", "auto"},
+                    per_hook_budget_seconds=changes.get(
+                        "quest_chain_per_hook_budget_seconds"
+                    ),
+                    total_hook_budget_seconds=changes.get(
+                        "quest_chain_total_hook_budget_seconds"
+                    ),
+                    llm_timeout_seconds=changes.get(
+                        "quest_chain_llm_timeout_seconds"
+                    ),
+                    memory_cache_ttl_seconds=changes.get(
+                        "quest_chain_memory_cache_ttl_seconds"
+                    ),
+                    excluded_plugins=tuple(
+                        name.strip()
+                        for name in excluded.split(",")
+                        if name.strip()
+                    ),
+                )
+        self._diagnostic(
+            "quest_chain.mode_updated",
+            component="quest_chain",
+            status="ready",
+            mode=normalized_mode,
+        )
+        return self.quest_chain_snapshot()
+
+    def _float_cfg(self, key: str, default: float) -> float:
+        try:
+            return float(self.config.get(key, default))
+        except (TypeError, ValueError):
+            return float(default)
+
     def fast_action_snapshot(self) -> dict[str, Any]:
         adapter = self.fast_action
         if adapter is None:
@@ -1108,6 +1219,12 @@ class OperatorSettings:
                 "fast_action_timeout_seconds",
                 "fast_action_timeout_policy_revision",
                 "quest_direct_dialogue_mode",
+                "quest_chain_mode",
+                "quest_chain_per_hook_budget_seconds",
+                "quest_chain_total_hook_budget_seconds",
+                "quest_chain_llm_timeout_seconds",
+                "quest_chain_memory_cache_ttl_seconds",
+                "quest_chain_excluded_plugins",
                 "astrbot_stt_provider_id",
                 "enable_astrbot_stt",
                 "enable_plugin_mimo_stt",

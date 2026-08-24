@@ -5,6 +5,8 @@ let sttSettings = null;
 let personaSettings = null;
 let platformSettings = null;
 let questIdentitySettings = null;
+let questChainSettings = null;
+let questChainMode = "main";
 let serviceState = null;
 let serviceRefreshInFlight = null;
 let personaProfiles = null;
@@ -349,6 +351,101 @@ function renderDialogueMode(mode) {
       : "未启用：正式 EventBus 模式需要服务端身份绑定。";
   if (!operatorSettings.selected_available) {
     status.textContent = "请先选择一个聊天 Provider；基础模式也需要模型。";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quest 链路模式（双模）：主链路 / 临独立链路 / 自动回退，按模式条件显隐设置区。
+// ---------------------------------------------------------------------------
+
+function setQuestChainMode(mode) {
+  questChainMode = ["main", "bridge", "auto"].includes(mode) ? mode : "main";
+  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
+    const selected = button.dataset.questChainMode === questChainMode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  // 条件显隐：选 main 隐藏 bridge 专属设置；选 bridge 隐藏 main 专属说明；
+  // auto 两者都显示（auto 会用到 bridge 链路，也可能回退 main）。
+  const bridgeFields = document.getElementById("quest-chain-bridge-fields");
+  const mainFields = document.getElementById("quest-chain-main-fields");
+  if (bridgeFields) bridgeFields.hidden = questChainMode === "main";
+  if (mainFields) mainFields.hidden = questChainMode === "bridge";
+}
+
+function renderQuestChainSettings(settings) {
+  questChainSettings = settings || {};
+  const button = document.getElementById("save-quest-chain-button");
+  const status = document.getElementById("quest-chain-status");
+  if (!button || !status) return;
+  const writable = questChainSettings.config_writable === true;
+  const perHook = document.getElementById("quest-chain-per-hook");
+  const totalHook = document.getElementById("quest-chain-total-hook");
+  const llmTimeout = document.getElementById("quest-chain-llm-timeout");
+  const cacheTtl = document.getElementById("quest-chain-cache-ttl");
+  const excluded = document.getElementById("quest-chain-excluded");
+  if (perHook) perHook.value = questChainSettings.per_hook_budget_seconds ?? 6.0;
+  if (totalHook) totalHook.value = questChainSettings.total_hook_budget_seconds ?? 10.0;
+  if (llmTimeout) llmTimeout.value = questChainSettings.llm_timeout_seconds ?? 30.0;
+  if (cacheTtl) cacheTtl.value = questChainSettings.memory_cache_ttl_seconds ?? 30.0;
+  if (excluded) excluded.value = questChainSettings.excluded_plugins || "";
+  [perHook, totalHook, llmTimeout, cacheTtl, excluded].forEach((input) => {
+    if (input) input.disabled = !writable;
+  });
+  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
+    button.disabled = !writable;
+  });
+  setQuestChainMode(questChainSettings.mode || "main");
+  button.disabled = !writable;
+  if (!writable) {
+    status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
+    return;
+  }
+  const modeLabel = {
+    main: "AstrBot 主链路",
+    bridge: "临独立链路",
+    auto: "自动回退"
+  }[questChainSettings.mode || "main"] || "AstrBot 主链路";
+  status.textContent = "当前模式：" + modeLabel;
+}
+
+async function loadQuestChainSettings() {
+  const response = await apiGet("pairing/quest-chain-settings");
+  renderQuestChainSettings(response.quest_chain);
+}
+
+async function saveQuestChainSettings() {
+  const button = document.getElementById("save-quest-chain-button");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const numberValue = (id) => {
+      const node = document.getElementById(id);
+      const value = node ? Number(node.value) : NaN;
+      return Number.isFinite(value) ? value : null;
+    };
+    const response = await apiPost("pairing/quest-chain-settings", {
+      mode: questChainMode,
+      per_hook_budget_seconds: numberValue("quest-chain-per-hook"),
+      total_hook_budget_seconds: numberValue("quest-chain-total-hook"),
+      llm_timeout_seconds: numberValue("quest-chain-llm-timeout"),
+      memory_cache_ttl_seconds: numberValue("quest-chain-cache-ttl"),
+      excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || ""
+    });
+    renderQuestChainSettings(response.quest_chain);
+    const modeLabel = {
+      main: "AstrBot 主链路",
+      bridge: "临独立链路",
+      auto: "自动回退"
+    }[response.quest_chain?.mode || "main"];
+    toast("已保存：Quest 链路模式 = " + modeLabel);
+  } catch (error) {
+    toast(error.message || "保存链路模式失败", true);
+  } finally {
+    button.setAttribute("aria-busy", "false");
+    button.disabled = questChainSettings?.config_writable !== true;
   }
 }
 
@@ -2295,6 +2392,29 @@ function bindEvents() {
     .getElementById("save-dialogue-mode-button")
     .addEventListener("click", saveDialogueMode);
   document
+    .getElementById("save-quest-chain-button")
+    .addEventListener("click", saveQuestChainSettings);
+  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setQuestChainMode(button.dataset.questChainMode);
+    });
+    button.addEventListener("keydown", (event) => {
+      const tabs = Array.from(
+        document.querySelectorAll("[data-quest-chain-mode]")
+      );
+      const current = tabs.indexOf(event.currentTarget);
+      let target = -1;
+      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target < 0) return;
+      event.preventDefault();
+      tabs[target].click();
+      tabs[target].focus();
+    });
+  });
+  document
     .getElementById("save-stt-button")
     .addEventListener("click", saveSttSettings);
   document
@@ -2457,6 +2577,7 @@ function clearStartupError() {
 const INITIAL_DATA_SECTIONS = [
   { key: "service", label: "服务状态", load: () => loadServiceStatus() },
   { key: "operator", label: "聊天模型", load: loadOperatorSettings },
+  { key: "quest-chain", label: "对话链路", load: loadQuestChainSettings },
   { key: "fast-action", label: "快速动作", load: loadFastActionSettings },
   { key: "stt", label: "语音识别", load: loadSttSettings },
   { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
@@ -2468,6 +2589,7 @@ const INITIAL_DATA_SECTIONS = [
 function markInitialSectionFailed(key) {
   const messages = {
     operator: ["model-status", "聊天模型读取失败，可单独重试。"],
+    "quest-chain": ["quest-chain-status", "对话链路设置读取失败，可单独重试。"],
     "fast-action": ["fast-action-status", "快速动作设置读取失败，可单独重试。"],
     stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
