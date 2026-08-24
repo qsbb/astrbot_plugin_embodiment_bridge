@@ -86,6 +86,7 @@ class AstrBotMessagePipelineAdapter:
         self.last_event_cleanup_called: bool | None = None
         self.last_event_timing: dict[str, int | str | bool] = {}
         self.last_event_trace: dict[str, int | str | bool] = {}
+        self._current_event: Any | None = None
         self._status_generation = 0
         self._status_generation_counter = 0
 
@@ -304,6 +305,7 @@ class AstrBotMessagePipelineAdapter:
         event._quest_bridge_timing = timing
         event._quest_bridge_trace = trace
         event._quest_bridge_metadata = _event_metadata_snapshot(event)
+        self._current_event = event
         _install_trace_probe(event, stage)
         stage(
             "event_created",
@@ -383,6 +385,17 @@ class AstrBotMessagePipelineAdapter:
                 # expose a TraceSpan callback.  The marker is still enough to
                 # close the queue/processing spans accurately.
                 trace.finish_eventbus(status="completed")
+            # If the event did not complete cleanly (timeout / cancellation),
+            # abort it so that late send() / send_streaming() calls inside
+            # AstrBot's event loop do not produce valid replies for a turn
+            # that the orchestrator already abandoned.
+            if not event._quest_done.is_set():
+                _abort_synthetic_event(
+                    event,
+                    reason="pipeline_timeout_or_cancelled",
+                    stage=stage,
+                )
+            self._current_event = None
             publish(
                 last_event_timing=_public_event_timing(timing),
                 last_event_trace=_public_event_trace(timing),
@@ -693,6 +706,19 @@ class AstrBotMessagePipelineAdapter:
     async def close(self) -> None:
         return None
 
+    def abort_current_event(self, reason: str = "aborted") -> None:
+        """Terminate the synthetic event currently owned by this adapter.
+
+        Safe to call when no event is in flight (no-op).  The orchestrator
+        calls this on EventBus timeout, turn interrupt, and session close
+        so that late ``send()`` / ``send_streaming()`` calls from
+        AstrBot's event loop do not produce valid replies.
+        """
+        event = self._current_event
+        if event is None:
+            return
+        _abort_synthetic_event(event, reason=reason)
+
     def _record_event_outcome(
         self,
         event: Any,
@@ -860,9 +886,15 @@ def _build_capture_event(
     event._quest_messages = []
     event._quest_stream = ""
     event._quest_cleanup_called = False
+    event._quest_bridge_aborted = False
+    event._quest_bridge_abort_reason = ""
+    event._quest_bridge_late_event_count = 0
     original_cleanup = event.cleanup_temporary_local_files
 
     async def send(self: Any, outgoing: Any) -> None:
+        if self._quest_bridge_aborted:
+            self._quest_bridge_late_event_count += 1
+            return
         self._has_send_oper = True
         _capture_message(self, outgoing, streaming=False)
 
@@ -872,8 +904,14 @@ def _build_capture_event(
         use_fallback: bool = False,
     ) -> None:
         del use_fallback
+        if self._quest_bridge_aborted:
+            self._quest_bridge_late_event_count += 1
+            return
         self._has_send_oper = True
         async for outgoing in generator:
+            if self._quest_bridge_aborted:
+                self._quest_bridge_late_event_count += 1
+                return
             _capture_message(self, outgoing, streaming=True)
 
     async def send_typing(self: Any) -> None:
@@ -969,6 +1007,47 @@ def _session_spatial_context(session: Any) -> dict[str, Any] | None:
         return None
     value = dump(mode="json")
     return dict(value) if isinstance(value, dict) else None
+
+
+def _abort_synthetic_event(
+    event: Any,
+    *,
+    reason: str = "aborted",
+    stage: Any = None,
+) -> None:
+    """Idempotently terminate a synthetic EventBus event owned by the bridge.
+
+    After this call the event will no longer produce valid text or audio
+    replies, and late ``send()`` / ``send_streaming()`` calls become no-ops.
+    """
+    if getattr(event, "_quest_bridge_aborted", False):
+        return
+    event._quest_bridge_aborted = True
+    event._quest_bridge_abort_reason = str(reason or "aborted")[:128]
+    event.set_extra("agent_stop_requested", True)
+    stopper = getattr(event, "stop_event", None)
+    if callable(stopper):
+        try:
+            stopper()
+        except Exception:
+            pass
+    cleaner = getattr(event, "cleanup_temporary_local_files", None)
+    if callable(cleaner):
+        try:
+            cleaner()
+        except Exception:
+            pass
+    if callable(stage):
+        try:
+            stage(
+                "event_aborted",
+                status="aborted",
+                event_type="message.event",
+                abort_reason=event._quest_bridge_abort_reason,
+                late_event_count=event._quest_bridge_late_event_count,
+            )
+        except Exception:
+            pass
 
 
 def _capture_message(event: Any, message: Any, *, streaming: bool) -> None:

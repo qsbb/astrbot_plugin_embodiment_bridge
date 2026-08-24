@@ -109,8 +109,11 @@ _SAME_TURN_ACTION_COMPLETION_CLAIM = re.compile(
     re.IGNORECASE,
 )
 
-# Bridge deadline leaves transport/headset margin before the 35-second client budget.
-EVENTBUS_TERMINAL_DEADLINE_SECONDS = 29.0
+# Bridge deadline leaves transport/headset margin before the 60-second client budget.
+# Raised from 29 s → 45 s after the 2026-08-24 latency test showed that
+# AstrBot EventBus plugin hooks (10-15 s) + LLM provider (8-12 s) routinely
+# exceed 29 s in QQ-active periods.  The matching adapter timeout is 90 s.
+EVENTBUS_TERMINAL_DEADLINE_SECONDS = 45.0
 
 
 class TurnOrchestrator:
@@ -155,7 +158,7 @@ class TurnOrchestrator:
         self.diagnostic_log = diagnostic_log
         self.server_timing_enabled = bool(server_timing_enabled)
         self.eventbus_terminal_deadline_seconds = min(
-            34.0, max(0.01, float(eventbus_terminal_deadline_seconds))
+            90.0, max(0.01, float(eventbus_terminal_deadline_seconds))
         )
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
@@ -494,6 +497,8 @@ class TurnOrchestrator:
                 "turn_cancelled", component="turn", phase="audio", status="cancelled", trace_id=turn.trace_id
             )
             turn.server_timing.finish_stt()
+            if self.message_pipeline is not None:
+                self.message_pipeline.abort_current_event("turn_interrupted")
             raise
         except MessagePipelineEmpty as exc:
             stt_status = "error"
@@ -573,6 +578,8 @@ class TurnOrchestrator:
                 status="cancelled",
                 trace_id=turn.trace_id,
             )
+            if self.message_pipeline is not None:
+                self.message_pipeline.abort_current_event("turn_interrupted")
             raise
         except MessagePipelineEmpty as exc:
             await self._emit_pipeline_empty_error(session, turn, exc, phase="text")
@@ -1196,6 +1203,10 @@ class TurnOrchestrator:
                             deadline_ms=self.eventbus_terminal_deadline_seconds * 1000,
                             trace_id=turn.trace_id,
                         )
+                        if self.message_pipeline is not None:
+                            self.message_pipeline.abort_current_event(
+                                "astrbot_pipeline_timeout"
+                            )
                         raise MessagePipelineUnavailable("astrbot_pipeline_timeout") from exc
                     finally:
                         self._diagnostic(
@@ -1853,6 +1864,8 @@ class TurnOrchestrator:
             "astrbot_pipeline_no_response",
         }:
             return "AstrBot 消息链已完成，但没有产生可用回复"
+        if reason == "astrbot_pipeline_timeout":
+            return "AstrBot 消息链路繁忙，请稍后重试"
         return "AstrBot 消息链路不可用，请检查临的独立日志"
 
     async def _emit_pipeline_empty_error(
