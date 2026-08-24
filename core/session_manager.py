@@ -768,9 +768,13 @@ class SessionManager:
         generation: int,
         payload: dict[str, Any],
     ) -> bool:
+        # still_valid is intentionally NOT conditioned on stream_attached.
+        # When the SSE stream disconnects temporarily (Quest ~10s cycle),
+        # critical events (reply.audio.chunk etc.) must be cached in the
+        # queue and re-delivered once the frontend reattaches the stream.
+        # If the turn is genuinely cancelled, _is_current_unlocked handles
+        # that; if the session closes, queue.close() wakes the producer.
         def still_valid() -> bool:
-            if not session.stream_attached:
-                return False
             return self._is_current_unlocked(session, turn_id, generation)
 
         if not still_valid():
