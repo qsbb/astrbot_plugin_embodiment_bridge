@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+## 1.1.4 - 2026-08-24
+
 ### Added
 
+- 新增 Quest 双模对话链路（`main` / `bridge` / `auto`）：`bridge` 复刻 AstrBot 主链路的
+  OnLLMRequestEvent 钩子富化（记忆/知识/人设/关系/环境），但逐钩子 `asyncio.wait_for`
+  超时熔断 + 贡献缓存兜底 + 直管 LLM，隔离 QQ 洪峰与共享事件总线，规避慢钩子拖死整轮；
+  `auto` 模式失败自动回退主链路再回退直管。默认 `main`（现状基线，零行为变化）。临 operator
+  页面新增分段控件切换三模式，并按模式条件显隐设置区；`pairing/quest-chain-settings` 路由
+  支持热更新（无需重启）。
 - 新增默认关闭的插件钩子耗时诊断：按临创建的 EventBus 轮次记录已注册插件的
   LLM/Agent/工具/发送协程 hook、方法名、优先级、状态和 wall-clock 耗时；兼容 AstrBot
   热加载的 Handler 绑定，并在停用或卸载时恢复原始回调。
