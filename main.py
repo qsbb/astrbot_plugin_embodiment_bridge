@@ -499,7 +499,7 @@ class EmbodimentBridgePlugin(Star):
                 max_json_body_bytes=max_json_body_bytes,
                 max_audio_request_bytes=max_audio_request_bytes,
                 sse_heartbeat_seconds=self._int_config(
-                    "sse_heartbeat_seconds", 15, 5, 60
+                    "sse_heartbeat_seconds", 5, 5, 60
                 ),
             ),
             logger=self._component_logger,

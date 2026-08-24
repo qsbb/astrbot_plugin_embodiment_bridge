@@ -179,6 +179,16 @@ class BoundedEventQueue:
             self._items.clear()
             self._condition.notify_all()
 
+    async def wake_putters(self) -> None:
+        """Wake producers blocked in put() so they can re-check validity.
+
+        SSE detach calls this when the frontend disconnects; without it a
+        critical event (e.g. reply.audio.chunk) blocked on a full queue
+        would otherwise wait indefinitely for a consumer that is gone.
+        """
+        async with self._condition:
+            self._condition.notify_all()
+
     def _discard_oldest_droppable(self) -> bool:
         for index, existing in enumerate(self._items):
             if existing.event_type in DROPPABLE_EVENT_TYPES:
@@ -759,6 +769,8 @@ class SessionManager:
         payload: dict[str, Any],
     ) -> bool:
         def still_valid() -> bool:
+            if not session.stream_attached:
+                return False
             return self._is_current_unlocked(session, turn_id, generation)
 
         if not still_valid():
@@ -835,6 +847,7 @@ class SessionManager:
     async def detach_stream(self, session: SessionState) -> None:
         async with session.lock:
             session.stream_attached = False
+        await session.queue.wake_putters()
 
     async def append_history(self, session: SessionState, role: str, text: str) -> None:
         if role not in {"user", "assistant"} or not text:
