@@ -36,6 +36,7 @@ from .interaction_policy import InteractionPolicy
 from .models import (
     PROTOCOL_VERSION,
     ActionSource,
+    AudioEndRequest,
     AvatarIntent,
     Emotion,
     Gesture,
@@ -141,6 +142,7 @@ class TurnOrchestrator:
         diagnostic_log: Any | None = None,
         server_timing_enabled: bool = False,
         eventbus_terminal_deadline_seconds: float = EVENTBUS_TERMINAL_DEADLINE_SECONDS,
+        streaming_final_grace_seconds: float = 2.0,
     ) -> None:
         self.sessions = sessions
         self.llm = llm
@@ -164,6 +166,9 @@ class TurnOrchestrator:
         self.server_timing_enabled = bool(server_timing_enabled)
         self.eventbus_terminal_deadline_seconds = min(
             90.0, max(0.01, float(eventbus_terminal_deadline_seconds))
+        )
+        self.streaming_final_grace_seconds = min(
+            10.0, max(0.25, float(streaming_final_grace_seconds))
         )
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
@@ -236,14 +241,40 @@ class TurnOrchestrator:
             await self._start_streaming_stt(session, turn)
         return turn
 
-    async def finish_audio(self, session: SessionState, turn_id: str) -> TurnState:
-        turn, pcm16 = await self.sessions.end_audio(session, turn_id)
+    async def finish_audio(
+        self,
+        session: SessionState,
+        turn_id: str,
+        end_request: AudioEndRequest | None = None,
+    ) -> TurnState:
+        turn, pcm16 = await self.sessions.end_audio(
+            session,
+            turn_id,
+            last_sequence=end_request.last_sequence if end_request else None,
+            total_bytes=end_request.total_bytes if end_request else None,
+        )
+        ages = list(turn.audio_chunk_ages_ms)
         self._diagnostic(
             "audio.received",
             component="audio_input",
             phase="upload_complete",
             status="ok",
             bytes=len(pcm16),
+            chunks=turn.audio_chunk_count,
+            chunk_age_ms=round(sum(ages) / len(ages), 2) if ages else None,
+            chunk_age_max_ms=round(max(ages), 2) if ages else None,
+            chunk_age_p95_ms=round(_percentile(ages, 0.95), 2) if ages else None,
+            offset_mismatch=turn.audio_offset_mismatch,
+            end_last_sequence=turn.audio_end_last_sequence,
+            end_total_bytes=turn.audio_end_total_bytes,
+            end_sequence_mismatch=(
+                turn.audio_end_last_sequence is not None
+                and turn.audio_end_last_sequence != turn.audio_chunk_count - 1
+            ),
+            end_bytes_mismatch=(
+                turn.audio_end_total_bytes is not None
+                and turn.audio_end_total_bytes != len(pcm16)
+            ),
         )
         stream_task = await self.sessions.close_stt_stream_input(session, turn)
         await self._launch(
@@ -273,6 +304,8 @@ class TurnOrchestrator:
                 yield chunk
 
         async def consume() -> None:
+            consume_started = time.perf_counter()
+            first_partial_ms: float | None = None
             try:
                 self._diagnostic(
                     "stt.streaming_started",
@@ -294,6 +327,10 @@ class TurnOrchestrator:
                         emitted = await self._emit(
                             session, turn, {"type": "asr.partial", "text": text}
                         )
+                        latency_ms = (time.perf_counter() - consume_started) * 1000
+                        first_partial = first_partial_ms is None
+                        if first_partial:
+                            first_partial_ms = latency_ms
                         if emitted:
                             self._diagnostic(
                                 "stt.partial",
@@ -301,6 +338,8 @@ class TurnOrchestrator:
                                 phase="streaming",
                                 status="processing",
                                 characters=len(text),
+                                latency_ms=round(latency_ms, 2),
+                                first=first_partial,
                             )
                         continue
                     if not text or turn.stt_stream_final is not None:
@@ -314,6 +353,14 @@ class TurnOrchestrator:
                         phase="streaming",
                         status="ok",
                         characters=len(text),
+                        latency_ms=round(
+                            (time.perf_counter() - consume_started) * 1000, 2
+                        ),
+                        first_partial_ms=(
+                            round(first_partial_ms, 2)
+                            if first_partial_ms is not None
+                            else None
+                        ),
                     )
             except asyncio.CancelledError:
                 raise
@@ -426,7 +473,9 @@ class TurnOrchestrator:
                     await self._await_traced(
                         turn,
                         "stt.streaming_wait",
-                        stream_task,
+                        asyncio.wait_for(
+                            stream_task, self.streaming_final_grace_seconds
+                        ),
                         kind="stt",
                         category="provider",
                     )
@@ -436,6 +485,21 @@ class TurnOrchestrator:
                     # The optional stream may be stopped for bounded queue
                     # backpressure.  The accumulated PCM remains the one fallback.
                     turn.stt_stream_failure = turn.stt_stream_failure or "cancelled"
+                except TimeoutError:
+                    # The recogniser accepted end-of-input but never committed a
+                    # final within the grace window.  Fall back to whole-PCM.
+                    if not stream_task.done():
+                        stream_task.cancel()
+                    turn.stt_stream_failure = (
+                        turn.stt_stream_failure or "final_timeout"
+                    )
+                    self._diagnostic(
+                        "stt.streaming_final_timeout",
+                        component="stt",
+                        phase="streaming",
+                        status="degraded",
+                        grace_seconds=self.streaming_final_grace_seconds,
+                    )
                 text = (turn.stt_stream_final or "").strip()
                 use_file_fallback = not text
                 if use_file_fallback:

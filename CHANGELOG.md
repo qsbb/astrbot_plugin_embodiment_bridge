@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-08-27
+
+### Added
+
+- 新增实时流式 STT（从零实现的低延迟语音识别）：`STTAdapter` 统一抽象
+  `transcribe_stream()` 分块流式接口，`StreamingSTTSession/StreamingSTTProvider/
+  StreamingSTTAdapter/CompositeSTTAdapter` 承载分块喂入、部分结果、最终结果与
+  文件式整段回退的组合链路。首个具体供应商为阿里云 DashScope 的 Fun-ASR-Realtime
+  （WebSocket + Bearer + 二进制 PCM16 帧，`result-generated` 产出部分/最终句子，
+  `task-finished` 收敛最终文本），`streaming_stt_provider` / `streaming_stt_api_key` /
+  `streaming_stt_model` / `streaming_stt_language` / `streaming_stt_connect_timeout_seconds`
+  配置即开即用；未配置时保持原有整段 PCM 文件式 STT 行为不变。
+- 新增流式最终结果宽限超时 `streaming_stt_final_grace_seconds`（默认 2.0s）：`audio/end`
+  后等待流式 provider 的最终结果，超时则自动回退整段 PCM 文件式 STT，避免 provider
+  挂起拖垮整轮。
+- 新增协议 1.1 可选时序元数据与分块年龄诊断：`audio/chunk` 携带 `byte_offset` /
+  `capture_elapsed_ms`，`audio/end` 携带 `last_sequence` / `total_bytes`；编排层据此
+  记录 `stt.partial` / `stt.streaming_final` 的 `latency_ms`、`first_partial_ms` 与
+  `audio.received` 的 `chunk_age_ms` / `chunk_age_max_ms` / `chunk_age_p95_ms` /
+  `offset_mismatch`，用于验收流式识别的真实端到端延迟（旧客户端缺失字段自动跳过）。
+
+### Changed
+
+- 流式 STT 仅以部分结果经 SSE/诊断下发，LLM 仍只在最终结果就绪后启动（默认不做推测性
+  LLM），保证现状语义下的低风险提速。
+- operator 页面的 STT 供应商选择继续指向整段文件式 STT 适配器；流式供应商由上述独立
+  配置项管理，二者互不影响。
+
+### Fixed
+
+- 修复 Fun-ASR-Realtime 最终结果收敛时丢弃尚未消费的部分结果事件的问题（部分结果改为
+  仅在队列满载时按需丢弃，最终/错误结果永不静默丢失）。
+
 ## 1.1.4 - 2026-08-24
 
 ### Added

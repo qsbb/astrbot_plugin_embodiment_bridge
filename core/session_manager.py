@@ -210,6 +210,13 @@ class TurnState:
     audio: bytearray = field(default_factory=bytearray)
     next_audio_sequence: int = 0
     audio_ended: bool = False
+    started_monotonic: float = field(default_factory=monotonic)
+    # Protocol-1.1 upload diagnostics (bounded; never stores raw audio).
+    audio_chunk_ages_ms: deque[float] = field(default_factory=lambda: deque(maxlen=64))
+    audio_chunk_count: int = 0
+    audio_offset_mismatch: bool = False
+    audio_end_last_sequence: int | None = None
+    audio_end_total_bytes: int | None = None
     task: asyncio.Task[None] | None = None
     # A streaming STT provider is optional.  Its input queue is deliberately
     # bounded: accumulated PCM remains the authoritative fallback input, while
@@ -546,8 +553,22 @@ class SessionManager:
                 raise AudioValidationError("audio sequence is not contiguous")
             if len(turn.audio) + len(decoded) > self.max_audio_bytes:
                 raise PayloadTooLarge("turn audio exceeds configured limit")
+            # Protocol-1.1 diagnostics. ``sequence`` contiguity is authoritative;
+            # a byte_offset mismatch is recorded but never rejects a turn, so
+            # older or approximate clients keep working.
+            if (
+                request.byte_offset is not None
+                and request.byte_offset != len(turn.audio)
+            ):
+                turn.audio_offset_mismatch = True
             turn.audio.extend(decoded)
             turn.next_audio_sequence += 1
+            turn.audio_chunk_count += 1
+            if request.capture_elapsed_ms is not None:
+                server_elapsed_ms = (monotonic() - turn.started_monotonic) * 1000
+                turn.audio_chunk_ages_ms.append(
+                    max(0.0, server_elapsed_ms - request.capture_elapsed_ms)
+                )
             stream_queue = turn.stt_stream_queue
             stream_task = turn.stt_stream_task
             total_bytes = len(turn.audio)
@@ -569,7 +590,12 @@ class SessionManager:
         return total_bytes
 
     async def end_audio(
-        self, session: SessionState, turn_id: str
+        self,
+        session: SessionState,
+        turn_id: str,
+        *,
+        last_sequence: int | None = None,
+        total_bytes: int | None = None,
     ) -> tuple[TurnState, bytes]:
         async with session.lock:
             turn = session.current_turn
@@ -580,6 +606,8 @@ class SessionManager:
             if not turn.audio:
                 raise AudioValidationError("audio stream is empty")
             turn.audio_ended = True
+            turn.audio_end_last_sequence = last_sequence
+            turn.audio_end_total_bytes = total_bytes
             audio = bytes(turn.audio)
             turn.audio.clear()
             return turn, audio

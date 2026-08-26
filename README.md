@@ -79,7 +79,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 - 让具身客户端的普通文字和语音进入 AstrBot EventBus，经过已配置的人格、历史、记忆、知识、工具及后处理插件。
 - 使用 Protocol 1.0 提供 HTTP 上行与 SSE 下行，支持轮次打断、新轮仲裁、迟到事件隔离、有界队列和慢客户端背压。
 - 支持实时打断：`/interrupt` 或新轮 `cancel_previous` 会取消旧轮的回复、快速动作与流式 STT 任务并丢弃其排队事件；客户端可经 `/playback/receipt` 回报播放进度与中断，仅作脱敏诊断。
-- 接收 PCM16 16 kHz 单声道输入；通过 AstrBot STT Provider 完成整轮识别；Provider 提供流式契约时并行产出仅供诊断的实时 partial，非空 final 才进入正式轮次，流式不可用或失败时回退整轮文件式识别。
+- 接收 PCM16 16 kHz 单声道输入；实时流式 STT（Fun-ASR-Realtime，默认关闭）在说话过程中即时产出仅供诊断的 partial，`audio/end` 后收敛 final 并启动 LLM；未启用流式或流式失败/超时时回退整段 PCM 文件式 STT，非空 final 才进入正式轮次。
 - 优先复用“声”的 `voice.audio_output@1.0`，也可回退 AstrBot Core TTS；统一输出 PCM16 24 kHz 单声道音频。
 - 输出受白名单约束的情绪、动作和注视意图，不向客户端发送骨骼、Morph、动画路径或 Unity 对象。
 - 上报握手、摸头、捏脸、注视和说话等交互事实，由后端结合身份、关系和边界决定反应。
@@ -142,7 +142,13 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 | `trusted_client_id` | 空 | 服务端固定的客户端标识 |
 | `trusted_platform_id` | 空 | 创建正式 EventBus 消息所使用的已加载平台实例 |
 | `relationship_person_id` | 空 | 可选的“情”自然人映射；不授予 owner 或管理权限 |
-| `astrbot_stt_provider_id` | 空 | 显式选择的 STT Provider；留空关闭语音识别 |
+| `astrbot_stt_provider_id` | 空 | 显式选择的整段文件式 STT Provider；留空关闭语音识别 |
+| `streaming_stt_provider` | 空 | 实时流式 STT 供应商，`funasr_realtime` 即启用；留空关闭实时识别 |
+| `streaming_stt_api_key` | 空 | DashScope 实时 ASR 的 Bearer API Key（`secret`，不回显不落诊断） |
+| `streaming_stt_model` | `fun-asr-realtime` | 实时流式 STT 模型 |
+| `streaming_stt_language` | `zh` | 实时流式 STT 语言标记 |
+| `streaming_stt_connect_timeout_seconds` | `8.0` | 实时流式 STT 建连超时（秒） |
+| `streaming_stt_final_grace_seconds` | `2.0` | `audio/end` 后等待流式最终结果的宽限（秒），超时回退文件式 |
 | `enable_voice_hub_tts` | `true` | 优先使用“声”的 PCM WAV 契约 |
 | `enable_astrbot_tts` | `false` | 允许回退到 AstrBot 当前 Core TTS Provider |
 | `persona_source_mode` | `astrbot` | 继承 AstrBot 人格或启用兼容手动覆盖 |

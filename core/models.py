@@ -206,6 +206,13 @@ class AudioChunkRequest(StrictModel):
     sample_rate: Literal[16000] = 16000
     channels: Literal[1] = 1
     data: str = Field(min_length=4, max_length=90_000)
+    # Optional protocol-1.1 streaming metadata (absent from older clients).
+    # byte_offset is this chunk's start offset in the turn PCM byte stream;
+    # capture_elapsed_ms is the client's elapsed time since turn start when the
+    # audio finished capture, used to estimate upload/queue age without relying
+    # on a shared wall clock.
+    byte_offset: int | None = Field(default=None, ge=0)
+    capture_elapsed_ms: int | None = Field(default=None, ge=0, le=86_400_000)
 
 
 class AudioEndRequest(StrictModel):
@@ -213,6 +220,9 @@ class AudioEndRequest(StrictModel):
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     session_id: Identifier
     turn_id: Identifier
+    # Optional protocol-1.1 end-of-audio completeness metadata.
+    last_sequence: int | None = Field(default=None, ge=0, le=1_000_000)
+    total_bytes: int | None = Field(default=None, ge=0, le=4_000_000)
 
 
 class InteractionEvent(StrictModel):

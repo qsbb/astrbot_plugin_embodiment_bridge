@@ -30,6 +30,8 @@ from .adapters.relationship_event_identity import (
 )
 from .adapters.runtime import SeriesRuntimeAdapter
 from .adapters.stt import AstrBotSTTAdapter
+from .adapters.funasr_realtime import FunASRRealtimeProvider
+from .adapters.streaming_stt import CompositeSTTAdapter, StreamingSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.avatar_action_tool import execute_quest_action
@@ -75,7 +77,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.1.4"
+__version__ = "1.2.0"
 
 
 # Quest/伴夏具身会话需要隐藏的 QQ/直播/VTS 专属工具默认黑名单。
@@ -356,7 +358,15 @@ class EmbodimentBridgePlugin(Star):
             ),
             timeout_seconds=self._float_config("stt_timeout_seconds", 45.0, 1.0, 180.0),
         )
-        self.stt = self.astrbot_stt
+        streaming_stt = self._build_streaming_stt()
+        self.stt = (
+            CompositeSTTAdapter(streaming=streaming_stt, file=self.astrbot_stt)
+            if streaming_stt is not None
+            else self.astrbot_stt
+        )
+        self.streaming_final_grace_seconds = self._float_config(
+            "streaming_stt_final_grace_seconds", 2.0, 0.25, 10.0
+        )
         max_tts_audio_seconds = self._int_config("max_tts_audio_seconds", 120, 1, 300)
         self.astrbot_tts = AstrBotTTSAdapter(
             context,
@@ -498,6 +508,7 @@ class EmbodimentBridgePlugin(Star):
             output_chunk_ms=self._int_config("output_chunk_ms", 50, 40, 100),
             diagnostic_log=self.diagnostic_log,
             server_timing_enabled=self._bool_config("server_timing_enabled", False),
+            streaming_final_grace_seconds=self.streaming_final_grace_seconds,
         )
         self.quest_direct_dialogue_mode = self._bool_config(
             "quest_direct_dialogue_mode", False
@@ -574,7 +585,7 @@ class EmbodimentBridgePlugin(Star):
             context=context,
             config=config,
             llm=self.llm,
-            stt=self.stt,
+            stt=self.astrbot_stt,
             relationship=self.relationship,
             persona=self.persona,
             logger=self._component_logger,
@@ -1195,6 +1206,38 @@ class EmbodimentBridgePlugin(Star):
         raw = str(self.config.get("quest_chain_excluded_plugins", "") or "")
         return tuple(
             name.strip() for name in raw.split(",") if name.strip()
+        )
+
+    def _build_streaming_stt(self) -> StreamingSTTAdapter | None:
+        """Build an optional realtime recogniser from plugin config.
+
+        Returns ``None`` when the provider is unset or has no API key, in which
+        case the orchestrator keeps using the whole-PCM AstrBot STT path only.
+        """
+        provider_kind = (
+            str(self.config.get("streaming_stt_provider", "") or "").strip().lower()
+        )
+        api_key = str(self.config.get("streaming_stt_api_key", "") or "").strip()
+        if provider_kind not in {"funasr_realtime", "funasr"} or not api_key:
+            return None
+        model = (
+            str(self.config.get("streaming_stt_model", "") or "").strip()
+            or "fun-asr-realtime"
+        )
+        language = (
+            str(self.config.get("streaming_stt_language", "") or "").strip() or "zh"
+        )
+        provider = FunASRRealtimeProvider(
+            api_key=api_key,
+            model=model,
+            sample_rate=16_000,
+            language=language,
+            connect_timeout=self._float_config(
+                "streaming_stt_connect_timeout_seconds", 8.0, 1.0, 30.0
+            ),
+        )
+        return StreamingSTTAdapter(
+            provider, sample_rate=16_000, channels=1, language=language
         )
 
     def _float_config(
