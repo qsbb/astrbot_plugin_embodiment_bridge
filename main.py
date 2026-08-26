@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import copy
 from dataclasses import replace
 from typing import Any
 
@@ -75,6 +76,35 @@ from .transport.pairing import PairingHttpApi
 
 
 __version__ = "1.1.4"
+
+
+# Quest/伴夏具身会话需要隐藏的 QQ/直播/VTS 专属工具默认黑名单。
+# 判定依据（四层证据）：① 注册来源（序=QQ群管、stealer=斗图、直播伴侣=VTS/B站、
+# 私陪 pc_*=QQ空间/群发）② 执行平台（OneBot/aiocqhttp、VTuber Studio 桌面 WS）
+# ③ 会话上下文（Quest 私聊 group_id 恒空）④ 伴夏 Protocol 1.0 无图片/群消息通道。
+# 灰色地带（pc_send_to_private_user 帮发私聊、pc_generate_photo 生图、
+# pc_manage_memo 备忘录）默认保留，可在面板自行追加。
+DEFAULT_QUEST_TOOL_BLACKLIST: tuple[str, ...] = (
+    # 序（identity_guardian）注册的 QQ 群管能力
+    "delete_message", "kick_member", "mute_member", "unmute_member",
+    "mute_current_sender", "request_self_mute", "set_group_admin",
+    "set_group_name", "set_member_card", "set_member_title",
+    "set_self_card", "set_whole_ban", "join_group", "leave_group",
+    "list_group_members", "get_group_member_info",
+    # 表情包小偷注册的斗图工具
+    "search_meme", "send_meme", "steal_meme",
+    # 私陪注册的 QQ 空间/群发/转播/群查询工具
+    "pc_qzone_publish_feed", "pc_qzone_reply_my_comment", "pc_qzone_view_feed",
+    "pc_send_to_group", "pc_send_to_groups", "pc_schedule_group_relay",
+    "pc_relay_message", "pc_get_group_id_by_name", "pc_get_specified_group_members",
+    "pc_find_reaction_image",
+)
+DEFAULT_QUEST_TOOL_BLACKLIST_PREFIXES: tuple[str, ...] = (
+    # 直播伴侣注册的 VTuber Studio 桌面皮套与 B 站直播工具
+    "vts_", "bili_live_",
+    # 我会和你在一起注册的 QQ 群一起看/一起听
+    "open_together_",
+)
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -789,6 +819,86 @@ class EmbodimentBridgePlugin(Star):
         if self.plugin_hook_profiler.enabled:
             self.plugin_hook_profiler.install()
 
+    @filter.on_llm_request(priority=240)
+    async def filter_quest_irrelevant_tools(self, event: Any, req: Any) -> None:
+        """Hide QQ-only LLM tools from Bridge-created (Quest/伴夏) turns.
+
+        请求级过滤：copy ``req.func_tool`` 后替换 tools 列表，全局工具注册与
+        其他平台会话完全不受影响。observe 模式只记录诊断事件不真删，便于先
+        观测一周确认零误伤再切 enforce。任何异常 fail-open，绝不影响回复。
+        """
+        try:
+            if (
+                event.get_extra(BRIDGE_EVENT_MARKER) is not True
+                and event.get_extra(LEGACY_BRIDGE_EVENT_MARKER) is not True
+            ):
+                return
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return
+        if not self._bool_config("quest_tool_filter_enabled", True):
+            return
+
+        tool_set = getattr(req, "func_tool", None)
+        tools = getattr(tool_set, "tools", None)
+        if not isinstance(tools, list) or not tools:
+            return
+
+        block_names = set(
+            self._list_config(
+                "quest_tool_blacklist", list(DEFAULT_QUEST_TOOL_BLACKLIST)
+            )
+        )
+        block_prefixes = tuple(
+            self._list_config(
+                "quest_tool_blacklist_prefixes",
+                list(DEFAULT_QUEST_TOOL_BLACKLIST_PREFIXES),
+            )
+        )
+
+        def _blocked(tool: Any) -> bool:
+            name = str(getattr(tool, "name", "") or "")
+            return bool(name) and (
+                name in block_names or name.startswith(block_prefixes)
+            )
+
+        removed_names = [
+            str(getattr(tool, "name", "") or "")
+            for tool in tools
+            if _blocked(tool)
+        ]
+        if not removed_names:
+            return
+
+        kept = [tool for tool in tools if not _blocked(tool)]
+        mode = str(
+            self.config.get("quest_tool_filter_mode", "observe") or "observe"
+        ).strip().lower()
+        if mode != "enforce":
+            self.diagnostic_log.record(
+                "quest.tool_filter.observe",
+                component="quest_chain",
+                status="observed",
+                removed=len(removed_names),
+                kept=len(kept),
+                names=removed_names[:64],
+            )
+            return
+
+        try:
+            new_set = copy(tool_set)
+            new_set.tools = kept
+            req.func_tool = new_set
+        except Exception:
+            return  # fail-open：过滤失败就不过滤
+        self.diagnostic_log.record(
+            "quest.tool_filter",
+            component="quest_chain",
+            status="completed",
+            removed=len(removed_names),
+            kept=len(kept),
+            names=removed_names[:64],
+        )
+
     @filter.on_llm_request(priority=250)
     async def inject_quest_persona(self, event: Any, req: Any) -> None:
         """Append the active embodied persona only to Bridge-created EventBus turns."""
@@ -1046,6 +1156,32 @@ class EmbodimentBridgePlugin(Star):
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
+
+    def _list_config(
+        self,
+        key: str,
+        default: Any = (),
+    ) -> list[str]:
+        """Read a list-valued config entry, tolerating list/tuple/JSON string."""
+        value: Any = self.config.get(key, default)
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            try:
+                parsed = json.loads(stripped)
+            except (TypeError, ValueError):
+                return [
+                    item.strip() for item in stripped.split(",") if item.strip()
+                ]
+            if isinstance(parsed, (list, tuple)):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+            return []
+        return []
 
     def _quest_chain_mode(self) -> str:
         value = str(self.config.get("quest_chain_mode", "main") or "main")

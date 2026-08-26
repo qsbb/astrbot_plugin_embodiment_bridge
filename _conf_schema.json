@@ -238,6 +238,34 @@
     "hint": "仅 bridge/auto 生效。英文逗号分隔的插件名；这些插件的钩子不参与临独立链。留空表示不跳过任何插件。",
     "default": ""
   },
+  "quest_tool_filter_enabled": {
+    "description": "Quest 会话工具过滤总开关",
+    "type": "bool",
+    "hint": "仅具身会话（伴夏/Quest）生效。开启后在 on_llm_request 请求级裁剪 QQ/直播/VTS 专属工具，QQ 等其他平台会话不受影响。",
+    "default": true
+  },
+  "quest_tool_filter_mode": {
+    "description": "Quest 会话工具过滤模式",
+    "type": "string",
+    "options": [
+      "observe",
+      "enforce"
+    ],
+    "hint": "observe=只记录诊断事件 quest.tool_filter.observe（会删哪些工具、本轮是否命中）不真删，建议先观测数日确认零误伤；enforce=真裁剪。",
+    "default": "observe"
+  },
+  "quest_tool_blacklist_prefixes": {
+    "description": "Quest 会话工具黑名单·名称前缀",
+    "type": "string",
+    "hint": "英文逗号分隔的前缀，命中的工具一律隐藏。默认覆盖 VTS 桌面皮套(vts_)、B 站直播(bili_live_)、QQ 一起看(open_together_)。",
+    "default": "vts_,bili_live_,open_together_"
+  },
+  "quest_tool_blacklist": {
+    "description": "Quest 会话工具黑名单·完整名称",
+    "type": "string",
+    "hint": "英文逗号分隔的工具名。默认覆盖 QQ 群管、斗图、QQ 空间/群发/转播等 Quest 上无意义的工具；灰色地带（生图、备忘录、帮发私聊）默认保留，可在此追加。",
+    "default": "delete_message,kick_member,mute_member,unmute_member,mute_current_sender,request_self_mute,set_group_admin,set_group_name,set_member_card,set_member_title,set_self_card,set_whole_ban,join_group,leave_group,list_group_members,get_group_member_info,search_meme,send_meme,steal_meme,pc_qzone_publish_feed,pc_qzone_reply_my_comment,pc_qzone_view_feed,pc_send_to_group,pc_send_to_groups,pc_schedule_group_relay,pc_relay_message,pc_get_group_id_by_name,pc_get_specified_group_members,pc_find_reaction_image"
+  },
   "persona_source_mode": {
     "description": "具身角色人格来源",
     "type": "string",
