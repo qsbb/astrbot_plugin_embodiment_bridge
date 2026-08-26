@@ -359,11 +359,11 @@
   },
   "relationship_snapshot_cache_ttl_seconds": {
     "description": "关系快照短缓存 TTL（秒）",
-    "type": "number",
+    "type": "float",
     "hint": "同会话内同一 (bot,user,group,profile) 在 TTL 内重复读取直接命中缓存，避免与情插件在 EventBus 路径重复付费。0 表示关闭缓存，每轮都做契约调用。",
     "default": 5.0,
-    "minimum": 0,
-    "maximum": 30
+    "minimum": 0.0,
+    "maximum": 30.0
   },
   "enable_global_knowledge": {
     "description": "读取主动学习插件的全局知识证据",
