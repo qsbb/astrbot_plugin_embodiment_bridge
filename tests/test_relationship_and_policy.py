@@ -259,6 +259,80 @@ def test_relationship_timeout_degrades_to_neutral_context() -> None:
     asyncio.run(scenario())
 
 
+def test_relationship_snapshot_cache_dedupes_within_ttl() -> None:
+    async def scenario() -> None:
+        provider = RelationshipProviderStub()
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(provider),
+            LoggerStub(),
+            person_id="person-a",
+            cache_ttl_seconds=5.0,
+        )
+        kwargs = {
+            "bot_id": "bot",
+            "user_id": "user",
+            "group_id": "",
+            "relationship_profile_id": "p",
+        }
+        first = await adapter.read(**kwargs)
+        second = await adapter.read(**kwargs)
+        assert first is not None
+        assert second == first
+        # 第二次命中缓存，不再跨插件契约调用
+        assert provider.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_relationship_snapshot_cache_disabled_when_ttl_zero() -> None:
+    async def scenario() -> None:
+        provider = RelationshipProviderStub()
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(provider),
+            LoggerStub(),
+            person_id="person-a",
+            cache_ttl_seconds=0.0,
+        )
+        kwargs = {
+            "bot_id": "bot",
+            "user_id": "user",
+            "group_id": "",
+            "relationship_profile_id": "p",
+        }
+        await adapter.read(**kwargs)
+        await adapter.read(**kwargs)
+        # 关闭缓存，每轮都做契约调用
+        assert provider.calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_relationship_snapshot_cache_keyed_by_person_id() -> None:
+    async def scenario() -> None:
+        provider = RelationshipProviderStub()
+        adapter = RelationshipSnapshotAdapter(
+            ContextStub(provider),
+            LoggerStub(),
+            person_id="person-a",
+            cache_ttl_seconds=5.0,
+        )
+        kwargs = {
+            "bot_id": "bot",
+            "user_id": "user",
+            "group_id": "",
+            "relationship_profile_id": "p",
+        }
+        first = await adapter.read(**kwargs)
+        assert first is not None
+        adapter.configure_person_id("person-b")
+        second = await adapter.read(**kwargs)
+        assert second is not None
+        # person 变化 → 缓存键不同 → 重新契约调用
+        assert provider.calls == 2
+
+    asyncio.run(scenario())
+
+
 def test_policy_only_overrides_explicit_high_risk_boundary() -> None:
     policy = InteractionPolicy(gesture_cooldown_seconds=0)
     proposed = ModelDecision(

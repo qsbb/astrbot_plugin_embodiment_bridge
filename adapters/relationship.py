@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from .provider_utils import contract_matches, find_active_provider
@@ -30,16 +31,56 @@ class RelationshipSnapshotAdapter:
         *,
         person_id: str = "",
         timeout_seconds: float = 1.0,
+        cache_ttl_seconds: float = 5.0,
     ) -> None:
         self.context = context
         self.logger = logger
         self.timeout_seconds = min(max(float(timeout_seconds), 0.01), 5.0)
         self.person_id = str(person_id or "").strip()
+        # 同会话内短 TTL 缓存：关系快照变化慢（秒级），同一 (bot,user,group,profile)
+        # 在 TTL 内重复 read 直接命中缓存，避免与情插件在 EventBus 路径的注入重复付费。
+        # 0 表示关闭缓存（完全回退为每轮契约调用）。
+        self.cache_ttl_seconds = min(max(float(cache_ttl_seconds), 0.0), 30.0)
+        self._cache: dict[tuple[str, str, str, str, str], tuple[float, dict[str, Any] | None, str]] = {}
         self._missing_logged = False
         self._incompatible_logged = False
         self.status = "authorization_gated"
 
     async def read(
+        self,
+        *,
+        bot_id: str,
+        user_id: str,
+        group_id: str,
+        relationship_profile_id: str,
+    ) -> dict[str, Any] | None:
+        cache_key = (
+            str(self.person_id or ""),
+            str(bot_id or ""),
+            str(user_id or ""),
+            str(group_id or ""),
+            str(relationship_profile_id or ""),
+        )
+        if self.cache_ttl_seconds > 0:
+            now = time.monotonic()
+            cached = self._cache.get(cache_key)
+            if cached is not None and (now - cached[0]) < self.cache_ttl_seconds:
+                self.status = cached[2]
+                return cached[1]
+        snapshot = await self._read_live(
+            bot_id=bot_id,
+            user_id=user_id,
+            group_id=group_id,
+            relationship_profile_id=relationship_profile_id,
+        )
+        if self.cache_ttl_seconds > 0:
+            self._cache[cache_key] = (time.monotonic(), snapshot, self.status)
+            if len(self._cache) > 256:
+                oldest = min(self._cache, key=lambda key: self._cache[key][0])
+                self._cache.pop(oldest, None)
+        return snapshot
+
+    async def _read_live(
         self,
         *,
         bot_id: str,

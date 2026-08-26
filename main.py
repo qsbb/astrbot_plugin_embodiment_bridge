@@ -455,6 +455,9 @@ class EmbodimentBridgePlugin(Star):
             context,
             self._component_logger,
             person_id=relationship_person_id,
+            cache_ttl_seconds=self._float_config(
+                "relationship_snapshot_cache_ttl_seconds", 5.0, 0.0, 30.0
+            ),
         )
         self.relationship_candidates = RelationshipIdentityCandidatesAdapter(
             context,

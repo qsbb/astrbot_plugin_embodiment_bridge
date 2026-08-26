@@ -357,6 +357,14 @@
     "hint": "由 AstrBot 管理员在本插件专属配置中管理。它只决定受保护关系快照的自然人范围，不授予平台权限；快速绑定页不会读取或显示该值，契约缺失时不得从私有存储猜测。",
     "default": ""
   },
+  "relationship_snapshot_cache_ttl_seconds": {
+    "description": "关系快照短缓存 TTL（秒）",
+    "type": "number",
+    "hint": "同会话内同一 (bot,user,group,profile) 在 TTL 内重复读取直接命中缓存，避免与情插件在 EventBus 路径重复付费。0 表示关闭缓存，每轮都做契约调用。",
+    "default": 5.0,
+    "minimum": 0,
+    "maximum": 30
+  },
   "enable_global_knowledge": {
     "description": "读取主动学习插件的全局知识证据",
     "type": "bool",
