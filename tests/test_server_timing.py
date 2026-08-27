@@ -37,6 +37,9 @@ TIMING_KEYS = {
     "decision_path",
     "tts_first_chunk_ms",
     "tts_total_ms",
+    "decision_hooks_ms",
+    "decision_provider_ms",
+    "event_loop_lag_ms",
     "turn_total_ms",
 }
 DURATION_KEYS = TIMING_KEYS - {"contract", "decision_path"}

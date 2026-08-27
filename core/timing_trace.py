@@ -51,6 +51,7 @@ class _SpanState:
     category: str = ""
     child_intervals: list[tuple[float, float]] = field(default_factory=list)
     child_wait_ms: dict[str, float] = field(default_factory=dict)
+    ended: float = 0.0
     finished: bool = False
 
 
@@ -86,6 +87,28 @@ class TimingTrace:
     @property
     def event_loop_lag_ms(self) -> int:
         return _bounded_ms(self._lag_max_ms)
+
+    def span_wall_ms(self, *names: str) -> int:
+        """Return the largest wall_ms among finished spans matching any name.
+
+        Used to surface a fixed, non-sensitive sub-phase breakdown (e.g. the
+        decision hooks vs. the LLM provider) alongside the ``server_timing``
+        summary without exposing the internal span tree. Returns ``0`` when the
+        trace is disabled or no matching span finished.
+        """
+
+        if not self.enabled:
+            return 0
+        wanted = {str(name or "")[:96] for name in names}
+        best = 0
+        for state in self._spans.values():
+            if (
+                state.finished
+                and state.name in wanted
+                and state.ended > state.started
+            ):
+                best = max(best, _bounded_ms(state.ended - state.started))
+        return best
 
     def start_span(
         self,
@@ -165,6 +188,7 @@ class TimingTrace:
             return False
         ended = time.perf_counter()
         state.finished = True
+        state.ended = ended
         wall_seconds = max(0.0, ended - state.started)
         # A wait-category span is itself the measured wait.  Callers can pass
         # an explicit value when only part of the span waited, but the default

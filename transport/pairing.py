@@ -910,6 +910,22 @@ class PairingHttpApi:
                         "authorized": details.get("authorized"),
                         "text_sent": details.get("text_sent"),
                         "audio_sent": details.get("audio_sent"),
+                        # Detailed timing spans (safe, bounded integers only).
+                        "span_name": str(details.get("span_name") or "")[:80],
+                        "span_kind": str(details.get("span_kind") or "")[:48],
+                        "wall_ms": details.get("wall_ms"),
+                        "active_ms": details.get("active_ms"),
+                        "queue_wait_ms": details.get("queue_wait_ms"),
+                        "lock_wait_ms": details.get("lock_wait_ms"),
+                        "provider_wait_ms": details.get("provider_wait_ms"),
+                        "provider_first_token_ms": details.get("provider_first_token_ms"),
+                        "provider_total_ms": details.get("provider_total_ms"),
+                        "event_loop_lag_ms": details.get("event_loop_lag_ms"),
+                        "cache_hit": details.get("cache_hit"),
+                        "retry_count": details.get("retry_count"),
+                        "timeout": details.get("timeout"),
+                        "fallback": details.get("fallback"),
+                        "trace_id": str(details.get("trace_id") or "")[:40],
                     }
                 )
             root_cause = {"stage": "", "code": ""}

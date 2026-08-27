@@ -2132,6 +2132,32 @@ function diagnosticActionSourceLabel(value) {
   return labels[String(value || "")] || String(value || "未知来源");
 }
 
+function diagnosticSpanLabel(name) {
+  const labels = {
+    "stt.turn": "语音识别",
+    "stt.streaming_wait": "流式识别等待",
+    "stt.final_emit": "识别结果下发",
+    "turn.processing": "整轮处理",
+    "quest_chain.event_create": "决策事件创建",
+    "quest_chain.build_request": "构建请求",
+    "quest_chain.request_hooks": "模型前置插件钩子",
+    "quest_chain.llm": "LLM 模型生成",
+    "quest_chain.response_hooks": "模型后置插件钩子",
+    "context.history_snapshot": "历史快照",
+    "context.relationship_snapshot": "关系快照",
+    "tts.pipeline": "语音合成",
+    "tts.segment": "语音合成段",
+    "reply.audio_emit": "回复音频下发",
+    "eventbus.generate": "EventBus 生成",
+    "eventbus.queue_wait": "EventBus 排队",
+    "eventbus.processing": "EventBus 处理"
+  };
+  const value = String(name || "");
+  if (!value) return "未知跨度";
+  if (value.startsWith("quest_chain.hook.")) return `钩子：${value.slice("quest_chain.hook.".length)}`;
+  return labels[value] || value;
+}
+
 function diagnosticMeta(event) {
   const parts = [];
   if (
@@ -2160,6 +2186,31 @@ function diagnosticMeta(event) {
   if (event.eventbus_tool_called === false) parts.push("EventBus 工具未调用");
   if (event.authorized === true) parts.push("身份已授权");
   if (event.authorized === false) parts.push("身份未授权");
+  // Detailed timing spans (bounded integers exposed by the bridge projection).
+  if (Number.isFinite(event.wall_ms) && event.wall_ms > 0) {
+    parts.push(`耗时 ${Math.round(event.wall_ms)}ms`);
+  }
+  if (Number.isFinite(event.active_ms) && event.active_ms > 0) {
+    parts.push(`活跃 ${Math.round(event.active_ms)}ms`);
+  }
+  if (Number.isFinite(event.provider_wait_ms) && event.provider_wait_ms > 0) {
+    parts.push(`Provider 等待 ${Math.round(event.provider_wait_ms)}ms`);
+  }
+  if (Number.isFinite(event.provider_total_ms) && event.provider_total_ms > 0) {
+    parts.push(`Provider 总 ${Math.round(event.provider_total_ms)}ms`);
+  }
+  if (Number.isFinite(event.queue_wait_ms) && event.queue_wait_ms > 0) {
+    parts.push(`队列等待 ${Math.round(event.queue_wait_ms)}ms`);
+  }
+  if (Number.isFinite(event.lock_wait_ms) && event.lock_wait_ms > 0) {
+    parts.push(`锁等待 ${Math.round(event.lock_wait_ms)}ms`);
+  }
+  if (Number.isFinite(event.event_loop_lag_ms) && event.event_loop_lag_ms > 0) {
+    parts.push(`事件循环积压 ${Math.round(event.event_loop_lag_ms)}ms`);
+  }
+  if (event.timeout === true) parts.push("超时");
+  if (event.fallback === true) parts.push("已回退");
+  if (event.cache_hit === true) parts.push("命中缓存");
   return parts.join(" · ");
 }
 
@@ -2216,8 +2267,11 @@ function renderDiagnosticEvents(events) {
     const timestamp = event.timestamp
       ? new Date(event.timestamp).toLocaleTimeString("zh-CN", { hour12: false })
       : "--:--:--";
+    const stageText = event.span_name
+      ? diagnosticSpanLabel(event.span_name)
+      : diagnosticStageLabel(event.component);
     const parts = [
-      `${timestamp} [${diagnosticStageLabel(event.component)}] ${diagnosticStatusLabel(status)}`,
+      `${timestamp} [${stageText}] ${diagnosticStatusLabel(status)}`,
       diagnosticEventLabel(event.event),
       reason ? diagnosticReasonLabel(reason) : "",
       diagnosticMeta(event)

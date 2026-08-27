@@ -1954,6 +1954,7 @@ class TurnOrchestrator:
             "audio_sent": audio_sent,
         }
         if self.server_timing_enabled:
+            self._attach_timing_breakdown(turn)
             reply_end_payload["server_timing"] = turn.server_timing.snapshot()
         await self._acquire_traced_lock(
             turn,
@@ -2415,6 +2416,7 @@ class TurnOrchestrator:
                 "audio_sent": False,
             }
             if self.server_timing_enabled:
+                self._attach_timing_breakdown(turn)
                 reply_end_payload["server_timing"] = turn.server_timing.snapshot()
             emitted = await self._emit(session, turn, reply_end_payload)
         finally:
@@ -2553,6 +2555,23 @@ class TurnOrchestrator:
                 if adapter is not None
             ),
             return_exceptions=True,
+        )
+
+    def _attach_timing_breakdown(self, turn: TurnState) -> None:
+        """Enrich ``server_timing`` with the trace-level lag and decision split.
+
+        The span names are fixed internal tokens produced by the bridge-owned
+        quest pipeline; when the turn ran through AstrBot's own EventBus chain
+        those spans are absent and the breakdown simply stays ``0``.
+        """
+
+        trace = getattr(turn, "timing_trace", None)
+        if not isinstance(trace, TimingTrace):
+            return
+        turn.server_timing.set_event_loop_lag_ms(trace.event_loop_lag_ms)
+        turn.server_timing.set_decision_breakdown(
+            hooks_ms=trace.span_wall_ms("quest_chain.request_hooks"),
+            provider_ms=trace.span_wall_ms("quest_chain.llm"),
         )
 
     async def _await_traced(
