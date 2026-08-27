@@ -1609,3 +1609,49 @@ def test_legacy_client_cannot_receive_new_crouch_method() -> None:
         await orchestrator.close()
 
     asyncio.run(scenario())
+
+
+def test_finish_audio_with_capture_elapsed_ms_does_not_nameerror() -> None:
+    """Regression for the 2026-08-28 voice outage: real Quest clients send
+    capture_elapsed_ms on every audio chunk, which makes audio_chunk_ages_ms
+    non-empty and forces finish_audio's diagnostic to evaluate _percentile().
+    The helper was missing, raising NameError inside audio/end → HTTP 500."""
+
+    async def scenario() -> None:
+        stt = STTTextStub("你好")
+        sessions, session, orchestrator = await build_orchestrator(
+            DecisionStub(
+                decision(
+                    Emotion.NEUTRAL,
+                    Gesture.TALK,
+                    LookAt.USER,
+                    "main_reply",
+                    "你好。",
+                )
+            ),
+            stt=stt,
+            tts=TTSStub(available=False),
+        )
+        turn = await orchestrator.start_turn(
+            session,
+            TurnStartRequest(session_id="s1", turn_id="t-audio-ages"),
+        )
+        for seq in range(2):
+            await sessions.add_audio_chunk(
+                session,
+                AudioChunkRequest(
+                    session_id="s1",
+                    turn_id=turn.turn_id,
+                    sequence=seq,
+                    data="AAAAAA==",
+                    capture_elapsed_ms=seq * 64,
+                ),
+            )
+        finished = await orchestrator.finish_audio(session, turn.turn_id)
+        assert finished.turn_id == turn.turn_id
+        events = await collect_until_end(session)
+        assert events[-1]["type"] == "reply.end"
+        assert stt.calls == 1
+        await orchestrator.close()
+
+    asyncio.run(scenario())

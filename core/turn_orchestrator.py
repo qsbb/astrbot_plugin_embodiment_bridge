@@ -117,6 +117,16 @@ _SAME_TURN_ACTION_COMPLETION_CLAIM = re.compile(
 EVENTBUS_TERMINAL_DEADLINE_SECONDS = 45.0
 
 
+def _percentile(values: list[float], fraction: float) -> float:
+    """Nearest-rank percentile over a non-empty sample list."""
+
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))
+    return float(ordered[rank])
+
+
 class TurnOrchestrator:
     def __init__(
         self,
