@@ -331,6 +331,106 @@ class PlaybackReceiptRequest(StrictModel):
     reason_code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=128)] = ""
 
 
+class ClientSpanEvent(StrictModel):
+    """One bounded client-side span of the ``diagnostics@1.0`` contract.
+
+    Offsets are relative to the client turn start; no user text, provider
+    name, or request body ever appears in these fields.
+    """
+
+    component: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=48),
+    ]
+    stage: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=48),
+    ]
+    status: Annotated[str, StringConstraints(strip_whitespace=True, max_length=32)] = (
+        "completed"
+    )
+    code: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] = ""
+    start_offset_ms: int = Field(default=0, ge=0, le=3_600_000)
+    end_offset_ms: int = Field(default=0, ge=0, le=3_600_000)
+    duration_ms: int = Field(default=-1, ge=-1, le=3_600_000)
+    chunks: int = Field(default=0, ge=0, le=1_000_000)
+
+
+def _metric_field(*, le: float) -> Any:
+    """Bounded performance-metric field; ``-1`` means "not available"."""
+
+    return Field(default=-1, ge=-1, le=le)
+
+
+class DiagnosticReportRequest(StrictModel):
+    """Bounded client diagnostics upload (``diagnostics@1.0``).
+
+    ``kind="perf"`` carries the flat Quest performance snapshot at a low
+    cadence (client gates it on detailed sampling). ``kind="spans"`` carries
+    one turn's client-side span bundle at the turn boundary so the operator
+    page can join it onto the server timeline via ``trace_id``.
+    """
+
+    type: Literal["diagnostics.report"] = "diagnostics.report"
+    protocol_version: Literal["1.0"] = PROTOCOL_VERSION
+    kind: Literal["perf", "spans"]
+    session_id: Identifier
+    turn_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] = ""
+    trace_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] = ""
+    ts_ms: int = Field(default=0, ge=0, le=10_000_000_000_000)
+    spans: list[ClientSpanEvent] = Field(default_factory=list, max_length=8)
+
+    # Flat Quest performance snapshot (populated only with kind="perf").
+    fps: float = _metric_field(le=1_000)
+    frame_p50_ms: float = _metric_field(le=10_000)
+    frame_p95_ms: float = _metric_field(le=10_000)
+    frame_max_ms: float = _metric_field(le=10_000)
+    compositor_dropped_session: float = _metric_field(le=1_000_000)
+    physics_dropped_s: float = _metric_field(le=1_000_000)
+    physics_dropped_frames: int = Field(default=-1, ge=-1, le=10_000_000)
+    xr_cpu_ms: float = _metric_field(le=10_000)
+    xr_gpu_ms: float = _metric_field(le=10_000)
+    cpu_util: float = _metric_field(le=1_000)
+    gpu_util: float = _metric_field(le=1_000)
+    mmd_solver_ms: float = _metric_field(le=10_000)
+    mmd_physics_ms: float = _metric_field(le=10_000)
+    mmd_bone_ik_ms: float = _metric_field(le=10_000)
+    mmd_sdef_ms: float = _metric_field(le=10_000)
+    mmd_flush_ms: float = _metric_field(le=10_000)
+    hand_contact_ms: float = _metric_field(le=10_000)
+    mem_alloc_bytes: int = Field(default=-1, ge=-1, le=10**13)
+    mem_pss_bytes: int = Field(default=-1, ge=-1, le=10**13)
+    gc0: int = Field(default=-1, ge=-1, le=1_000_000)
+    gc1: int = Field(default=-1, ge=-1, le=1_000_000)
+    gc2: int = Field(default=-1, ge=-1, le=1_000_000)
+    thermal_state: Annotated[str, StringConstraints(strip_whitespace=True, max_length=32)] = ""
+    model_renderer: int = Field(default=-1, ge=-1, le=100_000)
+    model_material: int = Field(default=-1, ge=-1, le=100_000)
+    model_texture: int = Field(default=-1, ge=-1, le=100_000)
+    model_vertex: int = Field(default=-1, ge=-1, le=10_000_000)
+    model_tri: int = Field(default=-1, ge=-1, le=10_000_000)
+    model_bone: int = Field(default=-1, ge=-1, le=1_000_000)
+    model_rigid: int = Field(default=-1, ge=-1, le=1_000_000)
+    model_joint: int = Field(default=-1, ge=-1, le=1_000_000)
+    target_fps: float = _metric_field(le=1_000)
+    render_scale: float = Field(default=0, ge=0, le=4)
+    headset_worn: bool | None = None
+    active_action: Annotated[str, StringConstraints(strip_whitespace=True, max_length=48)] = ""
+    physics_hz: int = Field(default=0, ge=0, le=1_000)
+    physics_substeps: int = Field(default=0, ge=0, le=16)
+
+    @model_validator(mode="after")
+    def _check_kind_payload(self) -> "DiagnosticReportRequest":
+        if self.kind == "perf" and self.fps < 0:
+            raise ValueError("perf report requires a valid fps sample")
+        if self.kind == "spans":
+            if not self.spans:
+                raise ValueError("spans report requires at least one span")
+            if not self.turn_id:
+                raise ValueError("spans report requires the turn id")
+        return self
+
+
 class VerifiedActionFact(StrictModel):
     model_config = ConfigDict(
         extra="forbid",

@@ -210,9 +210,17 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 59
+        assert len(registered) == 61
         assert (
             "/astrbot_plugin_embodiment_bridge/playback/receipt",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_embodiment_bridge/diagnostics/report",
+            ("POST",),
+        ) in registered
+        assert (
+            "/astrbot_plugin_quest_avatar_bridge/diagnostics/report",
             ("POST",),
         ) in registered
         assert (
@@ -554,7 +562,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 59
+        assert len(context.routes) == 61
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

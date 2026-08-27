@@ -201,6 +201,7 @@ class PairingHttpApi:
         api_principal_verifier: Any,
         persona_service: Any | None = None,
         diagnostic_log: Any | None = None,
+        client_diagnostics: Any | None = None,
         pairing_defaults: dict[str, Any] | None = None,
         trusted_proxy_ip: str = "",
         max_json_body_bytes: int = 16_384,
@@ -220,6 +221,7 @@ class PairingHttpApi:
         self.api_principal_verifier = api_principal_verifier
         self.persona_service = persona_service
         self.diagnostic_log = diagnostic_log
+        self.client_diagnostics = client_diagnostics
         self.pairing_defaults = dict(pairing_defaults or {})
         self.relationship_refresh_ready = not bool(
             str(
@@ -915,6 +917,8 @@ class PairingHttpApi:
                         "span_kind": str(details.get("span_kind") or "")[:48],
                         "wall_ms": details.get("wall_ms"),
                         "active_ms": details.get("active_ms"),
+                        "start_offset_ms": details.get("start_offset_ms"),
+                        "end_offset_ms": details.get("end_offset_ms"),
                         "queue_wait_ms": details.get("queue_wait_ms"),
                         "lock_wait_ms": details.get("lock_wait_ms"),
                         "provider_wait_ms": details.get("provider_wait_ms"),
@@ -960,11 +964,22 @@ class PairingHttpApi:
                         "reason": str(snapshot.get("reason") or "")[:48],
                         "root_cause": root_cause,
                         "events": projected,
+                        "client": self._client_diagnostics_snapshot(),
                     },
                 }
             )
         except Exception as exc:
             return self._error(exc, "diagnostics_overview")
+
+    def _client_diagnostics_snapshot(self) -> Any:
+        """Bounded Quest-side telemetry; never raises into the projection."""
+
+        if self.client_diagnostics is None:
+            return {"status": "unavailable", "reason": "not_wired"}
+        try:
+            return self.client_diagnostics.snapshot()
+        except Exception:
+            return {"status": "unavailable", "reason": "error"}
 
     async def identity_candidates(self) -> Any:
         try:

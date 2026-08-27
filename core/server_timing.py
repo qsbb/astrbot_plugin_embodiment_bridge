@@ -39,6 +39,7 @@ class ServerTimingState:
     decision_hooks_ms: int = 0
     decision_provider_ms: int = 0
     event_loop_lag_ms: int = 0
+    trace_id: str = ""
 
     def start_processing(self) -> None:
         self.started_at = monotonic()
@@ -77,6 +78,14 @@ class ServerTimingState:
     def set_event_loop_lag_ms(self, lag_ms: int) -> None:
         self.event_loop_lag_ms = max(0, min(MAX_TIMING_MS, int(lag_ms or 0)))
 
+    def set_trace_id(self, value: str) -> None:
+        """Attach the turn's opaque trace id so the client can join its own
+        span reports onto the server timeline. The id is already a random
+        server-side token; it carries no user or provider data."""
+
+        candidate = str(value or "").strip()
+        self.trace_id = candidate[:64] if candidate else ""
+
     def snapshot(self) -> dict[str, int | str]:
         """Return the fixed, non-sensitive ``server_timing@1.0`` payload."""
 
@@ -103,5 +112,6 @@ class ServerTimingState:
             "decision_hooks_ms": self.decision_hooks_ms,
             "decision_provider_ms": self.decision_provider_ms,
             "event_loop_lag_ms": self.event_loop_lag_ms,
+            "trace_id": self.trace_id,
             "turn_total_ms": _elapsed_ms(self.started_at, None),
         }

@@ -17,6 +17,7 @@ from ..core.models import (
     ActionResultRequest,
     AudioChunkRequest,
     AudioEndRequest,
+    DiagnosticReportRequest,
     Identifier,
     InteractionEvent,
     InterruptRequest,
@@ -77,6 +78,7 @@ class HttpSseTransport:
         config: TransportConfig,
         logger: Any,
         diagnostic_log: Any | None = None,
+        client_diagnostics: Any | None = None,
     ) -> None:
         self.context = context
         self.sessions = sessions
@@ -86,6 +88,7 @@ class HttpSseTransport:
         self.config = config
         self.logger = logger
         self.diagnostic_log = diagnostic_log
+        self.client_diagnostics = client_diagnostics
         self._identifier_adapter = TypeAdapter(Identifier)
         self._audio_uploads: dict[tuple[str, str, str], dict[str, float | int]] = {}
 
@@ -117,6 +120,12 @@ class HttpSseTransport:
                 self.playback_receipt,
                 ["POST"],
                 "Report bounded client playback diagnostics",
+            ),
+            (
+                "diagnostics/report",
+                self.diagnostics_report,
+                ["POST"],
+                "Receive bounded client diagnostics report",
             ),
             (
                 "interaction",
@@ -391,6 +400,26 @@ class HttpSseTransport:
 
         return await self._json_endpoint(PlaybackReceiptRequest, action)
 
+    async def diagnostics_report(self) -> Any:
+        async def action(owner: str, payload: DiagnosticReportRequest) -> Any:
+            session = await self.sessions.get_owned(payload.session_id, owner)
+            if self.client_diagnostics is None:
+                outcome = {"accepted": False, "reason": "not_wired"}
+            else:
+                outcome = self.client_diagnostics.record_report(owner, payload)
+            return json_response(
+                {
+                    "status": "ok",
+                    "data": {
+                        "session_id": session.session_id,
+                        **outcome,
+                    },
+                },
+                status_code=202,
+            )
+
+        return await self._json_endpoint(DiagnosticReportRequest, action)
+
     async def action_result(self) -> Any:
         async def action(owner: str, payload: ActionResultRequest) -> Any:
             session = await self.sessions.get_owned(payload.session_id, owner)
@@ -447,6 +476,8 @@ class HttpSseTransport:
             session = await self.sessions.get_owned(payload.session_id, owner)
             await self.sessions.close_session(session)
             self._clear_audio_uploads(owner, payload.session_id)
+            if self.client_diagnostics is not None:
+                self.client_diagnostics.forget(payload.session_id)
             return json_response(
                 {
                     "status": "ok",
@@ -580,7 +611,7 @@ class HttpSseTransport:
             )
             response = await action(owner, payload)
             status_code = getattr(response, "status_code", 200)
-            if model not in {AudioChunkRequest, AudioEndRequest}:
+            if model not in {AudioChunkRequest, AudioEndRequest, DiagnosticReportRequest}:
                 self._diagnostic(
                     "http.request",
                     component="transport",

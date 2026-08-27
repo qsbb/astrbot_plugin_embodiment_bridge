@@ -2566,13 +2566,13 @@ class TurnOrchestrator:
         """
 
         trace = getattr(turn, "timing_trace", None)
-        if not isinstance(trace, TimingTrace):
-            return
-        turn.server_timing.set_event_loop_lag_ms(trace.event_loop_lag_ms)
-        turn.server_timing.set_decision_breakdown(
-            hooks_ms=trace.span_wall_ms("quest_chain.request_hooks"),
-            provider_ms=trace.span_wall_ms("quest_chain.llm"),
-        )
+        if isinstance(trace, TimingTrace):
+            turn.server_timing.set_event_loop_lag_ms(trace.event_loop_lag_ms)
+            turn.server_timing.set_decision_breakdown(
+                hooks_ms=trace.span_wall_ms("quest_chain.request_hooks"),
+                provider_ms=trace.span_wall_ms("quest_chain.llm"),
+            )
+        turn.server_timing.set_trace_id(getattr(turn, "trace_id", "") or "")
 
     async def _await_traced(
         self,

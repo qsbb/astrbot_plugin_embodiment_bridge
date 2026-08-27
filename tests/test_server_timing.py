@@ -40,9 +40,10 @@ TIMING_KEYS = {
     "decision_hooks_ms",
     "decision_provider_ms",
     "event_loop_lag_ms",
+    "trace_id",
     "turn_total_ms",
 }
-DURATION_KEYS = TIMING_KEYS - {"contract", "decision_path"}
+DURATION_KEYS = TIMING_KEYS - {"contract", "decision_path", "trace_id"}
 
 
 class LoggerStub:

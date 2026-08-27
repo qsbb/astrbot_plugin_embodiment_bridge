@@ -35,6 +35,7 @@ from .adapters.streaming_stt import CompositeSTTAdapter, StreamingSTTAdapter
 from .adapters.tts import AstrBotTTSAdapter
 from .adapters.voice_hub_tts import FallbackTTSAdapter, VoiceHubTTSAdapter
 from .core.avatar_action_tool import execute_quest_action
+from .core.client_diagnostics import ClientDiagnosticsStore
 from .core.diagnostic_log import (
     DiagnosticLog,
     DiagnosticLogSink,
@@ -265,6 +266,9 @@ class EmbodimentBridgePlugin(Star):
         )
         self.diagnostic_log.record("plugin.constructed", component="plugin")
         self._component_logger = DiagnosticLogSink(self.diagnostic_log)
+        # Quest→临 客户端诊断上报：按 session 隔离的内存环形缓冲，
+        # 不落盘、与通用诊断日志完全隔离（见 core/client_diagnostics.py）。
+        self.client_diagnostics = ClientDiagnosticsStore()
         self.plugin_hook_profiler = PluginHookProfiler(
             self.diagnostic_log,
             enabled=self._bool_config("diagnostic_plugin_timing_enabled", False),
@@ -576,6 +580,7 @@ class EmbodimentBridgePlugin(Star):
             ),
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
+            client_diagnostics=self.client_diagnostics,
         )
         self.identity_control_plane = IdentityControlPlaneAdapter(
             context,
@@ -629,6 +634,7 @@ class EmbodimentBridgePlugin(Star):
             relationship_event_identity=self.relationship_event_identity,
             api_principal_verifier=self.api_principal_verifier,
             diagnostic_log=self.diagnostic_log,
+            client_diagnostics=self.client_diagnostics,
             pairing_defaults={
                 "public_url": pairing_public_url,
                 "astrbot_api_key": str(config.get("pairing_astrbot_api_key", "") or ""),

@@ -2312,6 +2312,139 @@ function renderDiagnosticSummary(events) {
   });
 }
 
+function formatClientMetric(value, unit = "ms", digits = 1) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return "—";
+  return `${number.toFixed(digits)}${unit}`;
+}
+
+function renderClientPerf(client) {
+  const container = document.getElementById("client-perf");
+  if (!container) return;
+  container.replaceChildren();
+  const sessions = client && Array.isArray(client.sessions) ? client.sessions : [];
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "diagnostics-empty";
+    empty.textContent = "Quest 客户端未上报（需头盔已连接且开启详细采样）。";
+    container.append(empty);
+    return;
+  }
+  const session = sessions[0];
+  const perf = session.latest_perf || null;
+  const aggregates = session.aggregates || {};
+  const lines = [];
+  if (perf) {
+    lines.push(
+      `FPS ${formatClientMetric(perf.fps, "", 0)} · 帧时 p50 ${formatClientMetric(perf.frame_p50_ms)} / p95 ${formatClientMetric(perf.frame_p95_ms)} / max ${formatClientMetric(perf.frame_max_ms)} · 目标 ${formatClientMetric(perf.target_fps, "", 0)}FPS`
+    );
+    lines.push(
+      `合成器丢帧 ${formatClientMetric(perf.compositor_dropped_session, "", 0)} · 物理丢步 ${formatClientMetric(perf.physics_dropped_s, "s", 3)}/${formatClientMetric(perf.physics_dropped_frames, "", 0)} 帧 · 物理 ${formatClientMetric(perf.physics_hz, "Hz", 0)}/${formatClientMetric(perf.physics_substeps, "步", 0)}`
+    );
+    lines.push(
+      `MMD：求解 ${formatClientMetric(perf.mmd_solver_ms)} · 物理 ${formatClientMetric(perf.mmd_physics_ms)} · 骨骼IK ${formatClientMetric(perf.mmd_bone_ik_ms)} · SDEF ${formatClientMetric(perf.mmd_sdef_ms)} · 回写 ${formatClientMetric(perf.mmd_flush_ms)} · 手接触 ${formatClientMetric(perf.hand_contact_ms)}`
+    );
+    lines.push(
+      `XR：CPU ${formatClientMetric(perf.xr_cpu_ms)} · GPU ${formatClientMetric(perf.xr_gpu_ms)} · 利用率 ${formatClientMetric(perf.cpu_util, "%", 0)}/${formatClientMetric(perf.gpu_util, "%", 0)}`
+    );
+    lines.push(
+      `内存 已分配 ${formatClientMetric(perf.mem_alloc_bytes, "B", 0)} · PSS ${formatClientMetric(perf.mem_pss_bytes, "B", 0)} · GC ${formatClientMetric(perf.gc0, "", 0)}/${formatClientMetric(perf.gc1, "", 0)}/${formatClientMetric(perf.gc2, "", 0)} · 热 ${perf.thermal_state || "—"}`
+    );
+    lines.push(
+      `模型 渲染 ${formatClientMetric(perf.model_renderer, "", 0)} · 材质 ${formatClientMetric(perf.model_material, "", 0)} · 顶点 ${formatClientMetric(perf.model_vertex, "", 0)} · 三角 ${formatClientMetric(perf.model_tri, "", 0)} · 骨骼 ${formatClientMetric(perf.model_bone, "", 0)} · 刚体 ${formatClientMetric(perf.model_rigid, "", 0)} · 渲染比例 ${formatClientMetric(perf.render_scale, "", 2)} · 佩戴 ${perf.headset_worn === true ? "是" : perf.headset_worn === false ? "否" : "—"} · 动作 ${perf.active_action || "—"}`
+    );
+  } else {
+    lines.push("尚无性能快照。");
+  }
+  lines.push(
+    `会话 ${session.session_id} · 上报 ${formatClientMetric(aggregates.report_count, "", 0)} 次（性能 ${formatClientMetric(aggregates.perf_count, "", 0)} / 跨度 ${formatClientMetric(aggregates.span_events, "", 0)}）· 拒收 ${formatClientMetric(aggregates.rejected_count, "", 0)} · 平均FPS ${formatClientMetric(aggregates.avg_fps, "", 1)} · 物理丢步峰值 ${formatClientMetric(aggregates.physics_dropped_max_s, "s", 3)} · ${formatClientMetric(aggregates.age_seconds, "s", 0)} 前活跃`
+  );
+  lines.forEach((value) => {
+    const line = document.createElement("p");
+    line.textContent = value;
+    container.append(line);
+  });
+}
+
+function renderUnifiedTimeline(client, serverEvents) {
+  const container = document.getElementById("client-timeline");
+  if (!container) return;
+  container.replaceChildren();
+  const sessions = client && Array.isArray(client.sessions) ? client.sessions : [];
+  const groups = [];
+  sessions.forEach((session) => {
+    (Array.isArray(session.events) ? session.events : []).forEach((entry) => {
+      if (entry.kind !== "spans" || !Array.isArray(entry.spans) || !entry.spans.length) {
+        return;
+      }
+      groups.push({
+        key: entry.trace_id || entry.turn_id || session.session_id,
+        joined: Boolean(entry.trace_id),
+        offset_ms: Number(entry.offset_ms || 0),
+        spans: entry.spans
+      });
+    });
+  });
+  groups.sort((a, b) => b.offset_ms - a.offset_ms);
+  const latest = groups.slice(0, 3);
+  if (!latest.length) {
+    const empty = document.createElement("p");
+    empty.className = "diagnostics-empty";
+    empty.textContent = "尚无客户端 turn 跨度上报。";
+    container.append(empty);
+    return;
+  }
+  latest.forEach((group) => {
+    const header = document.createElement("p");
+    header.className = "diagnostics-timeline-title";
+    header.textContent =
+      `trace ${group.key}` + (group.joined ? " · 已与服务端对齐" : " · 未对齐服务端");
+    container.append(header);
+    group.spans
+      .slice()
+      .sort((a, b) => Number(a.start_offset_ms || 0) - Number(b.start_offset_ms || 0))
+      .slice(0, 10)
+      .forEach((span) => {
+        const line = document.createElement("div");
+        line.className = `diagnostic-line status-${String(span.status || "unknown")}`;
+        const parts = [
+          `[Quest] [${span.component}/${span.stage}] ${span.code || "-"}`,
+          `+${Math.round(Number(span.start_offset_ms || 0))}ms`
+        ];
+        if (Number(span.duration_ms) >= 0) parts.push(`耗时 ${Math.round(span.duration_ms)}ms`);
+        if (Number(span.chunks) > 0) parts.push(`${span.chunks} 块`);
+        line.textContent = parts.join(" · ");
+        container.append(line);
+      });
+    const matching = serverEvents
+      .filter((event) => String(event.trace_id || "") === group.key)
+      .slice(-8);
+    if (matching.length) {
+      const bridgeHeader = document.createElement("p");
+      bridgeHeader.textContent = "── 服务端段 ──";
+      container.append(bridgeHeader);
+      matching.forEach((event) => {
+        const line = document.createElement("div");
+        line.className = `diagnostic-line status-${String(event.status || "unknown")}`;
+        const parts = [
+          `[服务端] [${event.span_name || diagnosticStageLabel(event.component)}]`
+        ];
+        if (Number.isFinite(event.start_offset_ms)) {
+          parts.push(`+${Math.round(event.start_offset_ms)}ms`);
+        }
+        if (Number.isFinite(event.wall_ms) && event.wall_ms > 0) {
+          parts.push(`耗时 ${Math.round(event.wall_ms)}ms`);
+        }
+        if (Number.isFinite(event.provider_wait_ms) && event.provider_wait_ms > 0) {
+          parts.push(`Provider 等待 ${Math.round(event.provider_wait_ms)}ms`);
+        }
+        line.textContent = parts.join(" · ");
+        container.append(line);
+      });
+    }
+  });
+}
+
 async function loadDiagnostics({ silent = false } = {}) {
   if (diagnosticsRefreshInFlight) return diagnosticsRefreshInFlight;
   const button = document.getElementById("load-diagnostics");
@@ -2336,6 +2469,8 @@ async function loadDiagnostics({ silent = false } = {}) {
         : "当前根因：未发现明确的失败事件";
       renderDiagnosticSummary(events);
       renderDiagnosticEvents(events);
+      renderClientPerf(diagnostics.client);
+      renderUnifiedTimeline(diagnostics.client, events);
       return true;
     } catch (error) {
       if (!silent) {

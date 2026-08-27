@@ -5,7 +5,10 @@
       "enabled_by": "server_timing_enabled",
       "location": "reply.end.server_timing",
       "default_present": false,
-      "decision_path": ["astrbot_event_bus", "direct_provider"],
+      "decision_path": [
+        "astrbot_event_bus",
+        "direct_provider"
+      ],
       "duration_fields": [
         "stt_ms",
         "decision_ms",
@@ -20,16 +23,32 @@
     "action_receipts@1.0": {
       "intent_field": "avatar.intent.action_id",
       "receipt_route": "/action/result",
-      "passive_gestures_without_receipts": ["idle", "talk"],
-      "terminal_facts": ["completed", "rejected", "interrupted"],
+      "passive_gestures_without_receipts": [
+        "idle",
+        "talk"
+      ],
+      "terminal_facts": [
+        "completed",
+        "rejected",
+        "interrupted"
+      ],
       "storage": "bounded_session_memory",
       "grants_permission": false
     },
     "action_methods@1.0": {
       "session_capability_field": "session.start.supported_actions",
-      "intent_fields": ["action_id", "method", "parameters", "transition", "source"],
+      "intent_fields": [
+        "action_id",
+        "method",
+        "parameters",
+        "transition",
+        "source"
+      ],
       "selection": "server_client_intersection",
-      "legacy_client_excludes": ["crouch", "raise_leg"],
+      "legacy_client_excludes": [
+        "crouch",
+        "raise_leg"
+      ],
       "one_full_body_action_per_turn": true
     }
   },
@@ -38,7 +57,9 @@
     "Authorization",
     "X-Embodiment-Bridge-Key"
   ],
-  "legacy_authentication_headers": ["X-Quest-Avatar-Key"],
+  "legacy_authentication_headers": [
+    "X-Quest-Avatar-Key"
+  ],
   "audio": {
     "input": {
       "format": "pcm16",
@@ -46,7 +67,10 @@
       "sample_rate": 16000,
       "channels": 1,
       "sample_width_bytes": 2,
-      "recommended_chunk_ms": {"minimum": 40, "maximum": 100},
+      "recommended_chunk_ms": {
+        "minimum": 40,
+        "maximum": 100
+      },
       "sequence_first": 0,
       "sequence_step": 1
     },
@@ -60,54 +84,287 @@
     }
   },
   "routes": [
-    {"method": "GET", "path": "/pairing/service-status", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/service-control", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/listener-port", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/overview", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "GET", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "POST", "path": "/pairing/operator-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "GET", "path": "/pairing/quest-chain-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "POST", "path": "/pairing/quest-chain-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "GET", "path": "/pairing/fast-action-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "POST", "path": "/pairing/fast-action-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "GET", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "POST", "path": "/pairing/stt-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "GET", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-      {"method": "POST", "path": "/pairing/platform-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/persona-library", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-converter-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-convert", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-conversion-start", "success_status": 202, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-conversion-status", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-conversion-cancel", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-profile-open", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-profile-save", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-profile-activate", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/persona-profile-delete", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/quest-identity-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/quest-identity-settings", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/diagnostics", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/identity-candidates", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/identity-selection", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "GET", "path": "/pairing/api-principal-proof", "success_status": 200, "authentication": "astrbot_api_key_plugin_scope"},
-    {"method": "POST", "path": "/pairing/create", "success_status": 201, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/status", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/revoke", "success_status": 200, "authentication": "astrbot_dashboard"},
-    {"method": "POST", "path": "/pairing/exchange", "success_status": 200, "authentication": "builtin_listener_one_time_credential_or_astrbot_outer_auth+one_time_credential"},
-    {"method": "POST", "path": "/session/start", "success_status": 201},
-    {"method": "GET", "path": "/events/<session_id>", "success_status": 200},
-    {"method": "POST", "path": "/turn/start", "success_status": 202},
-    {"method": "POST", "path": "/audio/chunk", "success_status": 202},
-    {"method": "POST", "path": "/audio/end", "success_status": 202},
-    {"method": "POST", "path": "/playback/receipt", "success_status": 200},
-    {"method": "POST", "path": "/interaction", "success_status": 202},
-    {"method": "POST", "path": "/action/result", "success_status": 200},
-    {"method": "POST", "path": "/interrupt", "success_status": 200},
-    {"method": "POST", "path": "/session/close", "success_status": 200},
-    {"method": "POST", "path": "/spatial/context", "success_status": 200},
-    {"method": "GET", "path": "/health", "success_status": 200}
+    {
+      "method": "GET",
+      "path": "/pairing/service-status",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/service-control",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/listener-port",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/overview",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/operator-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/operator-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/quest-chain-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/quest-chain-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/fast-action-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/fast-action-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/stt-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/stt-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/platform-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/platform-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/persona-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/persona-library",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-converter-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-convert",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-conversion-start",
+      "success_status": 202,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-conversion-status",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-conversion-cancel",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-profile-open",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-profile-save",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-profile-activate",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/persona-profile-delete",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/quest-identity-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/quest-identity-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/diagnostics",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/identity-candidates",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/identity-selection",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/api-principal-proof",
+      "success_status": 200,
+      "authentication": "astrbot_api_key_plugin_scope"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/create",
+      "success_status": 201,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/status",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/revoke",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/exchange",
+      "success_status": 200,
+      "authentication": "builtin_listener_one_time_credential_or_astrbot_outer_auth+one_time_credential"
+    },
+    {
+      "method": "POST",
+      "path": "/session/start",
+      "success_status": 201
+    },
+    {
+      "method": "GET",
+      "path": "/events/<session_id>",
+      "success_status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/turn/start",
+      "success_status": 202
+    },
+    {
+      "method": "POST",
+      "path": "/audio/chunk",
+      "success_status": 202
+    },
+    {
+      "method": "POST",
+      "path": "/audio/end",
+      "success_status": 202
+    },
+    {
+      "method": "POST",
+      "path": "/playback/receipt",
+      "success_status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/diagnostics/report",
+      "success_status": 202
+    },
+    {
+      "method": "POST",
+      "path": "/interaction",
+      "success_status": 202
+    },
+    {
+      "method": "POST",
+      "path": "/action/result",
+      "success_status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/interrupt",
+      "success_status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/session/close",
+      "success_status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/spatial/context",
+      "success_status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "success_status": 200
+    }
   ],
   "enums": {
     "emotion": [
@@ -139,7 +396,12 @@
       "sway",
       "crouch"
     ],
-    "look_at": ["user", "hand", "away", "none"],
+    "look_at": [
+      "user",
+      "hand",
+      "away",
+      "none"
+    ],
     "interaction_name": [
       "handshake",
       "head_pat",
@@ -147,8 +409,18 @@
       "gaze",
       "speaking"
     ],
-    "interaction_phase": ["start", "update", "end", "cancel"],
-    "hand": ["left", "right", "both", "none"],
+    "interaction_phase": [
+      "start",
+      "update",
+      "end",
+      "cancel"
+    ],
+    "hand": [
+      "left",
+      "right",
+      "both",
+      "none"
+    ],
     "action_result_status": [
       "accepted",
       "started",
@@ -191,8 +463,12 @@
       "reply.audio.chunk",
       "reply.end"
     ],
-    "stt_unavailable": ["error"],
-    "stt_failed": ["error"],
+    "stt_unavailable": [
+      "error"
+    ],
+    "stt_failed": [
+      "error"
+    ],
     "tts_failed_after_text": [
       "avatar.intent",
       "reply.text.delta",
@@ -210,7 +486,11 @@
   },
   "unity_conversation_controller": {
     "text_max_characters": 8192,
-    "audio_turn_text_forms_accepted": ["omitted", "null", "empty_string"],
+    "audio_turn_text_forms_accepted": [
+      "omitted",
+      "null",
+      "empty_string"
+    ],
     "recommended_capture_chunk_ms": 80,
     "recommended_capture_chunk_bytes": 2560,
     "input_sequence_first": 0,
@@ -286,9 +566,21 @@
   "action_result_semantics": {
     "server_generated_action_id": true,
     "transitions": {
-      "planned": ["accepted", "rejected", "interrupted"],
-      "accepted": ["started", "rejected", "interrupted"],
-      "started": ["completed", "rejected", "interrupted"],
+      "planned": [
+        "accepted",
+        "rejected",
+        "interrupted"
+      ],
+      "accepted": [
+        "started",
+        "rejected",
+        "interrupted"
+      ],
+      "started": [
+        "completed",
+        "rejected",
+        "interrupted"
+      ],
       "completed": [],
       "rejected": [],
       "interrupted": []
@@ -338,23 +630,77 @@
     "trusted_platform_not_configured"
   ],
   "http_error_codes": [
-    {"status": 400, "code": "invalid_content_length"},
-    {"status": 400, "code": "empty_body"},
-    {"status": 400, "code": "invalid_audio"},
-    {"status": 401, "code": "astrbot_auth_required"},
-    {"status": 401, "code": "bridge_auth_failed"},
-    {"status": 403, "code": "session_ownership_mismatch"},
-    {"status": 404, "code": "session_not_found"},
-    {"status": 409, "code": "session_conflict"},
-    {"status": 409, "code": "action_receipt_replay"},
-    {"status": 409, "code": "action_plan_stale"},
-    {"status": 409, "code": "action_mismatch"},
-    {"status": 409, "code": "action_transition_invalid"},
-    {"status": 413, "code": "payload_too_large"},
-    {"status": 415, "code": "unsupported_media_type"},
-    {"status": 422, "code": "schema_validation_failed"},
-    {"status": 500, "code": "internal_error"},
-    {"status": 503, "code": "bridge_not_configured"}
-    ,{"status": 503, "code": "bridge_service_disabled"}
+    {
+      "status": 400,
+      "code": "invalid_content_length"
+    },
+    {
+      "status": 400,
+      "code": "empty_body"
+    },
+    {
+      "status": 400,
+      "code": "invalid_audio"
+    },
+    {
+      "status": 401,
+      "code": "astrbot_auth_required"
+    },
+    {
+      "status": 401,
+      "code": "bridge_auth_failed"
+    },
+    {
+      "status": 403,
+      "code": "session_ownership_mismatch"
+    },
+    {
+      "status": 404,
+      "code": "session_not_found"
+    },
+    {
+      "status": 409,
+      "code": "session_conflict"
+    },
+    {
+      "status": 409,
+      "code": "action_receipt_replay"
+    },
+    {
+      "status": 409,
+      "code": "action_plan_stale"
+    },
+    {
+      "status": 409,
+      "code": "action_mismatch"
+    },
+    {
+      "status": 409,
+      "code": "action_transition_invalid"
+    },
+    {
+      "status": 413,
+      "code": "payload_too_large"
+    },
+    {
+      "status": 415,
+      "code": "unsupported_media_type"
+    },
+    {
+      "status": 422,
+      "code": "schema_validation_failed"
+    },
+    {
+      "status": 500,
+      "code": "internal_error"
+    },
+    {
+      "status": 503,
+      "code": "bridge_not_configured"
+    },
+    {
+      "status": 503,
+      "code": "bridge_service_disabled"
+    }
   ]
 }
