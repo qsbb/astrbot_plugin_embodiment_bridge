@@ -293,6 +293,9 @@ class EmbodimentBridgePlugin(Star):
         allow_private_http_pairing = self._bool_config(
             "allow_private_http_pairing", False
         )
+        allow_remote_http_pairing = self._bool_config(
+            "allow_insecure_remote_http", False
+        )
         max_json_body_bytes = self._int_config(
             "max_json_body_bytes", 65_536, 4_096, 262_144
         )
@@ -527,6 +530,7 @@ class EmbodimentBridgePlugin(Star):
             bridge_api_key=bridge_api_key,
             exchange_url=pairing_exchange_proxy_url,
             allow_private_http=allow_private_http_pairing,
+            allow_remote_http=allow_remote_http_pairing,
         )
         self._fallback_exchange_url = self.pairing.exchange_url
         self._fallback_exchange_reason = self.pairing.bootstrap_reason
@@ -534,6 +538,7 @@ class EmbodimentBridgePlugin(Star):
         listener_config = BuiltinListenerConfig.from_mapping(
             config,
             allow_private_http=allow_private_http_pairing,
+            allow_remote_http=allow_remote_http_pairing,
             max_json_body_bytes=max_json_body_bytes,
             max_audio_request_bytes=max_audio_request_bytes,
         )

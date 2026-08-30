@@ -40,7 +40,7 @@
   "pairing_listener_public_url": {
     "description": "向具身客户端公布的内置监听器 URL",
     "type": "string",
-    "hint": "可填写主机 base URL 或精确 pairing/exchange URL。私网 HTTP 还必须启用 allow_private_http_pairing；公网必须 HTTPS。不自动猜测宿主机 IP。",
+    "hint": "可填写主机 base URL 或精确 pairing/exchange URL。私网 HTTP 还必须启用 allow_private_http_pairing；其他明文 HTTP 须启用 allow_insecure_remote_http；否则公网必须 HTTPS。不自动猜测宿主机 IP。",
     "default": ""
   },
   "bridge_api_key": {
@@ -67,6 +67,12 @@
     "description": "允许私网 IP 使用明文 HTTP 配对和连接",
     "type": "bool",
     "hint": "仅用于受控局域网，由 Bridge 服务端固定配置，不在快速绑定页显示。URL 主机必须是 RFC1918 IPv4 或 IPv6 ULA 字面量；公网、域名和其他地址仍强制 HTTPS。",
+    "default": false
+  },
+  "allow_insecure_remote_http": {
+    "description": "允许任意主机（含公网/内网穿透）使用明文 HTTP 配对和连接",
+    "type": "bool",
+    "hint": "为没有 HTTPS 证书的家庭公网 IP、内网穿透（frp 等）准备的逃生门。开启后配对与对话将明文传输（含密钥与音频），请仅在自己的服务器上使用；能上 HTTPS 时务必关闭。",
     "default": false
   },
   "pairing_public_url": {

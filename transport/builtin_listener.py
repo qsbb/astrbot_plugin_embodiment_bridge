@@ -99,6 +99,7 @@ class BuiltinListenerConfig:
         values: Mapping[str, Any],
         *,
         allow_private_http: bool,
+        allow_remote_http: bool = False,
         max_json_body_bytes: int,
         max_audio_request_bytes: int,
     ) -> BuiltinListenerConfig:
@@ -150,6 +151,7 @@ class BuiltinListenerConfig:
                 public_url = normalize_listener_public_url(
                     public_raw,
                     allow_private_http=allow_private_http,
+                    allow_remote_http=allow_remote_http,
                 )
             except PairingError as exc:
                 public_reason = exc.code
@@ -207,6 +209,7 @@ def normalize_listener_public_url(
     value: str,
     *,
     allow_private_http: bool,
+    allow_remote_http: bool = False,
 ) -> str:
     raw = str(value or "").strip()
     try:
@@ -244,6 +247,7 @@ def normalize_listener_public_url(
     return normalize_pairing_exchange_url(
         exact,
         allow_private_http=allow_private_http,
+        allow_remote_http=allow_remote_http,
     )
 
 

@@ -216,6 +216,7 @@ class PairingManager:
         bridge_api_key: str,
         exchange_url: str = "",
         allow_private_http: bool = False,
+        allow_remote_http: bool = False,
         clock: Callable[[], float] = time.time,
         max_active_sessions: int = 32,
         max_owner_sessions: int = 5,
@@ -224,6 +225,7 @@ class PairingManager:
     ) -> None:
         self.bridge_api_key = str(bridge_api_key or "")
         self.allow_private_http = bool(allow_private_http)
+        self.allow_remote_http = bool(allow_remote_http)
         self.exchange_url = ""
         self.bootstrap_reason = "pairing_exchange_proxy_url_missing"
         if str(exchange_url or "").strip():
@@ -231,6 +233,7 @@ class PairingManager:
                 self.exchange_url = normalize_pairing_exchange_url(
                     exchange_url,
                     allow_private_http=self.allow_private_http,
+                    allow_remote_http=self.allow_remote_http,
                 )
                 self.bootstrap_reason = "ready"
             except PairingError as exc:
@@ -313,6 +316,7 @@ class PairingManager:
             allow_private_http=(
                 self.allow_private_http and payload.allow_insecure_http
             ),
+            allow_remote_http=self.allow_remote_http,
         )
         now = self.clock()
         token = secrets.token_urlsafe(32)
@@ -555,6 +559,7 @@ def normalize_public_base_url(
     port: int | None = None,
     *,
     allow_private_http: bool = False,
+    allow_remote_http: bool = False,
 ) -> str:
     raw = str(value or "").strip()
     try:
@@ -588,11 +593,13 @@ def normalize_public_base_url(
         )
 
     host = parsed.hostname
-    if scheme == "http" and (not allow_private_http or not _is_private_lan_ip(host)):
+    if scheme == "http" and not (
+        allow_remote_http or (allow_private_http and _is_private_lan_ip(host))
+    ):
         raise PairingError(
             "https_required",
             422,
-            "Plain HTTP is allowed only for an explicitly enabled private IP",
+            "Plain HTTP requires an explicit private-IP or remote-HTTP opt-in",
         )
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
@@ -605,6 +612,7 @@ def normalize_pairing_exchange_url(
     value: str,
     *,
     allow_private_http: bool = False,
+    allow_remote_http: bool = False,
 ) -> str:
     raw = str(value or "").strip()
     if not raw or len(raw) > 2048:
@@ -638,13 +646,13 @@ def normalize_pairing_exchange_url(
             422,
             "Pairing exchange proxy URL is invalid",
         )
-    if scheme == "http" and (
-        not allow_private_http or not _is_private_lan_ip(parsed.hostname)
+    if scheme == "http" and not (
+        allow_remote_http or (allow_private_http and _is_private_lan_ip(parsed.hostname))
     ):
         raise PairingError(
             "https_required",
             422,
-            "Pairing exchange proxy must use HTTPS unless private HTTP is enabled",
+            "Pairing exchange proxy must use HTTPS unless plain HTTP is enabled",
         )
     return urlunsplit((scheme, parsed.netloc, parsed.path, "", ""))
 

@@ -265,6 +265,44 @@ def test_private_http_requires_server_and_session_opt_in() -> None:
     assert public_http.value.code == "https_required"
 
 
+def test_remote_http_opt_in_allows_public_plain_http() -> None:
+    """allow_insecure_remote_http 放开私网限制：公网/内网穿透明文 HTTP 可配对。"""
+    remote_manager = pairing_manager(
+        exchange_url="http://192.168.50.10:8520/quest/pairing/exchange",
+        allow_remote_http=True,
+    )
+    created = remote_manager.create(
+        "owner",
+        create_payload(
+            public_url="http://203.0.113.10",
+            port=8520,
+            allow_insecure_http=False,
+        ),
+    )
+    exchanged = remote_manager.exchange(
+        PairingExchangeRequest(token=qr_fields(created)["token"]),
+        remote="192.0.2.10",
+    )
+    assert exchanged.configuration["base_url"] == (
+        f"http://203.0.113.10:8520{PUBLIC_API_PATH}"
+    )
+    assert exchanged.configuration["allow_insecure_http"] is True
+
+    without_opt_in = pairing_manager(
+        exchange_url="https://192.168.50.10:8520/quest/pairing/exchange",
+    )
+    with pytest.raises(PairingError) as public_http:
+        without_opt_in.create(
+            "owner",
+            create_payload(
+                public_url="http://203.0.113.10",
+                port=8520,
+                allow_insecure_http=True,
+            ),
+        )
+    assert public_http.value.code == "https_required"
+
+
 def test_missing_exchange_proxy_fails_closed() -> None:
     manager = PairingManager(bridge_api_key=BRIDGE_KEY)
     assert manager.bootstrap_ready is False
