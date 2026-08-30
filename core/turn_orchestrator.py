@@ -45,6 +45,7 @@ from .models import (
     ModelDecision,
     ProposedIntent,
     SessionStartRequest,
+    TurnImageAttachment,
     TurnStartRequest,
 )
 from .plugin_identity import (
@@ -240,12 +241,15 @@ class TurnOrchestrator:
             component="turn",
             phase="text" if request.text else "audio",
             status="processing" if request.text else "awaiting_audio",
+            image_attached=request.image is not None,
         )
         if request.text:
             await self._launch(
                 session,
                 turn,
-                lambda: self._run_text_turn(session, turn, request.text or ""),
+                lambda: self._run_text_turn(
+                    session, turn, request.text or "", image=request.image
+                ),
             )
         elif bool(getattr(self.stt, "streaming_available", False)):
             await self._start_streaming_stt(session, turn)
@@ -639,6 +643,8 @@ class TurnOrchestrator:
         session: SessionState,
         turn: TurnState,
         text: str,
+        *,
+        image: TurnImageAttachment | None = None,
     ) -> None:
         try:
             await self._run_reply_with_fast_action(
@@ -646,7 +652,7 @@ class TurnOrchestrator:
                 turn,
                 text,
                 lambda: self._decide_and_deliver(
-                    session, turn, text, interaction=None
+                    session, turn, text, interaction=None, image=image
                 ),
             )
         except asyncio.CancelledError:
@@ -1139,6 +1145,7 @@ class TurnOrchestrator:
         user_text: str,
         *,
         interaction: InteractionEvent | None,
+        image: TurnImageAttachment | None = None,
     ) -> None:
         if not self.sessions.is_current(session, turn.turn_id, turn.generation):
             return
@@ -1259,7 +1266,7 @@ class TurnOrchestrator:
                 # auto 模式失败回退主链路，主链路再不行回退直管 JSON。
                 try:
                     decision = await self._attempt_quest_bridge(
-                        session, turn, user_text, llm_started
+                        session, turn, user_text, llm_started, image=image
                     )
                     operation = "quest_enriched_pipeline"
                 except MessagePipelineEmpty:
@@ -1280,7 +1287,7 @@ class TurnOrchestrator:
                         )
                         try:
                             decision = await self._attempt_eventbus(
-                                session, turn, user_text, llm_started
+                                session, turn, user_text, llm_started, image=image
                             )
                             operation = "astrbot_event_bus"
                         except MessagePipelineEmpty:
@@ -1310,7 +1317,7 @@ class TurnOrchestrator:
             elif use_message_pipeline and self.message_pipeline is not None:
                 try:
                     decision = await self._attempt_eventbus(
-                        session, turn, user_text, llm_started
+                        session, turn, user_text, llm_started, image=image
                     )
                     operation = "astrbot_event_bus"
                 except MessagePipelineUnavailable as exc:
@@ -1350,6 +1357,16 @@ class TurnOrchestrator:
                 available=True,
                 duration_ms=(time.perf_counter() - llm_started) * 1000,
             )
+            if image is not None and operation == "direct_provider":
+                # 直管链路是对话-only JSON（见 _attempt_direct 文档）：
+                # 单帧图像不进入该链路。丢弃是隐私安全的降级——模型收不到
+                # 图像也就无从编造；记录便于观测。
+                self._diagnostic(
+                    "turn_image.skipped",
+                    component="turn",
+                    status="skipped",
+                    reason_code="direct_provider_dialogue_only",
+                )
             self._diagnostic(
                 "decision.completed",
                 component="llm",
@@ -1417,6 +1434,8 @@ class TurnOrchestrator:
         turn: TurnState,
         user_text: str,
         llm_started: float,
+        *,
+        image: TurnImageAttachment | None = None,
     ) -> ModelDecision:
         """Run the bridge-owned enriched chain (quest_chain_mode bridge/auto)."""
         self._diagnostic(
@@ -1437,6 +1456,7 @@ class TurnOrchestrator:
                         fast_action_active=turn.fast_action_active,
                         fast_action_feedback=turn.fast_action_feedback,
                         action_facts=None,
+                        image=image,
                     ),
                     timeout=self.eventbus_terminal_deadline_seconds,
                 ),
@@ -1476,6 +1496,8 @@ class TurnOrchestrator:
         turn: TurnState,
         user_text: str,
         llm_started: float,
+        *,
+        image: TurnImageAttachment | None = None,
     ) -> ModelDecision:
         """Run the shared AstrBot EventBus chain (quest_chain_mode main)."""
         self._diagnostic(
@@ -1506,6 +1528,7 @@ class TurnOrchestrator:
                         # They are deliberately not attached to the main
                         # EventBus/LLM request, which must remain dialogue-only.
                         action_facts=None,
+                        image=image,
                     ),
                     timeout=self.eventbus_terminal_deadline_seconds,
                 ),

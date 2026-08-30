@@ -432,6 +432,26 @@ POST /turn/start
 
 `text` 最长为 8192 个 UTF-8 字符，与当前 Unity `ConversationController` 的截断上限一致；超出上限返回 `422 schema_validation_failed`。
 
+**可选 `image` 字段（摄像头单帧，向后兼容）**：手机端用户明确请求（如"看看我今天的穿搭"）时，客户端可随文本轮附带一张摄像头实拍单帧：
+
+```json
+{
+  "type": "turn.start",
+  "protocol_version": "1.0",
+  "session_id": "s1",
+  "turn_id": "t3",
+  "text": "看看我今天的穿搭",
+  "image": {
+    "mime": "image/jpeg",
+    "data_base64": "<BASE64_JPEG>",
+    "purpose": "看今天的穿搭"
+  },
+  "cancel_previous": true
+}
+```
+
+约束与治理：仅接受 `image/jpeg`，`data_base64` 必须是以 SOI 标记开头的合法 base64（上限 6MB）；`purpose` 最长 200 字符。图像为单帧、不落盘、仅本轮使用，不写入会话历史；Bridge 会在视觉模型请求的 system prompt 注入"不得编造画面"的治理指令（复刻 reality_companion 的 `must_not_claim_observed`）。省略 `image`、传 `null` 或空 `data_base64` 均表示纯文本轮次（兼容 Unity `JsonUtility` 的默认字段形状）。直管 JSON 链路（dialogue-only 回退）不消费图像，此时图像被安全丢弃并记录 `turn_image.skipped` 诊断。
+
 ### 8.2 语音轮次
 
 省略 `text`、传 `null`，或传精确空字符串都表示语音轮次。Unity `JsonUtility` 在不同运行时可能选择其中一种形状，Bridge 会统一归一为等待音频；空白字符串仍然不是有效语音占位符。

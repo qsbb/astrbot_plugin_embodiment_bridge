@@ -49,6 +49,10 @@ from ..core.turn_orchestrator import TurnOrchestrator
 PLUGIN_NAME = PLUGIN_ID
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+# turn/start 摄像头单帧请求体上限：JPEG 长边 ~1280、质量 ~80 的单帧约
+# 200-500KB base64，取 8MB 留足余量（模型校验本身另有 6MB base64 字段上限）。
+_TURN_IMAGE_BODY_LIMIT = 8 * 1024 * 1024
+
 
 class HttpApiError(RuntimeError):
     def __init__(self, code: str, status_code: int, message: str) -> None:
@@ -301,7 +305,14 @@ class HttpSseTransport:
                 status_code=202,
             )
 
-        return await self._json_endpoint(TurnStartRequest, action)
+        return await self._json_endpoint(
+            TurnStartRequest,
+            action,
+            # 摄像头单帧随 turn/start 上送（JPEG ~1280px q80 ≈ 200-500KB
+            # base64）。取普通 JSON 上限与单帧上限的较大者，避免另开配置项；
+            # 不带 image 的请求体不受影响。
+            body_limit=max(self.config.max_json_body_bytes, _TURN_IMAGE_BODY_LIMIT),
+        )
 
     async def audio_chunk(self) -> Any:
         async def action(owner: str, payload: AudioChunkRequest) -> Any:

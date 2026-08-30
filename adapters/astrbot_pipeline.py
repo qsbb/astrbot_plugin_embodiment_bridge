@@ -842,6 +842,7 @@ def _build_capture_event(
     fast_action_feedback: dict[str, object] | None = None,
     action_facts: list[dict[str, Any]] | None = None,
     supported_actions: tuple[str, ...] | None = None,
+    image: Any | None = None,
 ) -> Any:
     # Imports stay lazy so plugin discovery still degrades cleanly on older
     # AstrBot builds that do not expose the complete EventBus ABI.
@@ -861,6 +862,13 @@ def _build_capture_event(
     message_id = "embodiment-" + uuid.uuid4().hex
     message.message_id = message_id
     message.message = [Plain(str(user_text))]
+    if image is not None:
+        # 摄像头单帧（可选、单帧、不落盘）：以 Image 组件进入合成事件链，
+        # 走 AstrBot 原生多模态路径。组件构造失败则整轮失败（诚实回执，
+        # 不静默丢弃——静默丢弃会让模型在无图情况下回答"看到了什么"）。
+        from astrbot.api.message_components import Image
+
+        message.message.append(Image.fromBase64(str(image.data_base64)))
     message.message_str = str(user_text)
     message.raw_message = _bridge_raw_message(
         platform_name=str(getattr(platform_meta, "name", "") or ""),

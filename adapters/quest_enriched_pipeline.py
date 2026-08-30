@@ -42,6 +42,23 @@ _MAX_CONTRIBUTION_FRAGMENT = 12_000
 _MAX_CACHE_ENTRIES = 64
 
 
+def _turn_image_governance(purpose: str) -> str:
+    """摄像头单帧的模型治理指令（复刻 reality_companion 治理设计）。
+
+    红线：角色不得编造画面——失败必须如实说明，不得声称看到了任何内容，
+    不得猜测用户状态；图像仅服务本轮明确用途。
+    """
+    purpose_text = purpose.strip() or "本轮用户请求"
+    return (
+        "【摄像头单帧治理】用户随本轮附带一张手机摄像头实拍单帧"
+        "（用途：" + purpose_text + "；单帧、未保存、仅本轮使用）。"
+        "你必须遵守：该图像仅服务于本轮用途，不得用于身份识别、持续观察、"
+        "情绪读脸或读取屏幕文字；若你实际未能接收或处理该图像，必须如实"
+        "说明拍摄或传输失败；不得声称画面黑、被遮挡、看到了任何人物或物品；"
+        "不得猜测用户的当前状态、位置或穿着。"
+    )
+
+
 class QuestEnrichedPipelineAdapter:
     """Drive AstrBot's plugin hook chain in-process with per-hook timeouts."""
 
@@ -153,6 +170,7 @@ class QuestEnrichedPipelineAdapter:
         fast_action_active: bool = False,
         fast_action_feedback: dict[str, object] | None = None,
         action_facts: list[dict[str, Any]] | None = None,
+        image: Any | None = None,
     ) -> ModelDecision:
         started = time.perf_counter()
         current_turn = getattr(session, "current_turn", None)
@@ -219,6 +237,7 @@ class QuestEnrichedPipelineAdapter:
                 fast_action_feedback=fast_action_feedback,
                 action_facts=None,
                 supported_actions=None,
+                image=image,
             )
         self._current_event = event
         session_key = str(getattr(session, "session_id", "") or "")[:200]
@@ -240,6 +259,22 @@ class QuestEnrichedPipelineAdapter:
                 record("quest_chain.stopped_before_llm", status="stopped")
                 return self._stopped_decision(event, started)
             enriched_system_prompt = str(getattr(req, "system_prompt", "") or "")
+
+            # ③.5 摄像头单帧注入（在钩子之后：防止任何钩子改写/丢弃图像与
+            # 治理指令）。base64:// 是 AstrBot 原生媒体引用 scheme；治理指令
+            # 复刻 reality_companion 的 must_not_claim_observed 红线。
+            if image is not None:
+                req.image_urls = ["base64://" + str(image.data_base64)]
+                req.system_prompt = (
+                    enriched_system_prompt
+                    + "\n"
+                    + _turn_image_governance(str(getattr(image, "purpose", "") or ""))
+                ).strip()
+                record(
+                    "quest_chain.image_attached",
+                    status="ok",
+                    purpose_chars=len(str(getattr(image, "purpose", "") or "")),
+                )
 
             # ④ 直管 LLM 调用。
             with trace.span(

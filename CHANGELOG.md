@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- `turn/start` 多模态扩展（可选 `image` 字段，向后兼容）：手机端摄像头单帧随
+  文本轮上送（仅 `image/jpeg`，`data_base64` 须为 SOI 开头的合法 base64，
+  上限 6MB；`purpose` ≤200 字符）。空载荷（Unity JsonUtility 默认字段形状）
+  归一化为纯文本轮次。quest_bridge 链路经 `ProviderRequest.image_urls`
+  （`base64://` 引用）直达视觉模型；EventBus 链路以 `Image.fromBase64`
+  组件进入合成事件链；直管 JSON 链路（dialogue-only）不消费图像，安全丢弃
+  并记录 `turn_image.skipped` 诊断。`turn_image_governance` 治理指令
+  （复刻 reality_companion `must_not_claim_observed`：模型不得编造画面、
+  失败必须如实说明）注入 system prompt；单帧不落盘、不写入会话历史。
+  turn/start 请求体上限提升至 `max(max_json_body_bytes, 8MB)`。
+
 ## 1.2.0 - 2026-08-27
 
 ### Added

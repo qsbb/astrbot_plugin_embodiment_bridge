@@ -177,13 +177,54 @@ class SessionStartRequest(StrictModel):
         return self
 
 
+class TurnImageAttachment(StrictModel):
+    """摄像头单帧附件（手机端明确请求时随 turn/start 上送）。
+
+    隐私治理红线（照抄 reality_companion 治理设计）：单帧、明确用途、
+    不落盘；仅随本轮对话消费，不写入会话历史。空载荷（Unity JsonUtility
+    会把 null 对象序列化成默认字段形状）一律归一化为 None，保证旧客户端
+    语义不变。
+    """
+
+    mime: Literal["image/jpeg"] = "image/jpeg"
+    data_base64: str = Field(min_length=100, max_length=6_000_000)
+    purpose: str = Field(default="", max_length=200)
+
+    @field_validator("data_base64")
+    @classmethod
+    def _validate_jpeg_frame(cls, value: str) -> str:
+        import base64
+        import binascii
+
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("image data_base64 is not valid base64") from exc
+        if not raw.startswith(b"\xff\xd8"):
+            raise ValueError("image payload must start with a JPEG SOI marker")
+        return value
+
+
 class TurnStartRequest(StrictModel):
     type: Literal["turn.start"] = "turn.start"
     protocol_version: Literal["1.0"] = PROTOCOL_VERSION
     session_id: Identifier
     turn_id: Identifier
     text: str | None = Field(default=None, min_length=1, max_length=8192)
+    # 摄像头单帧（可选字段，向后兼容）：手机端用户明确请求时随文本上送；
+    # 旧客户端不带该字段，行为不变。
+    image: TurnImageAttachment | None = None
     cancel_previous: bool = True
+
+    @field_validator("image", mode="before")
+    @classmethod
+    def _empty_image_becomes_none(cls, value: object) -> object:
+        # Unity JsonUtility 无法表达“字段不存在”：null 嵌套对象会序列化成
+        # 默认字段形状（{"data_base64":"","purpose":""}）。空载荷一律归一化
+        # 为 None，保证旧客户端/纯文本轮语义不变。
+        if isinstance(value, dict) and not str(value.get("data_base64") or "").strip():
+            return None
+        return value
 
     @field_validator("text", mode="before")
     @classmethod
