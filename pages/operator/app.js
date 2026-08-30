@@ -1667,6 +1667,47 @@ async function loadQuestIdentitySettings() {
   return true;
 }
 
+const QUICK_PAIRING_PAGE_URL =
+  "/api/plugin/page/content/astrbot_plugin_embodiment_bridge/pairing/";
+
+const QUICK_PAIRING_REASONS = {
+  bridge_key_missing: "Bridge 长期密钥尚未配置",
+  quick_pairing_defaults_missing: "快速绑定服务端配置尚未完成（先完成上方基础绑定）",
+  pairing_listener_public_url_missing: "快速绑定公开入口尚未配置（需配置内置监听器公开 URL）",
+  pairing_bootstrap_unavailable: "快速绑定交换入口不可用"
+};
+
+async function loadQuickPairingStatus() {
+  const badge = document.getElementById("quick-pairing-badge");
+  const status = document.getElementById("quick-pairing-status");
+  const button = document.getElementById("open-pairing-page-button");
+  try {
+    const overview = await apiGet("pairing/overview");
+    const ready = overview.quick_pairing_ready === true;
+    badge.textContent = ready ? "已就绪" : "未就绪";
+    badge.classList.toggle("ready", ready);
+    badge.classList.toggle("stopped", !ready);
+    badge.classList.remove("loading");
+    if (ready) {
+      status.textContent = "快速绑定服务已就绪，点击下方按钮生成二维码 / 6 位配对码。";
+      button.disabled = false;
+    } else {
+      const reason = QUICK_PAIRING_REASONS[overview.quick_pairing_reason] ||
+        "快速绑定服务当前不可用";
+      status.textContent = `快速绑定尚未就绪：${reason}`;
+      button.disabled = true;
+    }
+    return true;
+  } catch (error) {
+    badge.textContent = "读取失败";
+    badge.classList.remove("ready", "loading");
+    badge.classList.add("stopped");
+    status.textContent = `快速绑定状态读取失败：${error.message}`;
+    button.disabled = true;
+    return true;
+  }
+}
+
 async function saveQuestIdentitySettings() {
   const button = document.getElementById("save-quest-identity-button");
   if (!setButtonBusy(button, true, "正在保存并验证…")) return;
@@ -2616,6 +2657,11 @@ function bindEvents() {
     .getElementById("save-quest-identity-button")
     .addEventListener("click", saveQuestIdentitySettings);
   document
+    .getElementById("open-pairing-page-button")
+    .addEventListener("click", () => {
+      window.open(QUICK_PAIRING_PAGE_URL, "_blank", "noopener");
+    });
+  document
     .getElementById("persona-source-mode")
     .addEventListener("change", () => {
       renderPersonaSettings({
@@ -2772,7 +2818,8 @@ const INITIAL_DATA_SECTIONS = [
   { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
   { key: "persona", label: "实时人格", load: loadPersonaSettings },
   { key: "persona-library", label: "具身人格库", load: loadPersonaProfiles },
-  { key: "quest-identity", label: "Quest 身份", load: loadQuestIdentitySettings }
+  { key: "quest-identity", label: "Quest 身份", load: loadQuestIdentitySettings },
+  { key: "quick-pairing", label: "快速绑定", load: loadQuickPairingStatus }
 ];
 
 function markInitialSectionFailed(key) {
@@ -2783,7 +2830,8 @@ function markInitialSectionFailed(key) {
     stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
     persona: ["persona-status", "实时人格读取失败，可单独重试。"],
-    "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"]
+    "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"],
+    "quick-pairing": ["quick-pairing-status", "快速绑定状态读取失败，可单独重试。"]
   };
   const target = messages[key];
   if (target) document.getElementById(target[0]).textContent = target[1];
