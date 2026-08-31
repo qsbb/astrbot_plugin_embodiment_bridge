@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.2.0-1" />
+  <link rel="stylesheet" href="./style.css?v=1.2.0-2" />
 </head>
 <body>
   <main class="shell">
@@ -388,7 +388,7 @@
             <span id="quick-pairing-badge" class="status-badge loading">读取中</span>
           </div>
           <p id="quick-pairing-status" class="field-status" role="status">正在读取快速绑定状态</p>
-          <button id="open-pairing-page-button" class="primary" type="button" disabled>打开快速绑定页（生成二维码 / 配对码）</button>
+          <button id="open-quick-pairing-button" class="primary" type="button" disabled>生成配对二维码 / 6 位配对码</button>
         </div>
         <details id="quest-identity-advanced" class="identity-advanced">
           <summary id="quest-identity-advanced-toggle">高级身份设置 <span>仅首次绑定或更换身份时需要</span></summary>
@@ -455,11 +455,39 @@
       <span>自然人只提供已验证账号映射；具身会话仍须通过 principal 与服务端白名单授权，且不会决定角色人格。</span>
     </section>
 
+    <div id="quick-pairing-modal" class="qp-overlay" hidden>
+      <div class="qp-dialog" role="dialog" aria-modal="true" aria-labelledby="qp-title">
+        <div class="qp-header">
+          <h3 id="qp-title">快速绑定</h3>
+          <button id="qp-close" type="button">关闭</button>
+        </div>
+        <div id="qp-empty" class="qp-empty">
+          <p id="qp-empty-text" class="field-note">正在生成一次性配对码…</p>
+        </div>
+        <div id="qp-result" hidden>
+          <div class="qp-status-row">
+            <span id="qp-status" role="status" aria-live="polite">等待客户端兑换</span>
+            <span class="qp-countdown">剩余 <strong id="qp-countdown">02:00</strong></span>
+          </div>
+          <div class="qp-qr-frame"><img id="qp-qr" alt="一次性配对二维码" /></div>
+          <div class="qp-code-block">
+            <span>6 位配对码</span>
+            <strong id="qp-short-code">—</strong>
+            <p class="field-note">在具身客户端输入服务器地址和此配对码即可完成绑定；二维码只携带一次性凭证，不含长期密钥。</p>
+          </div>
+          <div class="qp-actions">
+            <button id="qp-copy" type="button">复制配对码</button>
+            <button id="qp-revoke" class="danger" type="button">撤销</button>
+            <button id="qp-regenerate" type="button">重新生成</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="startup-error" class="startup-error" role="alert" hidden></div>
     <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.2.0-1"></script>
+  <script type="module" src="./app.js?v=1.2.0-2"></script>
 </body>
 </html>

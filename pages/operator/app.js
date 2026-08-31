@@ -1667,8 +1667,7 @@ async function loadQuestIdentitySettings() {
   return true;
 }
 
-const QUICK_PAIRING_PAGE_URL =
-  "/api/plugin/page/content/astrbot_plugin_embodiment_bridge/pairing/";
+let qpButtonReady = false;
 
 const QUICK_PAIRING_REASONS = {
   bridge_key_missing: "Bridge 长期密钥尚未配置",
@@ -1676,6 +1675,161 @@ const QUICK_PAIRING_REASONS = {
   pairing_listener_public_url_missing: "快速绑定公开入口尚未配置（需配置内置监听器公开 URL）",
   pairing_bootstrap_unavailable: "快速绑定交换入口不可用"
 };
+
+/* ── 快速绑定弹窗（页内完成，不跳转：Dashboard 禁止窗口打开）── */
+let qpPairing = null;
+let qpCountdownTimer = null;
+let qpStatusTimer = null;
+let qpStatusInFlight = false;
+
+function qpStopTimers() {
+  window.clearInterval(qpCountdownTimer);
+  window.clearInterval(qpStatusTimer);
+  qpCountdownTimer = null;
+  qpStatusTimer = null;
+}
+
+function qpSetBusy(busy, text) {
+  const button = document.getElementById("open-quick-pairing-button");
+  if (busy) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = text || "正在生成…";
+  } else {
+    button.setAttribute("aria-busy", "false");
+    button.textContent = "生成配对二维码 / 6 位配对码";
+    button.disabled = qpButtonReady !== true;
+  }
+}
+
+function qpFormatRemaining(seconds) {
+  const remaining = Math.max(0, Math.ceil(seconds));
+  return `${String(Math.floor(remaining / 60)).padStart(2, "0")}:${String(
+    remaining % 60
+  ).padStart(2, "0")}`;
+}
+
+const QP_STATE_LABELS = {
+  waiting: "等待客户端兑换",
+  consumed: "客户端已完成绑定",
+  expired: "配对码已过期",
+  revoked: "配对已撤销",
+  unknown: "状态暂时无法识别，请重新生成"
+};
+
+function qpRenderState(state) {
+  if (!qpPairing) return;
+  const known = new Set(["waiting", "consumed", "expired", "revoked"]);
+  const normalized = known.has(state) ? state : "unknown";
+  qpPairing.state = normalized;
+  const label = document.getElementById("qp-status");
+  label.textContent = QP_STATE_LABELS[normalized];
+  const active = normalized === "waiting";
+  document.getElementById("qp-copy").disabled = !active;
+  document.getElementById("qp-revoke").disabled = !active;
+  if (normalized === "consumed") toast("客户端已获取配置并完成绑定");
+  if (!active) qpStopTimers();
+}
+
+function qpUpdateCountdown() {
+  if (!qpPairing) return;
+  const remaining = qpPairing.expires_at - Date.now() / 1000;
+  document.getElementById("qp-countdown").textContent =
+    qpFormatRemaining(remaining);
+  if (remaining <= 0 && qpPairing.state === "waiting") qpRenderState("expired");
+}
+
+async function qpRefreshStatus() {
+  if (!qpPairing || qpPairing.state !== "waiting") return;
+  const response = await apiPost("pairing/status", {
+    pairing_id: qpPairing.pairing_id
+  });
+  const current = response.pairing;
+  qpPairing.expires_at = current.expires_at;
+  if (current.state !== qpPairing.state) qpRenderState(current.state);
+}
+
+function qpStartTimers() {
+  qpStopTimers();
+  qpCountdownTimer = window.setInterval(qpUpdateCountdown, 250);
+  qpStatusTimer = window.setInterval(() => {
+    if (qpStatusInFlight || document.hidden) return;
+    qpStatusInFlight = true;
+    qpRefreshStatus().catch(() => {}).finally(() => {
+      qpStatusInFlight = false;
+    });
+  }, 1800);
+}
+
+async function qpCreate() {
+  const empty = document.getElementById("qp-empty");
+  const result = document.getElementById("qp-result");
+  empty.hidden = false;
+  document.getElementById("qp-empty-text").textContent = "正在生成一次性配对码…";
+  result.hidden = true;
+  qpStopTimers();
+  qpPairing = null;
+  try {
+    const response = await apiPost("pairing/create", {
+      protocol_version: "1.0"
+    });
+    qpPairing = response.pairing;
+    document.getElementById("qp-qr").src = qpPairing.qr_svg_data_uri;
+    const code = qpPairing.short_code;
+    document.getElementById("qp-short-code").textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+    empty.hidden = true;
+    result.hidden = false;
+    qpRenderState(qpPairing.state || "waiting");
+    qpUpdateCountdown();
+    qpStartTimers();
+  } catch (error) {
+    document.getElementById("qp-empty-text").textContent =
+      `生成失败：${error.message}（可关闭后重试）`;
+  }
+}
+
+function qpClose() {
+  document.getElementById("quick-pairing-modal").hidden = true;
+  qpStopTimers();
+}
+
+async function qpCopy() {
+  if (!qpPairing || qpPairing.state !== "waiting") return;
+  try {
+    await navigator.clipboard.writeText(qpPairing.short_code);
+    toast("配对码已复制");
+  } catch (_error) {
+    window.prompt("复制 6 位配对码", qpPairing.short_code);
+  }
+}
+
+async function qpRevoke() {
+  if (!qpPairing || qpPairing.state !== "waiting") return;
+  try {
+    const response = await apiPost("pairing/revoke", {
+      pairing_id: qpPairing.pairing_id
+    });
+    qpRenderState(response.pairing.state);
+    toast("配对已撤销");
+  } catch (error) {
+    toast(`撤销失败：${error.message}`, true);
+  }
+}
+
+function bindQuickPairingModal() {
+  document.getElementById("open-quick-pairing-button")
+    .addEventListener("click", () => {
+      document.getElementById("quick-pairing-modal").hidden = false;
+      qpCreate();
+    });
+  document.getElementById("qp-close").addEventListener("click", qpClose);
+  document.getElementById("quick-pairing-modal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) qpClose();
+  });
+  document.getElementById("qp-copy").addEventListener("click", qpCopy);
+  document.getElementById("qp-revoke").addEventListener("click", qpRevoke);
+  document.getElementById("qp-regenerate").addEventListener("click", qpCreate);
+}
 
 async function loadQuickPairingStatus() {
   const badge = document.getElementById("quick-pairing-badge");
@@ -1690,12 +1844,14 @@ async function loadQuickPairingStatus() {
     badge.classList.remove("loading");
     if (ready) {
       status.textContent = "快速绑定服务已就绪，点击下方按钮生成二维码 / 6 位配对码。";
+      qpButtonReady = true;
       button.disabled = false;
     } else {
       const reason = QUICK_PAIRING_REASONS[overview.quick_pairing_reason] ||
         "快速绑定服务当前不可用";
       status.textContent = `快速绑定尚未就绪：${reason}`;
       button.disabled = true;
+      qpButtonReady = false;
     }
     return true;
   } catch (error) {
@@ -1704,6 +1860,7 @@ async function loadQuickPairingStatus() {
     badge.classList.add("stopped");
     status.textContent = `快速绑定状态读取失败：${error.message}`;
     button.disabled = true;
+    qpButtonReady = false;
     return true;
   }
 }
@@ -2656,11 +2813,7 @@ function bindEvents() {
   document
     .getElementById("save-quest-identity-button")
     .addEventListener("click", saveQuestIdentitySettings);
-  document
-    .getElementById("open-pairing-page-button")
-    .addEventListener("click", () => {
-      window.open(QUICK_PAIRING_PAGE_URL, "_blank", "noopener");
-    });
+  bindQuickPairingModal();
   document
     .getElementById("persona-source-mode")
     .addEventListener("change", () => {
