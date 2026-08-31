@@ -1834,7 +1834,12 @@ function bindQuickPairingModal() {
 async function loadQuickPairingStatus() {
   const badge = document.getElementById("quick-pairing-badge");
   const status = document.getElementById("quick-pairing-status");
-  const button = document.getElementById("open-pairing-page-button");
+  const button = document.getElementById("open-quick-pairing-button");
+  if (!badge || !status || !button) {
+    /* index.html 与 app.js 版本错位（浏览器缓存混合）时静默跳过，
+       避免把整个区块误报为读取失败；强刷页面即可对齐。 */
+    return true;
+  }
   try {
     const overview = await apiGet("pairing/overview");
     const ready = overview.quick_pairing_ready === true;
