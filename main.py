@@ -20,6 +20,7 @@ from .adapters.persona_converter import PersonaConverter
 from .adapters.api_principal import AstrBotApiPrincipalVerifier
 from .adapters.environment import CachedEnvironmentAdapter
 from .adapters.fast_action import FastActionDecisionAdapter
+from .core.reply_suggestions import ReplySuggestionService
 from .adapters.identity import QuestSessionAuthorizationAdapter
 from .adapters.identity_control_plane import IdentityControlPlaneAdapter
 from .adapters.knowledge import GlobalKnowledgeAdapter
@@ -355,6 +356,21 @@ class EmbodimentBridgePlugin(Star):
             ),
             diagnostic_log=self._component_logger,
         )
+        # M5 reply.suggestions: post-reply quick-reply chips for the client.
+        # Same shape as fast_action: optional provider, bounded timeout, off
+        # by configuration only. Inert until a provider id resolves.
+        raw_suggestion_timeout = config.get("reply_suggestions_timeout_seconds", 6.0)
+        try:
+            configured_suggestion_timeout = float(raw_suggestion_timeout)
+        except (TypeError, ValueError):
+            configured_suggestion_timeout = 6.0
+        self.reply_suggestions = ReplySuggestionService(
+            context,
+            enabled=self._bool_config("reply_suggestions_enabled", True),
+            provider_id=str(config.get("reply_suggestions_provider_id", "") or ""),
+            timeout_seconds=configured_suggestion_timeout,
+            diagnostic_log=self._component_logger,
+        )
         self.astrbot_stt = AstrBotSTTAdapter(
             context,
             data_dir=self.data_dir / "stt_input",
@@ -509,6 +525,7 @@ class EmbodimentBridgePlugin(Star):
             quest_enriched_pipeline=self.quest_enriched_pipeline,
             quest_chain_mode=quest_chain_mode,
             fast_action=self.fast_action,
+            reply_suggestions=self.reply_suggestions,
             allow_direct_provider_fallback=self._bool_config(
                 "allow_direct_provider_fallback", False
             ),

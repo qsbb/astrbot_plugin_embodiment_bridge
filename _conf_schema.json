@@ -98,14 +98,22 @@
     "description": "具身客户端服务端身份同步状态（内部）",
     "type": "string",
     "default": "ready",
-    "options": ["ready", "pending"],
+    "options": [
+      "ready",
+      "pending"
+    ],
     "hint": "由临自动维护。pending 时拒绝新具身会话，避免身份控制面与本地事件身份不一致。"
   },
   "pairing_identity_source": {
     "description": "具身客户端服务端身份来源（内部）",
     "type": "string",
     "default": "manual",
-    "options": ["none", "manual", "relationship", "preserved"],
+    "options": [
+      "none",
+      "manual",
+      "relationship",
+      "preserved"
+    ],
     "hint": "由临自动维护；原始 Bot/User 只在临的专属管理页写入且不回显。"
   },
   "pairing_user_id": {
@@ -176,6 +184,27 @@
     "type": "string",
     "hint": "内部审计字段。旧版 v2 的4秒策略会运行时迁移到6秒；管理页再次保存后写入 v3，并尊重管理员的新显式值。",
     "default": ""
+  },
+  "reply_suggestions_enabled": {
+    "description": "伴夏回复后生成 3 条我的快速回复建议（reply.suggestions）",
+    "type": "bool",
+    "hint": "在 reply.end 之后异步生成并下发；失败静默，不影响正常回复。客户端不识别时自动忽略。",
+    "default": true
+  },
+  "reply_suggestions_provider_id": {
+    "description": "快速回复建议 Provider ID",
+    "type": "string",
+    "_special": "select_provider",
+    "hint": "留空时使用 llm_generate 默认主 Provider。建议选择轻量模型以降低延迟。",
+    "default": ""
+  },
+  "reply_suggestions_timeout_seconds": {
+    "description": "快速回复建议生成超时秒数",
+    "type": "float",
+    "hint": "超时即放弃本条建议，客户端不显示建议条。",
+    "default": 6.0,
+    "minimum": 0.5,
+    "maximum": 15.0
   },
   "enable_astrbot_message_pipeline": {
     "description": "普通对话进入 AstrBot 正式消息管线",
@@ -407,7 +436,10 @@
   "streaming_stt_provider": {
     "description": "实时流式 STT 供应商（中国大陆 WebSocket 直连）",
     "type": "string",
-    "options": ["", "funasr_realtime"],
+    "options": [
+      "",
+      "funasr_realtime"
+    ],
     "hint": "留空关闭实时流式识别，仅保留整段 PCM 文件式 STT 回退。funasr_realtime 使用阿里云 DashScope 的 Fun-ASR-Realtime（Bearer 鉴权 + 二进制 PCM16 帧）。",
     "default": ""
   },

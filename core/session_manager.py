@@ -246,6 +246,9 @@ class TurnState:
     # TTS and terminal delivery for this turn.  It is created by the
     # orchestrator only when diagnostic logging is enabled.
     timing_trace: TimingTrace | None = None
+    # M5: optional post-reply quick-reply suggestion task (reply.suggestions).
+    # Fire-and-forget; cancelled with the owning turn.
+    reply_suggestions_task: asyncio.Task[None] | None = None
 
 
 @dataclass(slots=True)
@@ -459,6 +462,8 @@ class SessionManager:
                 old_turn.task.cancel()
             if old_turn is not None and old_turn.fast_action_task is not None:
                 old_turn.fast_action_task.cancel()
+            if old_turn is not None and old_turn.reply_suggestions_task is not None:
+                old_turn.reply_suggestions_task.cancel()
             if old_turn is not None:
                 self._cancel_stt_stream_unlocked(old_turn)
         if old_turn is not None:
@@ -832,6 +837,8 @@ class SessionManager:
                 turn.task.cancel()
             if turn.fast_action_task is not None:
                 turn.fast_action_task.cancel()
+            if turn.reply_suggestions_task is not None:
+                turn.reply_suggestions_task.cancel()
             self._cancel_stt_stream_unlocked(turn)
             turn.audio.clear()
         await session.queue.discard_turn(turn.turn_id)
@@ -948,12 +955,18 @@ class SessionManager:
                 if turn.fast_action_task is not None:
                     turn.fast_action_task.cancel()
                     tasks.append(turn.fast_action_task)
+                if turn.reply_suggestions_task is not None:
+                    turn.reply_suggestions_task.cancel()
+                    tasks.append(turn.reply_suggestions_task)
             for interaction_turn in interaction_turns:
                 interaction_turn.audio.clear()
                 self._cancel_stt_stream_unlocked(interaction_turn)
                 if interaction_turn.fast_action_task is not None:
                     interaction_turn.fast_action_task.cancel()
                     tasks.append(interaction_turn.fast_action_task)
+                if interaction_turn.reply_suggestions_task is not None:
+                    interaction_turn.reply_suggestions_task.cancel()
+                    tasks.append(interaction_turn.reply_suggestions_task)
             session.history.clear()
             session.spatial_context = None
             session.spatial_context_updated_at = 0.0
@@ -998,12 +1011,18 @@ class SessionManager:
                     if turn.fast_action_task is not None:
                         turn.fast_action_task.cancel()
                         tasks.add(turn.fast_action_task)
+                    if turn.reply_suggestions_task is not None:
+                        turn.reply_suggestions_task.cancel()
+                        tasks.add(turn.reply_suggestions_task)
                 for interaction_turn in interaction_turns:
                     interaction_turn.audio.clear()
                     self._cancel_stt_stream_unlocked(interaction_turn)
                     if interaction_turn.fast_action_task is not None:
                         interaction_turn.fast_action_task.cancel()
                         tasks.add(interaction_turn.fast_action_task)
+                    if interaction_turn.reply_suggestions_task is not None:
+                        interaction_turn.reply_suggestions_task.cancel()
+                        tasks.add(interaction_turn.reply_suggestions_task)
                 session.history.clear()
                 session.spatial_context = None
                 session.spatial_context_updated_at = 0.0

@@ -33,6 +33,7 @@ from ..adapters.voice_hub_tts import VoiceHubTTSAdapter
 from .avatar_skills import AvatarSkillRegistry
 from .explicit_action_parser import parse_explicit_action
 from .interaction_policy import InteractionPolicy
+from .reply_suggestions import MAX_SUGGESTIONS, ReplySuggestionService
 from .models import (
     PROTOCOL_VERSION,
     ActionSource,
@@ -148,6 +149,7 @@ class TurnOrchestrator:
         quest_enriched_pipeline: Any | None = None,
         quest_chain_mode: str = "main",
         fast_action: FastActionDecisionAdapter | None = None,
+        reply_suggestions: ReplySuggestionService | None = None,
         allow_direct_provider_fallback: bool = True,
         output_chunk_ms: int = 50,
         diagnostic_log: Any | None = None,
@@ -172,6 +174,7 @@ class TurnOrchestrator:
         mode = str(quest_chain_mode or "main").strip().lower()
         self.quest_chain_mode = mode if mode in {"main", "bridge", "auto"} else "main"
         self.fast_action = fast_action
+        self.reply_suggestions = reply_suggestions
         self.allow_direct_provider_fallback = bool(allow_direct_provider_fallback)
         self.diagnostic_log = diagnostic_log
         self.server_timing_enabled = bool(server_timing_enabled)
@@ -2026,6 +2029,82 @@ class TurnOrchestrator:
             audio_sent=audio_sent,
             bytes=audio_bytes,
             chunks=audio_chunks,
+        )
+        # M5: fire-and-forget quick-reply suggestions. reply.end is the turn
+        # terminator; a second LLM call must never sit on its critical path.
+        # Failures are silent (diagnostics only); the event is purely additive
+        # for clients that understand "reply.suggestions".
+        if emitted and self.reply_suggestions is not None and bool(text):
+            self._spawn_reply_suggestions_task(session, turn)
+
+    def _spawn_reply_suggestions_task(
+        self,
+        session: SessionState,
+        turn: TurnState,
+    ) -> None:
+        previous = getattr(turn, "reply_suggestions_task", None)
+        if previous is not None and not previous.done():
+            previous.cancel()
+
+        async def run() -> None:
+            try:
+                service = self.reply_suggestions
+                if service is None:  # pragma: no cover - defensive
+                    return
+                history = await self.sessions.history_snapshot(session)
+                suggestions = await service.generate(history)
+                if not suggestions:
+                    return
+                # Protocol-level cap: the service caps parsed output, but a
+                # custom or future implementation must not flood the client.
+                suggestions = suggestions[:MAX_SUGGESTIONS]
+                if not self.sessions.is_current(
+                    session, turn.turn_id, turn.generation
+                ):
+                    self._diagnostic(
+                        "reply_suggestions_dropped",
+                        component="reply",
+                        phase="post_terminal",
+                        status="dropped",
+                        reason_code="turn_not_current",
+                        trace_id=turn.trace_id,
+                    )
+                    return
+                payload = {
+                    "type": "reply.suggestions",
+                    "status": "completed",
+                    "suggestions": suggestions,
+                }
+                emitted = await self._emit(session, turn, payload)
+                self._diagnostic(
+                    "reply_suggestions_emitted" if emitted else "reply_suggestions_dropped",
+                    component="reply",
+                    phase="post_terminal",
+                    status="emitted" if emitted else "dropped",
+                    count=len(suggestions),
+                    trace_id=turn.trace_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._diagnostic(
+                    "reply_suggestions_error",
+                    component="reply",
+                    phase="post_terminal",
+                    status="error",
+                    reason_code="suggestion_task_failed",
+                    error_type=type(exc).__name__,
+                    trace_id=turn.trace_id,
+                )
+                if callable(getattr(self.logger, "debug", None)):
+                    self.logger.debug(
+                        "[reply_suggestions] task failed for turn %s: %r",
+                        turn.turn_id,
+                        exc,
+                    )
+
+        turn.reply_suggestions_task = asyncio.create_task(
+            run(), name=f"reply-suggestions-{turn.turn_id}"
         )
 
     @staticmethod
