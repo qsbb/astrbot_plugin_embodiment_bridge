@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.4.0-4"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-4" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-4")
+    assert '<script type="module" src="./app.js?v=1.4.0-5"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-5" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-5")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -123,6 +123,12 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "stt-provider-help",
         "stt-status",
         "save-stt-button",
+        "voice-hub-tts-enabled",
+        "astrbot-tts-enabled",
+        "tts-timeout-seconds",
+        "tts-max-audio-seconds",
+        "tts-status",
+        "save-tts-button",
         "trusted-platform-id",
         "save-platform-button",
         "persona-source-mode",
@@ -190,6 +196,11 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert 'endpoint: "pairing/stt-settings"' in js
     assert "load: loadSttSettings" in js
     assert 'stt: ["stt-status", "语音识别设置读取失败，可单独重试。"]' in js
+    assert 'tts: ["tts-status", "语音合成设置读取失败，可单独重试。"]' in js
+    assert 'endpoint: "pairing/tts-settings"' in js
+    assert "语音合成（TTS）" in html
+    assert "优先使用「声」语音输出" in html
+    assert "function renderTtsSettings" in js
     assert "if (serviceRefreshInFlight) return serviceRefreshInFlight;" in js
     assert "if (serviceRefreshInFlight) return true;" not in js
     assert 'apiGet("pairing/platform-settings")' in js

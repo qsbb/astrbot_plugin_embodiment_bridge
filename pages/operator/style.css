@@ -487,6 +487,12 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .identity-advanced-body { display: grid; gap: 10px; margin-top: 14px; }
 .identity-advanced-body > .field-help { margin: 0; }
 .identity-advanced[open] { padding-bottom: 2px; }
+.tts-advanced { margin-top: 14px; border-top: 1px solid #2c3d3b; padding-top: 12px; }
+.tts-advanced summary { cursor: pointer; color: #c5d5d0; font-weight: 700; }
+.tts-advanced summary span { margin-left: 6px; color: #81948e; font-size: 12px; font-weight: 400; }
+.tts-advanced .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.tts-advanced .field-grid > div { display: grid; gap: 6px; }
+.tts-advanced .field-note { margin-top: 10px; }
 .mode-switch { display: flex; align-items: center; gap: 9px; cursor: pointer; }
 .mode-switch input { width: 18px; min-height: 18px; accent-color: #55d7aa; }
 .boundary-note {

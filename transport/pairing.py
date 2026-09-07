@@ -101,6 +101,13 @@ class KnowledgeEnvironmentSettingsRequest(BaseModel):
     enable_global_knowledge: bool
     global_knowledge_top_k: int = Field(ge=1, le=10)
     enable_environment_context: bool
+class TTSSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enable_voice_hub_tts: bool
+    enable_astrbot_tts: bool
+    tts_timeout_seconds: float = Field(ge=1.0, le=120.0)
+    max_tts_audio_seconds: int = Field(ge=5, le=300)
 
 
 class TrustedPlatformSettingsRequest(BaseModel):
@@ -328,6 +335,18 @@ class PairingHttpApi:
                 self.save_stt_settings,
                 ["POST"],
                 "Save Quest speech recognition provider selection",
+            ),
+            (
+                "pairing/tts-settings",
+                self.tts_settings_overview,
+                ["GET"],
+                "Read safe Quest speech synthesis settings",
+            ),
+            (
+                "pairing/tts-settings",
+                self.save_tts_settings,
+                ["POST"],
+                "Save Quest speech synthesis switches and limits",
             ),
             (
                 "pairing/platform-settings",
@@ -752,6 +771,32 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "stt": stt})
         except Exception as exc:
             return self._error(exc, "save_stt_settings")
+
+    async def tts_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "tts": self.operator_settings.tts_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "tts_settings_overview")
+
+    async def save_tts_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(TTSSettingsRequest)
+            settings = await self.operator_settings.save_tts_settings(
+                enable_voice_hub_tts=payload.enable_voice_hub_tts,
+                enable_astrbot_tts=payload.enable_astrbot_tts,
+                tts_timeout_seconds=payload.tts_timeout_seconds,
+                max_tts_audio_seconds=payload.max_tts_audio_seconds,
+            )
+            return _json_no_store({"success": True, "tts": settings})
+        except Exception as exc:
+            return self._error(exc, "save_tts_settings")
 
     async def platform_settings_overview(self) -> Any:
         try:

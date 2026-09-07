@@ -1465,6 +1465,163 @@ def test_knowledge_environment_settings_snapshot_save_and_hot_update() -> None:
         assert orchestrator.knowledge.top_k == 3
         assert orchestrator.environment.enabled is True
         assert orchestrator.environment.status == "enabled"
+class VoiceHubTtsStub:
+    def __init__(self, *, enabled: bool = True, installed: bool = True) -> None:
+        self.enabled = enabled
+        self.installed = installed
+        self.timeout_seconds = 65.0
+        self.max_output_bytes = 24_000 * 2 * 120
+        self.status = "enabled" if enabled else "disabled"
+        self.configures: list[dict[str, Any]] = []
+
+    @property
+    def available(self) -> bool:
+        if not self.enabled:
+            self.status = "disabled"
+            return False
+        if not self.installed:
+            self.status = "provider_unavailable"
+            return False
+        self.status = "ready"
+        return True
+
+    def configure(
+        self,
+        *,
+        enabled: bool | None = None,
+        timeout_seconds: float | None = None,
+        max_audio_seconds: int | None = None,
+    ) -> None:
+        self.configures.append(
+            {
+                "enabled": enabled,
+                "timeout_seconds": timeout_seconds,
+                "max_audio_seconds": max_audio_seconds,
+            }
+        )
+        if enabled is not None:
+            self.enabled = bool(enabled)
+            self.status = "enabled" if self.enabled else "disabled"
+        if timeout_seconds is not None:
+            self.timeout_seconds = float(timeout_seconds)
+        if max_audio_seconds is not None:
+            self.max_output_bytes = 24_000 * 2 * int(max_audio_seconds)
+
+
+class AstrBotTtsStub:
+    def __init__(self, *, enabled: bool = False, provider_ready: bool = True) -> None:
+        self.enabled = enabled
+        self.provider_ready = provider_ready
+        self.timeout_seconds = 60.0
+        self.max_output_bytes = 24_000 * 2 * 120
+        self.configures: list[dict[str, Any]] = []
+
+    @property
+    def available(self) -> bool:
+        return self.enabled and self.provider_ready
+
+    def configure(
+        self,
+        *,
+        enabled: bool | None = None,
+        timeout_seconds: float | None = None,
+        max_audio_seconds: int | None = None,
+    ) -> None:
+        self.configures.append(
+            {
+                "enabled": enabled,
+                "timeout_seconds": timeout_seconds,
+                "max_audio_seconds": max_audio_seconds,
+            }
+        )
+        if enabled is not None:
+            self.enabled = bool(enabled)
+        if timeout_seconds is not None:
+            self.timeout_seconds = float(timeout_seconds)
+        if max_audio_seconds is not None:
+            self.max_output_bytes = 24_000 * 2 * int(max_audio_seconds)
+
+
+def build_tts_settings(
+    *,
+    config: NativeConfigStub,
+    voice_hub: VoiceHubTtsStub,
+    astrbot: AstrBotTtsStub,
+) -> tuple[OperatorSettings, DiagnosticLogStub]:
+    settings = build_settings(config=config)
+    diagnostic_log = DiagnosticLogStub()
+    settings.voice_hub_tts = voice_hub
+    settings.astrbot_tts = astrbot
+    settings.diagnostic_log = diagnostic_log
+    return settings, diagnostic_log
+
+
+def test_tts_settings_snapshot_persist_and_hot_update() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        voice_hub = VoiceHubTtsStub()
+        astrbot = AstrBotTtsStub()
+        settings, diagnostic_log = build_tts_settings(
+            config=config, voice_hub=voice_hub, astrbot=astrbot
+        )
+
+        snapshot = settings.tts_snapshot()
+        assert snapshot == {
+            "enable_voice_hub_tts": True,
+            "enable_astrbot_tts": False,
+            "tts_timeout_seconds": 60.0,
+            "max_tts_audio_seconds": 120,
+            "voice_hub_available": True,
+            "voice_hub_status": "ready",
+            "astrbot_tts_available": False,
+            "active_source": "voice_hub",
+            "config_writable": True,
+        }
+
+        saved = await settings.save_tts_settings(
+            enable_voice_hub_tts=False,
+            enable_astrbot_tts=True,
+            tts_timeout_seconds=30.0,
+            max_tts_audio_seconds=45,
+        )
+        assert config.saves == [
+            {
+                "enable_voice_hub_tts": False,
+                "enable_astrbot_tts": True,
+                "tts_timeout_seconds": 30.0,
+                "max_tts_audio_seconds": 45,
+            }
+        ]
+        # 热更新：两个适配器运行时属性立即改写，下一轮合成即生效。
+        assert voice_hub.configures == [
+            {"enabled": False, "timeout_seconds": None, "max_audio_seconds": 45}
+        ]
+        assert astrbot.configures == [
+            {"enabled": True, "timeout_seconds": 30.0, "max_audio_seconds": 45}
+        ]
+        assert voice_hub.enabled is False
+        assert voice_hub.max_output_bytes == 24_000 * 2 * 45
+        assert astrbot.enabled is True
+        assert astrbot.timeout_seconds == 30.0
+        assert astrbot.max_output_bytes == 24_000 * 2 * 45
+        assert "tts.settings_updated" in diagnostic_log.events
+        assert saved["enable_voice_hub_tts"] is False
+        assert saved["enable_astrbot_tts"] is True
+        assert saved["tts_timeout_seconds"] == 30.0
+        assert saved["max_tts_audio_seconds"] == 45
+        assert saved["voice_hub_status"] == "disabled"
+        assert saved["active_source"] == "astrbot"
+
+        # 全部关闭后状态行能明确表达「仅文字回复」。
+        saved = await settings.save_tts_settings(
+            enable_voice_hub_tts=False,
+            enable_astrbot_tts=False,
+            tts_timeout_seconds=30.0,
+            max_tts_audio_seconds=45,
+        )
+        assert saved["active_source"] == "none"
+        assert saved["voice_hub_available"] is False
+        assert saved["astrbot_tts_available"] is False
 
     asyncio.run(scenario())
 
@@ -1520,5 +1677,74 @@ def test_knowledge_environment_settings_strict_validation_and_save_failure() -> 
         assert orchestrator.knowledge.enabled is True
         assert orchestrator.knowledge.top_k == 5
         assert orchestrator.environment.enabled is True
+def test_tts_settings_reject_invalid_values_without_touching_runtime() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        voice_hub = VoiceHubTtsStub()
+        astrbot = AstrBotTtsStub()
+        settings, _ = build_tts_settings(
+            config=config, voice_hub=voice_hub, astrbot=astrbot
+        )
+
+        with pytest.raises(OperatorSettingsError) as invalid:
+            await settings.save_tts_settings(
+                enable_voice_hub_tts="yes",
+                enable_astrbot_tts=False,
+                tts_timeout_seconds=60.0,
+                max_tts_audio_seconds=120,
+            )
+        assert invalid.value.code == "invalid_tts_switch"
+
+        for bad_timeout in ("fast", 0.5, 120.5, True):
+            with pytest.raises(OperatorSettingsError) as invalid:
+                await settings.save_tts_settings(
+                    enable_voice_hub_tts=True,
+                    enable_astrbot_tts=False,
+                    tts_timeout_seconds=bad_timeout,
+                    max_tts_audio_seconds=120,
+                )
+            assert invalid.value.code == "invalid_tts_timeout"
+
+        for bad_max in (4, 301, True, 30.5, "120"):
+            with pytest.raises(OperatorSettingsError) as invalid:
+                await settings.save_tts_settings(
+                    enable_voice_hub_tts=True,
+                    enable_astrbot_tts=False,
+                    tts_timeout_seconds=60.0,
+                    max_tts_audio_seconds=bad_max,
+                )
+            assert invalid.value.code == "invalid_max_tts_audio_seconds"
+
+        assert config.saves == []
+        assert voice_hub.configures == []
+        assert astrbot.configures == []
+
+    asyncio.run(scenario())
+
+
+def test_tts_settings_save_failure_keeps_runtime_unchanged() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        voice_hub = VoiceHubTtsStub()
+        astrbot = AstrBotTtsStub()
+        settings, _ = build_tts_settings(
+            config=config, voice_hub=voice_hub, astrbot=astrbot
+        )
+
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_tts_settings(
+                enable_voice_hub_tts=False,
+                enable_astrbot_tts=True,
+                tts_timeout_seconds=10.0,
+                max_tts_audio_seconds=30,
+            )
+        assert failed.value.code == "config_save_failed"
+        assert "enable_astrbot_tts" not in config
+        assert voice_hub.enabled is True
+        assert astrbot.enabled is False
+        assert astrbot.timeout_seconds == 60.0
+        assert voice_hub.configures == []
+        assert astrbot.configures == []
 
     asyncio.run(scenario())

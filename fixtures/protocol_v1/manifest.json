@@ -395,6 +395,18 @@
       "path": "/pairing/knowledge-environment-settings",
       "success_status": 200,
       "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/tts-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/tts-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
     }
   ],
   "enums": {

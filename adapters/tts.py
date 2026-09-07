@@ -78,6 +78,23 @@ class AstrBotTTSAdapter:
         )
         self._closed = False
 
+    def configure(
+        self,
+        *,
+        enabled: bool | None = None,
+        timeout_seconds: float | None = None,
+        max_audio_seconds: int | None = None,
+    ) -> None:
+        # 热更新入口：operator 设置保存后直接改写运行时属性，下一次合成生效。
+        if enabled is not None:
+            self.enabled = bool(enabled)
+        if timeout_seconds is not None:
+            self.timeout_seconds = max(1.0, float(timeout_seconds))
+        if max_audio_seconds is not None:
+            self.max_output_bytes = (
+                OUTPUT_SAMPLE_RATE * OUTPUT_CHANNELS * 2 * max(1, int(max_audio_seconds))
+            )
+
     @property
     def available(self) -> bool:
         return not self._closed and self.enabled and self._provider() is not None

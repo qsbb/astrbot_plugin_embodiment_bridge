@@ -44,6 +44,12 @@ _KNOWLEDGE_ENVIRONMENT_KEYS = (
     "global_knowledge_top_k",
     "enable_environment_context",
 )
+_TTS_KEYS = (
+    "enable_voice_hub_tts",
+    "enable_astrbot_tts",
+    "tts_timeout_seconds",
+    "max_tts_audio_seconds",
+)
 
 
 class OperatorSettingsError(RuntimeError):
@@ -67,6 +73,8 @@ class OperatorSettings:
         persona: Any,
         logger: Any,
         stt: Any | None = None,
+        voice_hub_tts: Any | None = None,
+        astrbot_tts: Any | None = None,
         diagnostic_log: Any | None = None,
         plugin_hook_profiler: Any | None = None,
         identity: Any | None = None,
@@ -83,6 +91,8 @@ class OperatorSettings:
         self.config = config
         self.llm = llm
         self.stt = stt
+        self.voice_hub_tts = voice_hub_tts
+        self.astrbot_tts = astrbot_tts
         self.relationship = relationship
         self.persona = persona
         self.logger = logger
@@ -743,6 +753,79 @@ class OperatorSettings:
             top_k=top_k,
         )
         return self.knowledge_environment_snapshot()
+    def tts_snapshot(self) -> dict[str, Any]:
+        # 页面展示与保存都以插件原生配置为准；series.control 托管覆盖层属于
+        # 内核侧临时策略，不在这里投影（与诊断开关面板同一约定）。
+        voice_hub = self.voice_hub_tts
+        astrbot = self.astrbot_tts
+        voice_hub_available = bool(getattr(voice_hub, "available", False))
+        voice_hub_status = (
+            str(getattr(voice_hub, "status", "") or "")
+            if voice_hub is not None
+            else "adapter_unavailable"
+        )
+        astrbot_available = bool(getattr(astrbot, "available", False))
+        if voice_hub_available:
+            active_source = "voice_hub"
+        elif astrbot_available:
+            active_source = "astrbot"
+        else:
+            active_source = "none"
+        return {
+            "enable_voice_hub_tts": self._bool_cfg("enable_voice_hub_tts", True),
+            "enable_astrbot_tts": self._bool_cfg("enable_astrbot_tts"),
+            "tts_timeout_seconds": self._float_cfg("tts_timeout_seconds", 60.0),
+            "max_tts_audio_seconds": self._int_cfg("max_tts_audio_seconds", 120),
+            "voice_hub_available": voice_hub_available,
+            "voice_hub_status": voice_hub_status or "adapter_unavailable",
+            "astrbot_tts_available": astrbot_available,
+            "active_source": active_source,
+            "config_writable": config_is_writable(self.config),
+        }
+
+    async def save_tts_settings(
+        self,
+        *,
+        enable_voice_hub_tts: bool,
+        enable_astrbot_tts: bool,
+        tts_timeout_seconds: float,
+        max_tts_audio_seconds: int,
+    ) -> dict[str, Any]:
+        voice_hub_enabled = _strict_tts_bool(
+            enable_voice_hub_tts, "enable_voice_hub_tts"
+        )
+        astrbot_enabled = _strict_tts_bool(enable_astrbot_tts, "enable_astrbot_tts")
+        timeout = _strict_tts_timeout(tts_timeout_seconds)
+        max_audio = _strict_max_tts_audio_seconds(max_tts_audio_seconds)
+        changes = {
+            "enable_voice_hub_tts": voice_hub_enabled,
+            "enable_astrbot_tts": astrbot_enabled,
+            "tts_timeout_seconds": timeout,
+            "max_tts_audio_seconds": max_audio,
+        }
+        await self._persist_many(changes)
+        # 热更新：直接改写两个 TTS 适配器的运行时属性，下一轮合成即生效。
+        # voice hub 的合成超时有独立上限（65s 默认），tts_timeout_seconds 只
+        # 作用于 AstrBot TTS 通路，与 main.py 初始化语义保持一致。
+        if self.voice_hub_tts is not None:
+            self.voice_hub_tts.configure(
+                enabled=voice_hub_enabled,
+                max_audio_seconds=max_audio,
+            )
+        if self.astrbot_tts is not None:
+            self.astrbot_tts.configure(
+                enabled=astrbot_enabled,
+                timeout_seconds=timeout,
+                max_audio_seconds=max_audio,
+            )
+        self._diagnostic(
+            "tts.settings_updated",
+            component="tts",
+            status="ready" if (voice_hub_enabled or astrbot_enabled) else "disabled",
+            voice_hub_enabled=voice_hub_enabled,
+            astrbot_tts_enabled=astrbot_enabled,
+        )
+        return self.tts_snapshot()
 
     def _bool_cfg(self, key: str, default: bool = False) -> bool:
         value = self.config.get(key, default)
@@ -752,15 +835,26 @@ class OperatorSettings:
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
 
-    def _int_cfg(self, key: str, default: int, minimum: int, maximum: int) -> int:
+    def _int_cfg(
+        self,
+        key: str,
+        default: int,
+        minimum: int | None = None,
+        maximum: int | None = None,
+    ) -> int:
         value = self.config.get(key, default)
         if isinstance(value, bool):
-            return default
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            return default
-        return min(max(number, minimum), maximum)
+            number = int(default)
+        else:
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                number = int(default)
+        if minimum is not None:
+            number = max(number, minimum)
+        if maximum is not None:
+            number = min(number, maximum)
+        return number
 
     def _float_cfg(self, key: str, default: float) -> float:
         try:
@@ -1456,6 +1550,7 @@ class OperatorSettings:
                 *_DIAGNOSTICS_KEYS,
                 *_QUEST_TOOL_FILTER_KEYS,
                 *_KNOWLEDGE_ENVIRONMENT_KEYS,
+                *_TTS_KEYS,
             }
             for key in changes
         ):
@@ -1538,6 +1633,56 @@ def _strict_bool(value: object, field: str) -> bool:
 def _strict_switch(value: object, code: str, message: str) -> bool:
     if not isinstance(value, bool):
         raise OperatorSettingsError(code, 422, message)
+    return value
+
+
+def _strict_tts_bool(value: object, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise OperatorSettingsError(
+            "invalid_tts_switch",
+            422,
+            f"语音合成开关 {field} 必须是布尔值",
+        )
+    return value
+
+
+def _strict_tts_timeout(value: object) -> float:
+    if isinstance(value, bool):
+        raise OperatorSettingsError(
+            "invalid_tts_timeout",
+            422,
+            "语音合成超时必须是1到120秒之间的数字",
+        )
+    try:
+        timeout = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise OperatorSettingsError(
+            "invalid_tts_timeout",
+            422,
+            "语音合成超时必须是1到120秒之间的数字",
+        ) from exc
+    if not 1.0 <= timeout <= 120.0:
+        raise OperatorSettingsError(
+            "invalid_tts_timeout",
+            422,
+            "语音合成超时必须是1到120秒之间的数字",
+        )
+    return timeout
+
+
+def _strict_max_tts_audio_seconds(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise OperatorSettingsError(
+            "invalid_max_tts_audio_seconds",
+            422,
+            "单轮语音时长上限必须是5到300秒之间的整数",
+        )
+    if not 5 <= value <= 300:
+        raise OperatorSettingsError(
+            "invalid_max_tts_audio_seconds",
+            422,
+            "单轮语音时长上限必须是5到300秒之间的整数",
+        )
     return value
 
 

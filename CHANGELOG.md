@@ -6,6 +6,10 @@
 
 ### Added
 
+- operator 页面补齐后端既有能力（B7，用户拍板）：「对话与模型」标签新增
+  「语音合成（TTS）」面板——「声」优先开关、AstrBot TTS 总开关、单次合成
+  超时与单轮语音最长秒数（高级折叠区），保存即热更新 TTS 适配器；端点
+  pairing/tts-settings GET/POST（dashboard 鉴权）
 - operator 页面补齐后端既有能力（B45，用户拍板）：「对话与模型」标签新增
   「Quest 工具过滤」面板（总开关 + observe/enforce 灰度模式切换，保存即
   热更新钩子闭包）与「知识与上下文注入」面板（全局知识开关 + 注入条数

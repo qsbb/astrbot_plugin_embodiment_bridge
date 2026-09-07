@@ -592,6 +592,8 @@ class EmbodimentBridgePlugin(Star):
             config=config,
             llm=self.llm,
             stt=self.astrbot_stt,
+            voice_hub_tts=self.voice_hub_tts,
+            astrbot_tts=self.astrbot_tts,
             relationship=self.relationship,
             persona=self.persona,
             logger=self._component_logger,
