@@ -14,7 +14,6 @@ from astrbot.api.star import Context, Star, StarTools
 
 from .adapters.astrbot_llm import AstrBotLLMAdapter
 from .adapters.astrbot_persona import AstrBotPersonaAdapter
-from .adapters.astrbot_pipeline import AstrBotMessagePipelineAdapter
 from .adapters.quest_enriched_pipeline import QuestEnrichedPipelineAdapter
 from .adapters.persona_converter import PersonaConverter
 from .adapters.api_principal import AstrBotApiPrincipalVerifier
@@ -79,7 +78,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 # Quest/伴夏具身会话需要隐藏的 QQ/直播/VTS 专属工具默认黑名单。
@@ -436,21 +435,12 @@ class EmbodimentBridgePlugin(Star):
             relationship_person_id=relationship_person_id,
             identity_sync_ready=identity_sync_ready,
         )
-        self.message_pipeline = AstrBotMessagePipelineAdapter(
-            context,
-            self._component_logger,
-            enabled=self._bool_config("enable_astrbot_message_pipeline", True),
-            platform_id=trusted_platform_id,
-            diagnostic_log=self.diagnostic_log,
-        )
-        # 临独立链路（Quest 专用富化直管链）。默认不启用，仅在
-        # quest_chain_mode 为 bridge/auto 时接管普通对话；main 模式下它保持
-        # disabled，Quest 仍走共享事件总线（现状基线）。
-        quest_chain_mode = self._quest_chain_mode()
+        # 临专属链路（Quest 专用富化直管链）自 1.3.0 起是唯一对话链路：
+        # AstrBot 共享事件总线路径已移除，全部具身对话只走临。
         self.quest_enriched_pipeline = QuestEnrichedPipelineAdapter(
             context,
             self._component_logger,
-            enabled=quest_chain_mode in {"bridge", "auto"},
+            enabled=True,
             platform_id=trusted_platform_id,
             chat_provider_id=str(config.get("chat_provider_id", "") or ""),
             per_hook_budget_seconds=self._float_config(
@@ -521,9 +511,7 @@ class EmbodimentBridgePlugin(Star):
             environment=self.environment,
             runtime=self.runtime,
             voice_audio=self.voice_hub_tts,
-            message_pipeline=self.message_pipeline,
             quest_enriched_pipeline=self.quest_enriched_pipeline,
-            quest_chain_mode=quest_chain_mode,
             fast_action=self.fast_action,
             reply_suggestions=self.reply_suggestions,
             allow_direct_provider_fallback=self._bool_config(
@@ -542,7 +530,6 @@ class EmbodimentBridgePlugin(Star):
             # allows a local Quest-only setup without inventing Bot/User
             # identity claims or silently exposing other message plugins.
             self.orchestrator.allow_direct_provider_fallback = True
-            self.message_pipeline.enabled = False
         self.pairing = PairingManager(
             bridge_api_key=bridge_api_key,
             exchange_url=pairing_exchange_proxy_url,
@@ -618,7 +605,7 @@ class EmbodimentBridgePlugin(Star):
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
             identity=self.identity,
-            message_pipeline=self.message_pipeline,
+            quest_enriched_pipeline=self.quest_enriched_pipeline,
             orchestrator=self.orchestrator,
             fast_action=self.fast_action,
             identity_control_plane=self.identity_control_plane,
@@ -1034,9 +1021,9 @@ class EmbodimentBridgePlugin(Star):
         )
 
     def plugin_health(self) -> dict[str, object]:
-        eventbus_status = self.message_pipeline.status_snapshot()
-        eventbus_dialogue = bool(
-            eventbus_status.get("available") is True and self.identity.configured
+        quest_chain_status = self.quest_enriched_pipeline.status_snapshot()
+        bridge_dialogue = bool(
+            quest_chain_status.get("available") is True and self.identity.configured
         )
         interaction_decision = bool(self.llm.available)
         direct_provider_fallback = bool(
@@ -1052,10 +1039,8 @@ class EmbodimentBridgePlugin(Star):
             ),
             "bridge_api_key_configured": len(self.transport.config.bridge_api_key)
             >= 32,
-            # The optional direct Provider is not required when EventBus is
-            # configured. Keep the legacy check, but make the aggregate health
-            # decision reflect the actual text path now used by the turn.
-            "eventbus_dialogue_available": eventbus_dialogue,
+            # 临专属链路是唯一对话链路；直管 Provider 仅作可选回退。
+            "quest_chain_dialogue_available": bridge_dialogue,
             "interaction_decision_available": interaction_decision,
             "direct_provider_fallback_available": direct_provider_fallback,
             "chat_provider_configured": interaction_decision,
@@ -1069,7 +1054,7 @@ class EmbodimentBridgePlugin(Star):
             for name, passed in checks.items()
             if name != "chat_provider_configured"
         }
-        if not eventbus_dialogue and not direct_provider_fallback:
+        if not bridge_dialogue and not direct_provider_fallback:
             required_checks["dialogue_path_available"] = False
         reasons = [name.upper() for name, passed in required_checks.items() if not passed]
         result = {
@@ -1083,7 +1068,7 @@ class EmbodimentBridgePlugin(Star):
             component="health",
             status=result["status"],
             ready=bool(checks["pairing_listener_ready"]),
-            available=eventbus_dialogue or direct_provider_fallback,
+            available=bridge_dialogue or direct_provider_fallback,
         )
         return result
 
@@ -1224,11 +1209,6 @@ class EmbodimentBridgePlugin(Star):
                 return [str(item).strip() for item in parsed if str(item).strip()]
             return []
         return []
-
-    def _quest_chain_mode(self) -> str:
-        value = str(self.config.get("quest_chain_mode", "main") or "main")
-        value = value.strip().lower()
-        return value if value in {"main", "bridge", "auto"} else "main"
 
     def _quest_chain_excluded_plugins(self) -> tuple[str, ...]:
         raw = str(self.config.get("quest_chain_excluded_plugins", "") or "")

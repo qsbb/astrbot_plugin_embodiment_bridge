@@ -210,6 +210,13 @@ class ContextStub:
             return None
         return self.contract_platform
 
+    async def llm_generate(self, **kwargs: Any) -> Any:
+        # 1.3.0 起临专属链路可用性要求 context.llm_generate 存在（直管 LLM 调用）。
+        return types.SimpleNamespace(
+            completion_text="contract llm reply",
+            result_chain=None,
+        )
+
     def get_event_queue(self) -> asyncio.Queue[Any]:
         return asyncio.Queue()
 

@@ -275,7 +275,7 @@ class MessagePipelineStub:
             return "trusted_platform_unavailable"
         return "ready"
 
-    def configure_platform(self, platform_id: str) -> None:
+    def configure(self, *, platform_id: str = "", **_: Any) -> None:
         self.platform_id = platform_id
 
 
@@ -340,7 +340,7 @@ def build_settings(
         persona=AstrBotPersonaAdapter(context),
         logger=LoggerStub(),
         identity=identity,
-        message_pipeline=pipeline,
+        quest_enriched_pipeline=pipeline,
         identity_store=IdentityStoreStub(
             str(config.get("pairing_bot_id", "") or ""),
             str(config.get("pairing_user_id", "") or ""),
@@ -540,7 +540,6 @@ def test_direct_dialogue_mode_is_explicit_and_does_not_require_identity_fields()
         }
         assert config["quest_direct_dialogue_mode"] is True
         assert settings.orchestrator.allow_direct_provider_fallback is True
-        assert settings.message_pipeline.enabled is False
 
     asyncio.run(scenario())
 
@@ -690,12 +689,12 @@ def test_trusted_platform_persists_and_updates_runtime_immediately() -> None:
         }
         assert config.saves == [{"trusted_platform_id": "platform-a"}]
         assert settings.identity.trusted_platform_id == "platform-a"
-        assert settings.message_pipeline.platform_id == "platform-a"
+        assert settings.quest_enriched_pipeline.platform_id == "platform-a"
 
         cleared = await settings.save_trusted_platform_id("")
         assert cleared["availability_reason"] == "trusted_platform_not_configured"
         assert settings.identity.trusted_platform_id == ""
-        assert settings.message_pipeline.platform_id == ""
+        assert settings.quest_enriched_pipeline.platform_id == ""
 
     asyncio.run(scenario())
 
@@ -732,7 +731,7 @@ def test_resolved_relationship_identity_updates_event_identity_in_one_save() -> 
         ]
         assert settings.relationship.person_id == "person-a"
         assert settings.identity.trusted_platform_id == "platform-a"
-        assert settings.message_pipeline.platform_id == "platform-a"
+        assert settings.quest_enriched_pipeline.platform_id == "platform-a"
         assert settings.identity_store.identity.bot_id == "real-bot"
         assert settings.identity_store.identity.user_id == "real-user"
 
@@ -788,7 +787,7 @@ def test_failed_authoritative_relationship_sync_stays_pending_and_does_not_switc
 
         assert config["pairing_identity_sync_state"] == "pending"
         assert settings.relationship.person_id == ""
-        assert settings.message_pipeline.platform_id == ""
+        assert settings.quest_enriched_pipeline.platform_id == ""
         assert settings.identity.sync_ready is False
         assert settings.identity_store.identity.bot_id == "old-bot"
         assert settings.identity_store.identity.user_id == "old-user"
@@ -886,7 +885,7 @@ def test_clear_pending_relationship_restores_verified_base_identity() -> None:
         assert settings.identity.relationship_person_id == ""
         assert settings.identity.local_binding["bot_id"] == "real-bot"
         assert settings.identity.local_binding["user_id"] == "real-user"
-        assert settings.message_pipeline.platform_id == "platform-a"
+        assert settings.quest_enriched_pipeline.platform_id == "platform-a"
 
     asyncio.run(scenario())
 
@@ -926,7 +925,7 @@ def test_invalid_missing_or_failed_platform_save_keeps_runtime_selection() -> No
                 await settings.save_trusted_platform_id(value)
             assert invalid.value.code == code
             assert settings.identity.trusted_platform_id == "platform-a"
-            assert settings.message_pipeline.platform_id == "platform-a"
+            assert settings.quest_enriched_pipeline.platform_id == "platform-a"
 
         config.fail = True
         with pytest.raises(OperatorSettingsError) as failed:
@@ -934,7 +933,7 @@ def test_invalid_missing_or_failed_platform_save_keeps_runtime_selection() -> No
         assert failed.value.code == "config_save_failed"
         assert config["trusted_platform_id"] == "platform-a"
         assert settings.identity.trusted_platform_id == "platform-a"
-        assert settings.message_pipeline.platform_id == "platform-a"
+        assert settings.quest_enriched_pipeline.platform_id == "platform-a"
 
     asyncio.run(scenario())
 

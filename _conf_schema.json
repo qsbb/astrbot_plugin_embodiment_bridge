@@ -175,9 +175,9 @@
     "description": "旧版快速动作超时秒数（兼容）",
     "type": "float",
     "hint": "仅保留旧配置兼容性；当前普通对话不会调用快速动作模型，明确动作也不等待该 Provider。",
-    "default": 6.0,
+    "default": 6,
     "minimum": 0.5,
-    "maximum": 15.0
+    "maximum": 15
   },
   "fast_action_timeout_policy_revision": {
     "description": "快速动作超时策略修订号",
@@ -202,75 +202,58 @@
     "description": "快速回复建议生成超时秒数",
     "type": "float",
     "hint": "超时即放弃本条建议，客户端不显示建议条。",
-    "default": 6.0,
+    "default": 6,
     "minimum": 0.5,
-    "maximum": 15.0
-  },
-  "enable_astrbot_message_pipeline": {
-    "description": "普通对话进入 AstrBot 正式消息管线",
-    "type": "bool",
-    "hint": "仅对通过身份授权的文字/语音会话生效。输入会作为受控消息事件进入 EventBus，经过人格、工具与插件钩子；禁止继承管理员权限，最终 TTS 仍由具身桥接服务流式输出。不可用时回退上方 Provider。",
-    "default": true
+    "maximum": 15
   },
   "allow_direct_provider_fallback": {
     "description": "允许普通对话回退到直连 Provider",
     "type": "bool",
-    "hint": "默认关闭。关闭时普通文字/语音只允许进入 AstrBot 正式消息链路；链路未授权或不可用会明确报错，不会静默绕过记忆、知和其他消息插件。触碰交互仍使用受控兼容决策。",
+    "hint": "默认关闭。关闭时普通文字/语音只允许进入临专属链路；链路未授权或不可用会明确报错，不会静默绕过记忆、知识和其他消息插件。触碰交互仍使用受控兼容决策。",
     "default": false
   },
   "quest_direct_dialogue_mode": {
     "description": "无平台身份的 Quest 基础对话模式",
     "type": "bool",
-    "hint": "开启后不进入 AstrBot EventBus，不需要 Bot/User 或“序”；Quest 只使用临已选择的聊天 Provider。关系、记忆和其他消息插件不会注入。默认关闭。",
+    "hint": "开启后不走临专属链路的插件钩子富化，不需要 Bot/User 或“序”；Quest 只使用临已选择的聊天 Provider。关系、记忆和其他消息插件不会注入。默认关闭。",
     "default": false
-  },
-  "quest_chain_mode": {
-    "description": "Quest 对话链路模式",
-    "type": "string",
-    "options": [
-      "main",
-      "bridge",
-      "auto"
-    ],
-    "hint": "main=AstrBot 主链路（共享事件总线，完整插件钩子，无钩子超时，现状基线）；bridge=临独立链路（复刻钩子富化但逐钩子超时熔断+直管 LLM，隔离 QQ 洪峰）；auto=先试 bridge 失败回退 main。默认 main。可在临 operator 页切换。",
-    "default": "main"
   },
   "quest_chain_per_hook_budget_seconds": {
     "description": "临独立链·单个插件钩子超时秒数",
     "type": "float",
-    "hint": "仅 quest_chain_mode 为 bridge/auto 时生效。任一 on_llm_request 钩子超过该时长即熔断跳过，用该插件最近一次成功注入的缓存兜底。",
-    "default": 6.0,
+    "hint": "任一 on_llm_request 钩子超过该时长即熔断跳过，用该插件最近一次成功注入的缓存兜底。",
+    "default": 6,
     "minimum": 0.5,
-    "maximum": 30.0
+    "maximum": 30
   },
   "quest_chain_total_hook_budget_seconds": {
     "description": "临独立链·钩子链总预算秒数",
     "type": "float",
-    "hint": "仅 bridge/auto 生效。所有请求钩子的累计时间上限，超出后剩余钩子跳过，直接进入 LLM。",
-    "default": 10.0,
-    "minimum": 1.0,
-    "maximum": 60.0
+    "hint": "所有请求钩子的累计时间上限，超出后剩余钩子跳过，直接进入 LLM。",
+    "default": 10,
+    "minimum": 1,
+    "maximum": 60
   },
   "quest_chain_llm_timeout_seconds": {
     "description": "临独立链·直管 LLM 超时秒数",
     "type": "float",
-    "hint": "仅 bridge/auto 生效。直管调用聊天 Provider 的超时。",
-    "default": 30.0,
-    "minimum": 5.0,
-    "maximum": 120.0
+    "hint": "直管调用聊天 Provider 的超时。",
+    "default": 30,
+    "minimum": 5,
+    "maximum": 120
   },
   "quest_chain_memory_cache_ttl_seconds": {
     "description": "临独立链·钩子贡献缓存有效期秒数",
     "type": "float",
-    "hint": "仅 bridge/auto 生效。钩子超时熔断时，回退注入该插件在此有效期内的最近一次成功富化片段（如记忆），过期则放弃兜底。",
-    "default": 30.0,
-    "minimum": 0.0,
-    "maximum": 600.0
+    "hint": "钩子超时熔断时，回退注入该插件在此有效期内的最近一次成功富化片段（如记忆），过期则放弃兜底。",
+    "default": 30,
+    "minimum": 0,
+    "maximum": 600
   },
   "quest_chain_excluded_plugins": {
     "description": "临独立链·跳过的插件名列表",
     "type": "string",
-    "hint": "仅 bridge/auto 生效。英文逗号分隔的插件名；这些插件的钩子不参与临独立链。留空表示不跳过任何插件。",
+    "hint": "英文逗号分隔的插件名；这些插件的钩子不参与临专属链路。留空表示不跳过任何插件。",
     "default": ""
   },
   "quest_tool_filter_enabled": {
@@ -396,9 +379,9 @@
     "description": "关系快照短缓存 TTL（秒）",
     "type": "float",
     "hint": "同会话内同一 (bot,user,group,profile) 在 TTL 内重复读取直接命中缓存，避免与情插件在 EventBus 路径重复付费。0 表示关闭缓存，每轮都做契约调用。",
-    "default": 5.0,
-    "minimum": 0.0,
-    "maximum": 30.0
+    "default": 5,
+    "minimum": 0,
+    "maximum": 30
   },
   "enable_global_knowledge": {
     "description": "读取主动学习插件的全局知识证据",
@@ -429,9 +412,9 @@
   "stt_timeout_seconds": {
     "description": "单次 STT 超时（秒）",
     "type": "float",
-    "default": 45.0,
-    "minimum": 1.0,
-    "maximum": 180.0
+    "default": 45,
+    "minimum": 1,
+    "maximum": 180
   },
   "streaming_stt_provider": {
     "description": "实时流式 STT 供应商（中国大陆 WebSocket 直连）",
@@ -464,24 +447,24 @@
   "streaming_stt_connect_timeout_seconds": {
     "description": "实时流式 STT 连接/建连超时（秒）",
     "type": "float",
-    "default": 8.0,
-    "minimum": 1.0,
-    "maximum": 30.0
+    "default": 8,
+    "minimum": 1,
+    "maximum": 30
   },
   "streaming_stt_final_grace_seconds": {
     "description": "实时流式 STT 在 audio/end 后等待最终结果的宽限时间（秒）",
     "type": "float",
     "hint": "超时后回退到整段 PCM 文件式 STT，避免 provider 挂起拖垮本轮。",
-    "default": 2.0,
+    "default": 2,
     "minimum": 0.25,
-    "maximum": 10.0
+    "maximum": 10
   },
   "tts_timeout_seconds": {
     "description": "单次 TTS 超时（秒）",
     "type": "float",
-    "default": 60.0,
-    "minimum": 1.0,
-    "maximum": 180.0
+    "default": 60,
+    "minimum": 1,
+    "maximum": 180
   },
   "max_tts_audio_seconds": {
     "description": "单轮 TTS 输出最大秒数",
@@ -538,7 +521,7 @@
     "type": "float",
     "default": 0.85,
     "minimum": 0.1,
-    "maximum": 1.0
+    "maximum": 1
   },
   "max_intent_duration_ms": {
     "description": "下行动作最大持续时间（毫秒）",

@@ -77,13 +77,12 @@ class BridgeServiceControl:
             reason = str(listener.get("reason") or "listener_unavailable")
 
         integrations = self.orchestrator.integration_status()
-        pipeline = integrations.get("astrbot_message_pipeline", {})
+        pipeline = integrations.get("quest_enriched_pipeline", {})
         identity = integrations.get("identity", {})
-        # Keep the three dialogue paths explicit.  ``chat_provider_id`` backs
-        # interaction decisions and the optional direct fallback; ordinary
-        # text/voice turns use the AstrBot EventBus when its platform is ready.
+        # 1.3.0 起唯一对话链路是临专属链路（quest_enriched_pipeline）；
+        # ``chat_provider_id`` 同时承载交互决策与可选直管回退。
         identity_configured = identity.get("configured") is True
-        eventbus_dialogue = pipeline.get("available") is True and identity_configured
+        bridge_dialogue = pipeline.get("available") is True and identity_configured
         interaction_decision = bool(
             getattr(self.orchestrator.llm, "available", False)
         )
@@ -106,10 +105,13 @@ class BridgeServiceControl:
             "sessions": stats,
             "capabilities": {
                 # Legacy aggregate retained for existing clients.  New clients
-                # should use the explicit fields below.
-                "dialogue": eventbus_dialogue or direct_provider_fallback,
-                "eventbus": eventbus_dialogue,
-                "eventbus_dialogue": eventbus_dialogue,
+                # should use the explicit fields below.  eventbus 两个键自
+                # 1.3.0 起废弃（主消息链路已移除），恒 False，仅为不破坏旧
+                # 客户端解析而保留键位。
+                "dialogue": bridge_dialogue or direct_provider_fallback,
+                "bridge": bridge_dialogue,
+                "eventbus": False,
+                "eventbus_dialogue": False,
                 "interaction_decision": interaction_decision,
                 "direct_provider_fallback": direct_provider_fallback,
                 "identity_configured": identity_configured,

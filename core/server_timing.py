@@ -7,8 +7,8 @@ from typing import Literal
 
 SERVER_TIMING_CONTRACT = "server_timing@1.0"
 MAX_TIMING_MS = 86_400_000
-DECISION_PATHS = frozenset({"astrbot_event_bus", "direct_provider"})
-DecisionPath = Literal["astrbot_event_bus", "direct_provider"]
+DECISION_PATHS = frozenset({"astrbot_event_bus", "quest_enriched_pipeline", "direct_provider"})
+DecisionPath = Literal["astrbot_event_bus", "quest_enriched_pipeline", "direct_provider"]
 
 
 def _elapsed_ms(started_at: float | None, ended_at: float | None) -> int:

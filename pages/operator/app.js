@@ -6,7 +6,6 @@ let personaSettings = null;
 let platformSettings = null;
 let questIdentitySettings = null;
 let questChainSettings = null;
-let questChainMode = "main";
 let serviceState = null;
 let serviceRefreshInFlight = null;
 let personaProfiles = null;
@@ -189,7 +188,7 @@ function renderServiceStatus(service) {
     String(Number(sessions.queued_events || 0));
 
   const capabilities = serviceState.capabilities || {};
-  ["dialogue", "eventbus", "identity_configured", "stt", "tts", "avatar_actions"]
+  ["dialogue", "bridge", "identity_configured", "stt", "tts", "avatar_actions"]
     .forEach((name) => renderCapability(name, capabilities[name], enabled));
 
   const control = document.getElementById("service-control-button");
@@ -358,22 +357,6 @@ function renderDialogueMode(mode) {
 // Quest 链路模式（双模）：主链路 / 临独立链路 / 自动回退，按模式条件显隐设置区。
 // ---------------------------------------------------------------------------
 
-function setQuestChainMode(mode) {
-  questChainMode = ["main", "bridge", "auto"].includes(mode) ? mode : "main";
-  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
-    const selected = button.dataset.questChainMode === questChainMode;
-    button.classList.toggle("active", selected);
-    button.setAttribute("aria-selected", String(selected));
-    button.tabIndex = selected ? 0 : -1;
-  });
-  // 条件显隐：选 main 隐藏 bridge 专属设置；选 bridge 隐藏 main 专属说明；
-  // auto 两者都显示（auto 会用到 bridge 链路，也可能回退 main）。
-  const bridgeFields = document.getElementById("quest-chain-bridge-fields");
-  const mainFields = document.getElementById("quest-chain-main-fields");
-  if (bridgeFields) bridgeFields.hidden = questChainMode === "main";
-  if (mainFields) mainFields.hidden = questChainMode === "bridge";
-}
-
 function renderQuestChainSettings(settings) {
   questChainSettings = settings || {};
   const button = document.getElementById("save-quest-chain-button");
@@ -393,21 +376,15 @@ function renderQuestChainSettings(settings) {
   [perHook, totalHook, llmTimeout, cacheTtl, excluded].forEach((input) => {
     if (input) input.disabled = !writable;
   });
-  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
-    button.disabled = !writable;
-  });
-  setQuestChainMode(questChainSettings.mode || "main");
   button.disabled = !writable;
   if (!writable) {
     status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
     return;
   }
-  const modeLabel = {
-    main: "AstrBot 主链路",
-    bridge: "临独立链路",
-    auto: "自动回退"
-  }[questChainSettings.mode || "main"] || "AstrBot 主链路";
-  status.textContent = "当前模式：" + modeLabel;
+  status.textContent =
+    questChainSettings.bridge_available === true
+      ? "临专属链路：就绪"
+      : "临专属链路不可用：" + (questChainSettings.bridge_availability_reason || "未知原因");
 }
 
 async function loadQuestChainSettings() {
@@ -427,7 +404,6 @@ async function saveQuestChainSettings() {
       return Number.isFinite(value) ? value : null;
     };
     const response = await apiPost("pairing/quest-chain-settings", {
-      mode: questChainMode,
       per_hook_budget_seconds: numberValue("quest-chain-per-hook"),
       total_hook_budget_seconds: numberValue("quest-chain-total-hook"),
       llm_timeout_seconds: numberValue("quest-chain-llm-timeout"),
@@ -435,12 +411,7 @@ async function saveQuestChainSettings() {
       excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || ""
     });
     renderQuestChainSettings(response.quest_chain);
-    const modeLabel = {
-      main: "AstrBot 主链路",
-      bridge: "临独立链路",
-      auto: "自动回退"
-    }[response.quest_chain?.mode || "main"];
-    toast("已保存：Quest 链路模式 = " + modeLabel);
+    toast("已保存：临专属链路参数");
   } catch (error) {
     toast(error.message || "保存链路模式失败", true);
   } finally {
@@ -2786,26 +2757,6 @@ function bindEvents() {
   document
     .getElementById("save-quest-chain-button")
     .addEventListener("click", saveQuestChainSettings);
-  document.querySelectorAll("[data-quest-chain-mode]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setQuestChainMode(button.dataset.questChainMode);
-    });
-    button.addEventListener("keydown", (event) => {
-      const tabs = Array.from(
-        document.querySelectorAll("[data-quest-chain-mode]")
-      );
-      const current = tabs.indexOf(event.currentTarget);
-      let target = -1;
-      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
-      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
-      if (event.key === "Home") target = 0;
-      if (event.key === "End") target = tabs.length - 1;
-      if (target < 0) return;
-      event.preventDefault();
-      tabs[target].click();
-      tabs[target].focus();
-    });
-  });
   document
     .getElementById("save-stt-button")
     .addEventListener("click", saveSttSettings);

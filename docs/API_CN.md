@@ -1082,8 +1082,9 @@ Unity 必须再次按当前模型能力检查 `gesture`。不支持时安全降�
 }
 ```
 
-耗时字段均为受限非负整数毫秒；`decision_path` 仅允许 `astrbot_event_bus` 和
-`direct_provider`。未执行或不可用的 STT/TTS 阶段使用 `0`。计时只覆盖服务端处理：
+耗时字段均为受限非负整数毫秒；`decision_path` 允许 `quest_enriched_pipeline`（临专属
+链路，1.3.0 起唯一主链路）、`direct_provider`（直管回退）与历史值
+`astrbot_event_bus`（1.3.0 前的主链路口径，现已不可达）。未执行或不可用的 STT/TTS 阶段使用 `0`。计时只覆盖服务端处理：
 `decision_ms` 从决策阶段开始，`tts_first_chunk_ms` 到首个成功进入服务端事件队列的音频块，
 `tts_total_ms` 到音频块全部入队，`turn_total_ms` 到 `reply.end` 入队；不包含客户端录音、
 网络传输和 SSE 客户端 flush。

@@ -2,18 +2,38 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-09-07
+
+### Removed（破坏性变更：移除 AstrBot 主消息链路）
+
+- **具身对话全部改走临专属链路**（quest_enriched_pipeline，复刻插件钩子
+  富化 + 逐钩子超时熔断 + 直管 LLM）：删除 `AstrBotMessagePipelineAdapter`
+  （共享事件总线提交路径）与 `quest_chain_mode` 三态开关（main/auto/bridge
+  退化为恒 bridge）。`adapters/astrbot_pipeline.py` 仅保留两条链路共用的
+  合成事件构造/中止/空间上下文助手。人格注入与工具过滤（本插件的
+  `on_llm_request` 钩子）不受影响——专属链路经全局钩子注册表运行同一批
+  处理器。链路失败仍按 `allow_direct_provider_fallback` 回退直管 JSON。
+- 配置项移除（旧配置值自动忽略，无需手动清理）：
+  `enable_astrbot_message_pipeline`、`quest_chain_mode`。
+- `service/status` capabilities 语义变更：`eventbus`/`eventbus_dialogue`
+  恒为 `false`（保留键位兼容旧客户端解析）；新增 `bridge`
+  （临专属链路可用且身份就绪）。`dialogue` 聚合位语义不变。
+- operator 页"Quest 链路模式"main/auto 标签与说明区移除（参数调参保留）；
+  诊断事件名 `message_pipeline.*` 归一化为 `quest_chain.*`；
+  `eventbus_terminal_deadline_seconds` 构造参数改名
+  `quest_chain_terminal_deadline_seconds`。
+
 ### Added
 
 - `turn/start` 多模态扩展（可选 `image` 字段，向后兼容）：手机端摄像头单帧随
   文本轮上送（仅 `image/jpeg`，`data_base64` 须为 SOI 开头的合法 base64，
   上限 6MB；`purpose` ≤200 字符）。空载荷（Unity JsonUtility 默认字段形状）
-  归一化为纯文本轮次。quest_bridge 链路经 `ProviderRequest.image_urls`
-  （`base64://` 引用）直达视觉模型；EventBus 链路以 `Image.fromBase64`
-  组件进入合成事件链；直管 JSON 链路（dialogue-only）不消费图像，安全丢弃
-  并记录 `turn_image.skipped` 诊断。`turn_image_governance` 治理指令
-  （复刻 reality_companion `must_not_claim_observed`：模型不得编造画面、
-  失败必须如实说明）注入 system prompt；单帧不落盘、不写入会话历史。
-  turn/start 请求体上限提升至 `max(max_json_body_bytes, 8MB)`。
+  归一化为纯文本轮次。临专属链路经 `ProviderRequest.image_urls`
+  （`base64://` 引用）直达视觉模型；直管 JSON 链路（dialogue-only）不消费
+  图像，安全丢弃并记录 `turn_image.skipped` 诊断。`turn_image_governance`
+  治理指令（复刻 reality_companion `must_not_claim_observed`：模型不得
+  编造画面、失败必须如实说明）注入 system prompt；单帧不落盘、不写入会话
+  历史。turn/start 请求体上限提升至 `max(max_json_body_bytes, 8MB)`。
 
 ## 1.2.0 - 2026-08-27
 

@@ -143,7 +143,7 @@ async def _build(
     enabled: bool,
     authorized: bool = False,
     llm: Any | None = None,
-    message_pipeline: Any | None = None,
+    quest_enriched_pipeline: Any | None = None,
     allow_direct_provider_fallback: bool = True,
 ) -> tuple[SessionManager, Any, TurnOrchestrator, DecisionStub]:
     sessions = SessionManager(interaction_debounce_ms=0)
@@ -167,7 +167,7 @@ async def _build(
         relationship=RelationshipStub(),
         policy=InteractionPolicy(gesture_cooldown_seconds=0),
         logger=LoggerStub(),
-        message_pipeline=message_pipeline,
+        quest_enriched_pipeline=quest_enriched_pipeline,
         allow_direct_provider_fallback=allow_direct_provider_fallback,
         server_timing_enabled=enabled,
     )
@@ -247,7 +247,7 @@ def test_server_timing_direct_provider_and_audio_stages_are_safe() -> None:
     asyncio.run(scenario())
 
 
-def test_server_timing_records_eventbus_and_fallback_paths() -> None:
+def test_server_timing_records_quest_chain_and_fallback_paths() -> None:
     async def run_case(
         fail: bool,
         expected: str,
@@ -258,7 +258,7 @@ def test_server_timing_records_eventbus_and_fallback_paths() -> None:
         _sessions, session, orchestrator, direct = await _build(
             enabled=True,
             authorized=True,
-            message_pipeline=pipeline,
+            quest_enriched_pipeline=pipeline,
             allow_direct_provider_fallback=allow_fallback,
         )
         await orchestrator.start_turn(
@@ -274,9 +274,13 @@ def test_server_timing_records_eventbus_and_fallback_paths() -> None:
         await orchestrator.close()
 
     async def scenario() -> None:
-        await run_case(False, "astrbot_event_bus")
+        # server_timing@1.0 契约自 1.3.0 起加法扩展 decision_path 枚举
+        # （manifest.json 新增 quest_enriched_pipeline）：临专属链路成功回合
+        # 线上观测为 quest_enriched_pipeline，回退直管回合为 direct_provider。
+        await run_case(False, "quest_enriched_pipeline")
         await run_case(True, "direct_provider")
-        await run_case(True, "astrbot_event_bus", allow_fallback=False)
+        # 无回退的失败回合：计时标签保持所选链路（quest_enriched_pipeline）
+        await run_case(True, "quest_enriched_pipeline", allow_fallback=False)
 
     asyncio.run(scenario())
 

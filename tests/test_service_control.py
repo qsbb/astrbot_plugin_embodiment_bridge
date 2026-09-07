@@ -86,18 +86,18 @@ class ListenerStub:
 
 
 class OrchestratorStub:
-    def __init__(self, *, eventbus: bool = True, direct_fallback: bool = False) -> None:
+    def __init__(self, *, bridge: bool = True, direct_fallback: bool = False) -> None:
         self.llm = SimpleNamespace(available=True)
         self.stt = SimpleNamespace(available=True)
         self.tts = SimpleNamespace(available=True)
         self.allow_direct_provider_fallback = direct_fallback
-        self._eventbus = eventbus
+        self._bridge = bridge
         self.identity_configured = True
 
     def integration_status(self) -> dict[str, Any]:
         return {
             "identity": {"configured": self.identity_configured},
-            "astrbot_message_pipeline": {"available": self._eventbus},
+            "quest_enriched_pipeline": {"available": self._bridge},
         }
 
 
@@ -148,8 +148,9 @@ def test_service_can_stop_close_sessions_and_start_again() -> None:
         }
         assert running["capabilities"] == {
             "dialogue": True,
-            "eventbus": True,
-            "eventbus_dialogue": True,
+            "bridge": True,
+            "eventbus": False,
+            "eventbus_dialogue": False,
             "interaction_decision": True,
             "direct_provider_fallback": False,
             "identity_configured": True,
@@ -177,12 +178,12 @@ def test_service_can_stop_close_sessions_and_start_again() -> None:
     asyncio.run(scenario())
 
 
-def test_service_capabilities_separate_eventbus_and_direct_provider_paths() -> None:
+def test_service_capabilities_separate_bridge_and_direct_provider_paths() -> None:
     async def scenario() -> None:
         config = ConfigStub()
         listener = ListenerStub()
         sessions = SessionManager()
-        orchestrator = OrchestratorStub(eventbus=False, direct_fallback=True)
+        orchestrator = OrchestratorStub(bridge=False, direct_fallback=True)
         control = BridgeServiceControl(
             config=config,
             listener=listener,
@@ -193,6 +194,8 @@ def test_service_capabilities_separate_eventbus_and_direct_provider_paths() -> N
         )
         snapshot = await control.status_snapshot()
         capabilities = snapshot["capabilities"]
+        assert capabilities["bridge"] is False
+        assert capabilities["eventbus"] is False
         assert capabilities["eventbus_dialogue"] is False
         assert capabilities["interaction_decision"] is True
         assert capabilities["direct_provider_fallback"] is True
@@ -207,11 +210,13 @@ def test_service_capabilities_separate_eventbus_and_direct_provider_paths() -> N
     asyncio.run(scenario())
 
 
-def test_eventbus_without_base_identity_is_not_reported_as_dialogue_ready() -> None:
+def test_bridge_without_base_identity_is_not_reported_as_dialogue_ready() -> None:
     async def scenario() -> None:
         control, _, _, _ = build_control()
         control.orchestrator.identity_configured = False
         snapshot = await control.status_snapshot()
+        assert snapshot["capabilities"]["bridge"] is False
+        assert snapshot["capabilities"]["dialogue"] is False
         assert snapshot["capabilities"]["eventbus"] is False
         assert snapshot["capabilities"]["eventbus_dialogue"] is False
         assert snapshot["capabilities"]["identity_configured"] is False

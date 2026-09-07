@@ -30,14 +30,20 @@ def load_json(name: str) -> dict[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
-class EventBusFake:
+class QuestChainFake:
     available = True
+
+    availability_reason = "ready"
 
     def __init__(self, *, decision: ModelDecision | None = None, hang: bool = False) -> None:
         self.decision = decision
         self.hang = hang
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.abort_reasons: list[str] = []
+
+    def abort_current_event(self, reason: str = "aborted") -> None:
+        self.abort_reasons.append(reason)
 
     async def generate(self, **kwargs: Any) -> ModelDecision:
         self.started.set()
@@ -78,19 +84,19 @@ async def _open(bundle: Any, server: Any, client: ClientSession, session_id: str
     return events
 
 
-def test_eventbus_action_only_http_has_one_intent_and_terminal(monkeypatch: Any, tmp_path: Path) -> None:
+def test_quest_chain_action_only_http_has_one_intent_and_terminal(monkeypatch: Any, tmp_path: Path) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
-        pipeline = EventBusFake()
-        bundle.plugin.message_pipeline = pipeline
-        bundle.plugin.orchestrator.message_pipeline = pipeline
+        pipeline = QuestChainFake()
+        bundle.plugin.quest_enriched_pipeline = pipeline
+        bundle.plugin.orchestrator.quest_enriched_pipeline = pipeline
         bundle.plugin.orchestrator.allow_direct_provider_fallback = False
         async with LiveHttpServer(bundle) as server:
             async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
-                events = await _open(bundle, server, client, "eventbus-action")
+                events = await _open(bundle, server, client, "quest-chain-action")
                 started = await client.post(
                     server.url("/turn/start"), headers=AUTH_HEADERS,
-                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-action", "turn_id": "t1", "text": "跳舞", "cancel_previous": True},
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "quest-chain-action", "turn_id": "t1", "text": "跳舞", "cancel_previous": True},
                 )
                 assert started.status == 202
                 frames = []
@@ -112,23 +118,23 @@ def test_eventbus_action_only_http_has_one_intent_and_terminal(monkeypatch: Any,
     asyncio.run(scenario())
 
 
-def test_eventbus_legacy_action_fields_are_sanitized_for_dialogue(
+def test_quest_chain_legacy_action_fields_are_sanitized_for_dialogue(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
-        pipeline = EventBusFake()
-        bundle.plugin.message_pipeline = pipeline
-        bundle.plugin.orchestrator.message_pipeline = pipeline
+        pipeline = QuestChainFake()
+        bundle.plugin.quest_enriched_pipeline = pipeline
+        bundle.plugin.orchestrator.quest_enriched_pipeline = pipeline
         bundle.plugin.fast_action = None
         bundle.plugin.orchestrator.fast_action = None
         async with LiveHttpServer(bundle) as server:
             async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
-                events = await _open(bundle, server, client, "eventbus-tool-only")
+                events = await _open(bundle, server, client, "quest-chain-tool-only")
                 started = await client.post(
                     server.url("/turn/start"), headers=AUTH_HEADERS,
-                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-tool-only", "turn_id": "t1", "text": "请根据工具决定身体表达", "cancel_previous": True},
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "quest-chain-tool-only", "turn_id": "t1", "text": "请根据工具决定身体表达", "cancel_previous": True},
                 )
                 assert started.status == 202
                 frames = []
@@ -144,13 +150,13 @@ def test_eventbus_legacy_action_fields_are_sanitized_for_dialogue(
     asyncio.run(scenario())
 
 
-def test_eventbus_text_reply_preserves_intent_text_audio_end_order(
+def test_quest_chain_text_reply_preserves_intent_text_audio_end_order(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
-        pipeline = EventBusFake(
+        pipeline = QuestChainFake(
             decision=ModelDecision(
                 should_reply=True,
                 reply_text="请轻一点。",
@@ -160,20 +166,20 @@ def test_eventbus_text_reply_preserves_intent_text_audio_end_order(
                     look_at=LookAt.USER,
                     intensity=0.4,
                     duration_ms=1_200,
-                    reason_code="astrbot_message_pipeline",
+                    reason_code="quest_enriched_pipeline",
                 ),
             )
         )
-        bundle.plugin.message_pipeline = pipeline
-        bundle.plugin.orchestrator.message_pipeline = pipeline
+        bundle.plugin.quest_enriched_pipeline = pipeline
+        bundle.plugin.orchestrator.quest_enriched_pipeline = pipeline
         bundle.plugin.fast_action = None
         bundle.plugin.orchestrator.fast_action = None
         async with LiveHttpServer(bundle) as server:
             async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
-                events = await _open(bundle, server, client, "eventbus-text")
+                events = await _open(bundle, server, client, "quest-chain-text")
                 started = await client.post(
                     server.url("/turn/start"), headers=AUTH_HEADERS,
-                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-text", "turn_id": "t1", "text": "请正常回复", "cancel_previous": True},
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "quest-chain-text", "turn_id": "t1", "text": "请正常回复", "cancel_previous": True},
                 )
                 assert started.status == 202
                 frames = []
@@ -209,20 +215,20 @@ def test_eventbus_text_reply_preserves_intent_text_audio_end_order(
     asyncio.run(scenario())
 
 
-def test_eventbus_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tmp_path: Path) -> None:
+def test_quest_chain_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tmp_path: Path) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
-        pipeline = EventBusFake(hang=True)
-        bundle.plugin.message_pipeline = pipeline
-        bundle.plugin.orchestrator.message_pipeline = pipeline
+        pipeline = QuestChainFake(hang=True)
+        bundle.plugin.quest_enriched_pipeline = pipeline
+        bundle.plugin.orchestrator.quest_enriched_pipeline = pipeline
         bundle.plugin.orchestrator.allow_direct_provider_fallback = False
-        bundle.plugin.orchestrator.eventbus_terminal_deadline_seconds = 0.05
+        bundle.plugin.orchestrator.quest_chain_terminal_deadline_seconds = 0.05
         async with LiveHttpServer(bundle) as server:
             async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
-                events = await _open(bundle, server, client, "eventbus-timeout")
+                events = await _open(bundle, server, client, "quest-chain-timeout")
                 started = await client.post(
                     server.url("/turn/start"), headers=AUTH_HEADERS,
-                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-timeout", "turn_id": "t1", "text": "slow pipeline", "cancel_previous": True},
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "quest-chain-timeout", "turn_id": "t1", "text": "slow pipeline", "cancel_previous": True},
                 )
                 assert started.status == 202
                 pre_terminal = []
@@ -234,7 +240,7 @@ def test_eventbus_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tm
                         break
                 terminal = await read_sse_frame(events, timeout=1)
                 assert error.event == "error"
-                assert error.data["code"] == "astrbot_pipeline_timeout"
+                assert error.data["code"] == "quest_enriched_pipeline_timeout"
                 assert terminal.event == "reply.end"
                 assert terminal.data["status"] == "failed"
                 assert terminal.data["text_sent"] is False
@@ -243,10 +249,10 @@ def test_eventbus_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tm
                 stage_names = {
                     item["code"] for item in diagnostic["events"]
                 }
-                assert {"event_enqueued", "event_cleanup_entered", "event_completed", "reply_end_emitted"}.issubset(stage_names)
+                assert {"quest_chain.started", "quest_chain.completed", "reply_end_emitted"}.issubset(stage_names)
                 serialized = repr(diagnostic)
                 assert "slow pipeline" not in serialized
-                assert "eventbus-timeout" not in serialized
+                assert "quest-chain-timeout" not in serialized
                 try:
                     await read_sse_frame(events, timeout=0.1)
                 except TimeoutError:
@@ -259,26 +265,26 @@ def test_eventbus_deadline_emits_error_then_failed_end_once(monkeypatch: Any, tm
     asyncio.run(scenario())
 
 
-def test_interrupt_late_eventbus_completion_does_not_replay_terminal(monkeypatch: Any, tmp_path: Path) -> None:
+def test_interrupt_late_quest_chain_completion_does_not_replay_terminal(monkeypatch: Any, tmp_path: Path) -> None:
     async def scenario() -> None:
         bundle = build_plugin(monkeypatch, tmp_path)
-        pipeline = EventBusFake(hang=True)
-        bundle.plugin.message_pipeline = pipeline
-        bundle.plugin.orchestrator.message_pipeline = pipeline
+        pipeline = QuestChainFake(hang=True)
+        bundle.plugin.quest_enriched_pipeline = pipeline
+        bundle.plugin.orchestrator.quest_enriched_pipeline = pipeline
         bundle.plugin.orchestrator.allow_direct_provider_fallback = False
-        bundle.plugin.orchestrator.eventbus_terminal_deadline_seconds = 0.2
+        bundle.plugin.orchestrator.quest_chain_terminal_deadline_seconds = 0.2
         async with LiveHttpServer(bundle) as server:
             async with ClientSession(timeout=ClientTimeout(total=None, connect=2)) as client:
-                events = await _open(bundle, server, client, "eventbus-interrupt")
+                events = await _open(bundle, server, client, "quest-chain-interrupt")
                 started = await client.post(
                     server.url("/turn/start"), headers=AUTH_HEADERS,
-                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "eventbus-interrupt", "turn_id": "t1", "text": "slow pipeline", "cancel_previous": True},
+                    json={"type": "turn.start", "protocol_version": "1.0", "session_id": "quest-chain-interrupt", "turn_id": "t1", "text": "slow pipeline", "cancel_previous": True},
                 )
                 assert started.status == 202
                 await asyncio.wait_for(pipeline.started.wait(), timeout=1)
                 interrupted = await client.post(
                     server.url("/interrupt"), headers=AUTH_HEADERS,
-                    json={"type": "interrupt", "protocol_version": "1.0", "session_id": "eventbus-interrupt", "turn_id": "t1", "reason": "test"},
+                    json={"type": "interrupt", "protocol_version": "1.0", "session_id": "quest-chain-interrupt", "turn_id": "t1", "reason": "test"},
                 )
                 assert interrupted.status == 200
                 pipeline.release.set()

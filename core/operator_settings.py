@@ -54,7 +54,7 @@ class OperatorSettings:
         stt: Any | None = None,
         diagnostic_log: Any | None = None,
         identity: Any | None = None,
-        message_pipeline: Any | None = None,
+        quest_enriched_pipeline: Any | None = None,
         orchestrator: Any | None = None,
         fast_action: Any | None = None,
         identity_control_plane: IdentityControlPlaneAdapter | None = None,
@@ -72,7 +72,7 @@ class OperatorSettings:
         self.logger = logger
         self.diagnostic_log = diagnostic_log
         self.identity = identity
-        self.message_pipeline = message_pipeline
+        self.quest_enriched_pipeline = quest_enriched_pipeline
         self.orchestrator = orchestrator
         self.fast_action = fast_action
         self.identity_control_plane = identity_control_plane
@@ -116,21 +116,21 @@ class OperatorSettings:
     def platform_snapshot(self) -> dict[str, Any]:
         platforms = self._list_platforms()
         platform_id = str(
-            getattr(self.message_pipeline, "platform_id", "")
+            getattr(self.quest_enriched_pipeline, "platform_id", "")
             or getattr(self.identity, "trusted_platform_id", "")
             or self.config.get("trusted_platform_id", "")
             or ""
         ).strip()
         reason = (
-            str(getattr(self.message_pipeline, "availability_reason", "") or "")
-            if self.message_pipeline is not None
-            else "astrbot_event_api_unavailable"
+            str(getattr(self.quest_enriched_pipeline, "availability_reason", "") or "")
+            if self.quest_enriched_pipeline is not None
+            else "quest_enriched_pipeline_unavailable"
         )
         return {
             "trusted_platform_id": platform_id,
             "configured": bool(platform_id),
             "available": reason == "ready",
-            "availability_reason": reason or "astrbot_event_api_unavailable",
+            "availability_reason": reason or "quest_enriched_pipeline_unavailable",
             "platforms_status": "ok" if platforms else "empty",
             "platforms": platforms,
             "config_writable": config_is_writable(self.config),
@@ -383,8 +383,8 @@ class OperatorSettings:
             self.identity.configure_relationship_person_id("")
             self.identity.configure_sync_ready(True)
         self.relationship.configure_person_id("")
-        if self.message_pipeline is not None:
-            self.message_pipeline.configure_platform(platform)
+        if self.quest_enriched_pipeline is not None:
+            self.quest_enriched_pipeline.configure(platform_id=platform)
         if self.pairing_manager is not None:
             self.pairing_manager.bridge_api_key = bridge_key
         if self.transport is not None:
@@ -429,11 +429,6 @@ class OperatorSettings:
         orchestrator = self.orchestrator
         if orchestrator is not None:
             orchestrator.allow_direct_provider_fallback = enabled
-        pipeline = self.message_pipeline
-        if pipeline is not None:
-            pipeline.enabled = not enabled and bool(
-                self.config.get("enable_astrbot_message_pipeline", True)
-            )
         self._diagnostic(
             "dialogue.mode_updated",
             component="dialogue",
@@ -448,10 +443,9 @@ class OperatorSettings:
         }
 
     def quest_chain_snapshot(self) -> dict[str, Any]:
-        mode = str(self.config.get("quest_chain_mode", "main") or "main")
-        mode = mode.strip().lower()
-        if mode not in {"main", "bridge", "auto"}:
-            mode = "main"
+        # 1.3.0 起移除 AstrBot 主消息链路：模式固定为 bridge（临专属链路），
+        # 历史配置中的 quest_chain_mode 一律忽略。
+        mode = "bridge"
         pipeline = getattr(self.orchestrator, "quest_enriched_pipeline", None)
         available = bool(getattr(pipeline, "available", False))
         availability_reason = (
@@ -484,23 +478,17 @@ class OperatorSettings:
     async def save_quest_chain_settings(
         self,
         *,
-        mode: str,
+        mode: str | None = None,
         per_hook_budget_seconds: float | None = None,
         total_hook_budget_seconds: float | None = None,
         llm_timeout_seconds: float | None = None,
         memory_cache_ttl_seconds: float | None = None,
         excluded_plugins: str = "",
     ) -> dict[str, Any]:
-        normalized_mode = str(mode or "main").strip().lower()
-        if normalized_mode not in {"main", "bridge", "auto"}:
-            raise OperatorSettingsError(
-                "invalid_quest_chain_mode",
-                422,
-                "无效的链路模式，仅支持 main / bridge / auto",
-            )
+        # mode 参数仅为兼容旧前端/旧客户端保留：任何取值都被忽略，恒为 bridge。
+        normalized_mode = "bridge"
         excluded = str(excluded_plugins or "")[:512]
         changes: dict[str, Any] = {
-            "quest_chain_mode": normalized_mode,
             "quest_chain_excluded_plugins": excluded,
         }
         if per_hook_budget_seconds is not None:
@@ -521,11 +509,10 @@ class OperatorSettings:
         # 热更新：直接改写运行时 orchestrator 与临独立链适配器，下一轮对话即生效。
         orchestrator = self.orchestrator
         if orchestrator is not None:
-            orchestrator.quest_chain_mode = normalized_mode
             pipeline = getattr(orchestrator, "quest_enriched_pipeline", None)
             if pipeline is not None:
                 pipeline.configure(
-                    enabled=normalized_mode in {"bridge", "auto"},
+                    enabled=True,
                     per_hook_budget_seconds=changes.get(
                         "quest_chain_per_hook_budget_seconds"
                     ),
@@ -806,8 +793,8 @@ class OperatorSettings:
                         group_id="",
                     )
                     self.identity.configure_sync_ready(True)
-                    if self.message_pipeline is not None:
-                        self.message_pipeline.configure_platform(platform_id)
+                    if self.quest_enriched_pipeline is not None:
+                        self.quest_enriched_pipeline.configure(platform_id=platform_id)
         return self.snapshot()
 
     def _preserved_base_identity(self) -> tuple[str, str, str, str, str] | None:
@@ -845,7 +832,7 @@ class OperatorSettings:
     def quest_identity_platform_candidates(self) -> tuple[str, ...]:
         active = self.active_platform_ids()
         preferred = str(
-            getattr(self.message_pipeline, "platform_id", "")
+            getattr(self.quest_enriched_pipeline, "platform_id", "")
             or getattr(self.identity, "trusted_platform_id", "")
             or self.config.get("trusted_platform_id", "")
             or ""
@@ -962,8 +949,8 @@ class OperatorSettings:
                 group_id="",
             )
             self.identity.configure_sync_ready(True)
-        if self.message_pipeline is not None:
-            self.message_pipeline.configure_platform(platform)
+        if self.quest_enriched_pipeline is not None:
+            self.quest_enriched_pipeline.configure(platform_id=platform)
         self._diagnostic(
             "identity.relationship_resolved",
             component="identity",
@@ -980,12 +967,12 @@ class OperatorSettings:
         await self._persist("trusted_platform_id", platform_id)
         if self.identity is not None:
             self.identity.configure_trusted_platform(platform_id)
-        if self.message_pipeline is not None:
-            self.message_pipeline.configure_platform(platform_id)
+        if self.quest_enriched_pipeline is not None:
+            self.quest_enriched_pipeline.configure(platform_id=platform_id)
         snapshot = self.platform_snapshot()
         self._diagnostic(
             "platform.updated",
-            component="message_pipeline",
+            component="quest_chain",
             status=snapshot["availability_reason"],
             configured=snapshot["configured"],
             available=snapshot["available"],
@@ -1219,7 +1206,6 @@ class OperatorSettings:
                 "fast_action_timeout_seconds",
                 "fast_action_timeout_policy_revision",
                 "quest_direct_dialogue_mode",
-                "quest_chain_mode",
                 "quest_chain_per_hook_budget_seconds",
                 "quest_chain_total_hook_budget_seconds",
                 "quest_chain_llm_timeout_seconds",

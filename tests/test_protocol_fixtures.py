@@ -33,7 +33,7 @@ def test_protocol_manifest_matches_production_enums_and_errors() -> None:
             "enabled_by": "server_timing_enabled",
             "location": "reply.end.server_timing",
             "default_present": False,
-            "decision_path": ["astrbot_event_bus", "direct_provider"],
+            "decision_path": ["astrbot_event_bus", "quest_enriched_pipeline", "direct_provider"],
             "duration_fields": [
                 "stt_ms",
                 "decision_ms",

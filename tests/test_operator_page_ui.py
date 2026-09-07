@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.2.0-3"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.2.0-3" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.2.0-3")
+    assert '<script type="module" src="./app.js?v=1.3.0-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.3.0-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.3.0-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -152,7 +152,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "关闭服务会断开当前具身会话" in js
     for capability in (
         "dialogue",
-        "eventbus",
+        "bridge",
         "identity_configured",
         "stt",
         "tts",
@@ -177,7 +177,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert '"fast_action.completed": "快速动作判断完成"' in js
     assert "direct_mode:" in js
     assert "function renderDialogueMode" in js
-    assert "不进入 AstrBot EventBus" in html
+    assert "不走临专属链路的钩子富化" in html
     assert "不需要 Bot/User" in html or "不需要 Bot/User" in js
     assert 'apiGet("pairing/stt-settings")' in js
     assert 'apiPost("pairing/stt-settings"' in js

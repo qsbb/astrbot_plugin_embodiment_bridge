@@ -353,7 +353,7 @@ def test_pipeline_error_uses_safe_session_authorization_reason() -> None:
                 session,
                 MessagePipelineUnavailable("private_internal_detail"),
             )
-            == "astrbot_message_pipeline_unavailable"
+            == "quest_enriched_pipeline_unavailable"
         )
         assert (
             orchestrator._public_pipeline_reason(
@@ -487,13 +487,13 @@ def test_text_and_interaction_failures_emit_terminal_reply_end() -> None:
     asyncio.run(scenario())
 
 
-def test_eventbus_empty_reply_is_not_compressed_to_turn_failed() -> None:
+def test_quest_chain_empty_reply_is_not_compressed_to_turn_failed() -> None:
     async def scenario() -> None:
         sessions, session, orchestrator = await build_orchestrator(
             DecisionStub(safe_neutral_decision("unused"))
         )
         session.protected_context_authorized = True
-        orchestrator.message_pipeline = EmptyMessagePipelineStub(
+        orchestrator.quest_enriched_pipeline = EmptyMessagePipelineStub(
             "astrbot_pipeline_event_stopped"
         )
         orchestrator.allow_direct_provider_fallback = False

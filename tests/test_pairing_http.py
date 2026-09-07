@@ -336,7 +336,7 @@ def test_operator_model_settings_and_identity_catalog_are_dashboard_protected(
                 assert bundle.plugin.identity.trusted_platform_id == (
                     "contract-platform"
                 )
-                assert bundle.plugin.message_pipeline.platform_id == (
+                assert bundle.plugin.quest_enriched_pipeline.platform_id == (
                     "contract-platform"
                 )
 
@@ -1056,7 +1056,7 @@ def test_natural_person_selection_resolves_real_event_identity_without_exposing_
                     "real-private-user"
                 )
                 assert bundle.plugin.config["relationship_person_id"] == "person-a"
-                assert bundle.plugin.message_pipeline.platform_id == (
+                assert bundle.plugin.quest_enriched_pipeline.platform_id == (
                     "contract-platform"
                 )
                 assert bundle.plugin.pairing_api.pairing_defaults["bot_id"] == (
@@ -1545,6 +1545,7 @@ def test_service_control_is_dashboard_protected_and_gates_quest_sessions(
                 }
                 assert service["capabilities"] == {
                     "dialogue": True,
+                    "bridge": False,
                     "eventbus": False,
                     "eventbus_dialogue": False,
                     "interaction_decision": True,
