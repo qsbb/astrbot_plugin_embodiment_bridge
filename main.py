@@ -596,6 +596,7 @@ class EmbodimentBridgePlugin(Star):
             persona=self.persona,
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
+            plugin_hook_profiler=self.plugin_hook_profiler,
             identity=self.identity,
             quest_enriched_pipeline=self.quest_enriched_pipeline,
             orchestrator=self.orchestrator,

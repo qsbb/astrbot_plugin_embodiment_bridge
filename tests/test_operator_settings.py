@@ -1079,6 +1079,137 @@ def test_persona_source_save_failure_keeps_runtime_selection() -> None:
     asyncio.run(scenario())
 
 
+class DiagnosticLogStub:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.platform_log_enabled = False
+        self.configures: list[dict[str, bool]] = []
+        self.events: list[str] = []
+
+    def configure(self, *, enabled: bool, platform_log_enabled: bool) -> None:
+        self.enabled = bool(enabled)
+        self.platform_log_enabled = bool(platform_log_enabled)
+        self.configures.append(
+            {"enabled": self.enabled, "platform_log_enabled": self.platform_log_enabled}
+        )
+
+    def record(self, event: str, **fields: Any) -> None:
+        del fields
+        self.events.append(event)
+
+
+class HookProfilerStub:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.installs = 0
+
+    def configure(self, *, enabled: bool) -> None:
+        self.enabled = bool(enabled)
+
+    def install(self) -> int:
+        self.installs += 1
+        return 0
+
+
+def test_diagnostics_settings_persist_and_hot_update_runtime_components() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+        diagnostic_log = DiagnosticLogStub()
+        profiler = HookProfilerStub()
+        settings.diagnostic_log = diagnostic_log
+        settings.plugin_hook_profiler = profiler
+
+        snapshot = settings.diagnostics_snapshot()
+        assert snapshot == {
+            "diagnostic_log_enabled": False,
+            "diagnostic_plugin_timing_enabled": False,
+            "diagnostic_platform_log_enabled": False,
+            "config_writable": True,
+        }
+
+        saved = await settings.save_diagnostics_settings(
+            diagnostic_log_enabled=True,
+            diagnostic_plugin_timing_enabled=True,
+            diagnostic_platform_log_enabled=True,
+        )
+        assert config.saves == [
+            {
+                "diagnostic_log_enabled": True,
+                "diagnostic_plugin_timing_enabled": True,
+                "diagnostic_platform_log_enabled": True,
+            }
+        ]
+        assert diagnostic_log.configures == [
+            {"enabled": True, "platform_log_enabled": True}
+        ]
+        assert diagnostic_log.enabled is True
+        assert diagnostic_log.platform_log_enabled is True
+        assert profiler.enabled is True
+        assert profiler.installs == 1
+        assert "diagnostics.settings_updated" in diagnostic_log.events
+        assert saved["diagnostic_log_enabled"] is True
+        assert saved["diagnostic_plugin_timing_enabled"] is True
+        assert saved["diagnostic_platform_log_enabled"] is True
+        assert saved["config_writable"] is True
+
+        # 钩子耗时采集以独立日志开启为前提：关日志时 profiler 同步停用。
+        saved = await settings.save_diagnostics_settings(
+            diagnostic_log_enabled=False,
+            diagnostic_plugin_timing_enabled=True,
+            diagnostic_platform_log_enabled=False,
+        )
+        assert config.saves[-1] == {
+            "diagnostic_log_enabled": False,
+            "diagnostic_plugin_timing_enabled": True,
+            "diagnostic_platform_log_enabled": False,
+        }
+        assert saved["diagnostic_plugin_timing_enabled"] is True
+        assert diagnostic_log.enabled is False
+        assert diagnostic_log.platform_log_enabled is False
+        assert profiler.enabled is False
+        assert profiler.installs == 1
+
+    asyncio.run(scenario())
+
+
+def test_diagnostics_settings_reject_non_bool_and_keep_runtime_on_save_failure() -> (
+    None
+):
+    async def scenario() -> None:
+        config = NativeConfigStub({"diagnostic_log_enabled": False})
+        settings = build_settings(config=config)
+        diagnostic_log = DiagnosticLogStub()
+        profiler = HookProfilerStub()
+        settings.diagnostic_log = diagnostic_log
+        settings.plugin_hook_profiler = profiler
+
+        with pytest.raises(OperatorSettingsError) as invalid:
+            await settings.save_diagnostics_settings(
+                diagnostic_log_enabled="yes",
+                diagnostic_plugin_timing_enabled=False,
+                diagnostic_platform_log_enabled=False,
+            )
+        assert invalid.value.code == "invalid_diagnostics_switch"
+        assert config.saves == []
+        assert diagnostic_log.configures == []
+
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_diagnostics_settings(
+                diagnostic_log_enabled=True,
+                diagnostic_plugin_timing_enabled=True,
+                diagnostic_platform_log_enabled=True,
+            )
+        assert failed.value.code == "config_save_failed"
+        assert config["diagnostic_log_enabled"] is False
+        assert diagnostic_log.enabled is False
+        assert profiler.enabled is False
+        assert profiler.installs == 0
+
+    asyncio.run(scenario())
+
+
 def test_superseded_config_revision_does_not_change_runtime() -> None:
     class SupersededConfigStub(NativeConfigStub):
         async def save_config_async(self, changes: dict[str, Any]) -> bool:

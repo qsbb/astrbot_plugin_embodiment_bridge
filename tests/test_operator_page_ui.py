@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.4.0-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-1")
+    assert '<script type="module" src="./app.js?v=1.4.0-2"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-2" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-2")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -489,6 +489,47 @@ def test_operator_page_settings_panels_grouped_into_category_tabs() -> None:
 
     assert ".settings-tabs" in css
     assert ".settings-group" in css
+
+
+def test_operator_diagnostics_panel_exposes_runtime_switches() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+    labels = (PLUGIN_ROOT / "core" / "diagnostic_labels.py").read_text(
+        encoding="utf-8"
+    )
+
+    # 三个诊断开关控件 + 保存按钮 + 状态行，收纳在诊断面板内。
+    panel_start = html.index('class="setting-panel diagnostics-panel"')
+    panel_end = html.index("</section>", panel_start)
+    panel = html[panel_start:panel_end]
+    for element_id in (
+        "diagnostic-log-enabled",
+        "diagnostic-plugin-timing-enabled",
+        "diagnostic-platform-log-enabled",
+        "save-diagnostics-settings-button",
+        "diagnostics-settings-status",
+    ):
+        assert f'id="{element_id}"' in panel
+    assert "开启后立即生效，日志写入数据目录" in panel
+    assert 'class="diagnostics-switches"' in panel
+    assert ".diagnostics-switches" in css
+
+    # 前端走 saveSection 表驱动范式并注册初始加载。
+    assert 'apiGet("pairing/diagnostics-settings")' in js
+    assert 'endpoint: "pairing/diagnostics-settings"' in js
+    assert "function renderDiagnosticsSettings(settings)" in js
+    assert "async function saveDiagnosticsSettings()" in js
+    assert "load: loadDiagnosticsSettings" in js
+    assert 'diagnostics: ["diagnostics-settings-status", "诊断开关读取失败，可单独重试。"]' in js
+    assert 'getElementById("save-diagnostics-settings-button")' in js
+    assert "diagnostic_log_enabled:" in js
+    assert "diagnostic_plugin_timing_enabled:" in js
+    assert "diagnostic_platform_log_enabled:" in js
+    assert "response.diagnostics_settings" in js
+
+    # 保存事件的诊断标签已下沉到后端标签表。
+    assert '"diagnostics.settings_updated"' in labels
 
 
 def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> None:

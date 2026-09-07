@@ -11,6 +11,17 @@
   会话，此前页面零线索）；能力条新增「交互决策」「直连回退」两盏灯
   （渲染 capabilities.interaction_decision / direct_provider_fallback，
   字段自 1.3.0 起已在响应中）
+- 诊断三开关上页面（用户拍板批次 B2）：operator「运行」标签的“临”独立
+  日志面板顶部新增 `diagnostic_log_enabled` / `diagnostic_plugin_timing_enabled`
+  / `diagnostic_platform_log_enabled` 三个 checkbox + 保存按钮 + 状态行，
+  复用 saveSection 表驱动范式与 INITIAL_DATA_SECTIONS 初始加载；新增
+  dashboard 鉴权端点 `pairing/diagnostics-settings`（GET 快照 / POST 保存）。
+  `OperatorSettings.save_diagnostics_settings` 校验后 persist 三键（白名单
+  已扩展）并立即热更新运行时组件：`DiagnosticLog.configure` 即时启停写盘
+  与平台日志桥接，`PluginHookProfiler.configure`+`install` 即时启停钩子耗时
+  采集（仍以独立日志开启为前提，与 series.control 消费点门控语义一致）。
+  诊断事件 `diagnostics.settings_updated` 补中文标签；页面缓存戳升至
+  `?v=1.4.0-2`。
 
 
 ## 1.3.0 - 2026-09-07

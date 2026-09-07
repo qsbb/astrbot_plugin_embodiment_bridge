@@ -255,6 +255,18 @@
     },
     {
       "method": "GET",
+      "path": "/pairing/diagnostics-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/diagnostics-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
       "path": "/pairing/identity-candidates",
       "success_status": 200,
       "authentication": "astrbot_dashboard"

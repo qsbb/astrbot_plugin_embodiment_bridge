@@ -160,6 +160,7 @@ EVENT_LABELS: dict[str, str] = {
     "http.error": "HTTP 请求失败",
     "plugin_hook_profiler.scan": "插件钩子扫描完成",
     "plugin_hook.completed": "插件钩子执行完成",
+    "diagnostics.settings_updated": "诊断开关已更新并立即生效",
 }
 
 # ── 诊断环节 / 组件（原 app.js diagnosticStageLabel）──────────────────────

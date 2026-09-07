@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.4.0-1" />
+  <link rel="stylesheet" href="./style.css?v=1.4.0-2" />
 </head>
 <body>
   <main class="shell">
@@ -431,6 +431,25 @@
         <span class="section-label">诊断</span>
         <h2 id="diagnostics-title">“临”独立日志</h2>
         <p>每秒自动刷新脱敏后的任务阶段、事件状态、错误码和耗时；模型转换仅显示生成与结构校验状态，不显示隐藏推理内容。</p>
+        <div class="diagnostics-switches" aria-label="诊断开关">
+          <p class="field-help">开关保存后开启后立即生效，日志写入数据目录；全部只记录脱敏结构化摘要，不含对话内容。</p>
+          <label class="mode-switch" for="diagnostic-log-enabled">
+            <input id="diagnostic-log-enabled" type="checkbox" />
+            <span>“临”独立日志写盘</span>
+          </label>
+          <label class="mode-switch" for="diagnostic-plugin-timing-enabled">
+            <input id="diagnostic-plugin-timing-enabled" type="checkbox" />
+            <span>插件钩子耗时采集（需先开启独立日志）</span>
+          </label>
+          <label class="mode-switch" for="diagnostic-platform-log-enabled">
+            <input id="diagnostic-platform-log-enabled" type="checkbox" />
+            <span>同步摘要到 AstrBot 平台日志</span>
+          </label>
+          <div class="inline-actions">
+            <button id="save-diagnostics-settings-button" class="primary" type="button" aria-busy="false">保存诊断开关</button>
+          </div>
+          <p id="diagnostics-settings-status" class="field-status" role="status">尚未读取</p>
+        </div>
         <div class="inline-actions">
           <button id="load-diagnostics" type="button" aria-busy="false">刷新日志</button>
           <label class="mode-switch diagnostics-autoscroll-toggle" for="diagnostics-auto-scroll">
@@ -493,6 +512,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.4.0-1"></script>
+  <script type="module" src="./app.js?v=1.4.0-2"></script>
 </body>
 </html>

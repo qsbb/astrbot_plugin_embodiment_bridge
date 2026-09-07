@@ -29,6 +29,11 @@ _PERSONA_KEYS = (
     "character_self_description",
     "character_user_relationship",
 )
+_DIAGNOSTICS_KEYS = (
+    "diagnostic_log_enabled",
+    "diagnostic_plugin_timing_enabled",
+    "diagnostic_platform_log_enabled",
+)
 
 
 class OperatorSettingsError(RuntimeError):
@@ -53,6 +58,7 @@ class OperatorSettings:
         logger: Any,
         stt: Any | None = None,
         diagnostic_log: Any | None = None,
+        plugin_hook_profiler: Any | None = None,
         identity: Any | None = None,
         quest_enriched_pipeline: Any | None = None,
         orchestrator: Any | None = None,
@@ -71,6 +77,7 @@ class OperatorSettings:
         self.persona = persona
         self.logger = logger
         self.diagnostic_log = diagnostic_log
+        self.plugin_hook_profiler = plugin_hook_profiler
         self.identity = identity
         self.quest_enriched_pipeline = quest_enriched_pipeline
         self.orchestrator = orchestrator
@@ -511,6 +518,76 @@ class OperatorSettings:
             mode=normalized_mode,
         )
         return self.quest_chain_snapshot()
+
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        # 页面展示与保存都以插件原生配置为准；series.control 托管覆盖层属于
+        # 内核侧临时策略，不在这里投影。
+        return {
+            "diagnostic_log_enabled": self._bool_cfg("diagnostic_log_enabled"),
+            "diagnostic_plugin_timing_enabled": self._bool_cfg(
+                "diagnostic_plugin_timing_enabled"
+            ),
+            "diagnostic_platform_log_enabled": self._bool_cfg(
+                "diagnostic_platform_log_enabled"
+            ),
+            "config_writable": config_is_writable(self.config),
+        }
+
+    async def save_diagnostics_settings(
+        self,
+        *,
+        diagnostic_log_enabled: bool,
+        diagnostic_plugin_timing_enabled: bool,
+        diagnostic_platform_log_enabled: bool,
+    ) -> dict[str, Any]:
+        log_enabled = _strict_bool(
+            diagnostic_log_enabled, "diagnostic_log_enabled"
+        )
+        timing_enabled = _strict_bool(
+            diagnostic_plugin_timing_enabled, "diagnostic_plugin_timing_enabled"
+        )
+        platform_log_enabled = _strict_bool(
+            diagnostic_platform_log_enabled, "diagnostic_platform_log_enabled"
+        )
+        changes = {
+            "diagnostic_log_enabled": log_enabled,
+            "diagnostic_plugin_timing_enabled": timing_enabled,
+            "diagnostic_platform_log_enabled": platform_log_enabled,
+        }
+        await self._persist_many(changes)
+        # 热更新：独立诊断日志立即启停写盘与平台日志桥接；钩子 profiler
+        # 立即启停采集（采集以独立日志开启为前提，与 series.control 消费点
+        # 保持一致的门控语义）。
+        if self.diagnostic_log is not None:
+            self.diagnostic_log.configure(
+                enabled=log_enabled,
+                platform_log_enabled=platform_log_enabled,
+            )
+        profiler = self.plugin_hook_profiler
+        if profiler is not None:
+            profiler.configure(enabled=timing_enabled and log_enabled)
+            installer = getattr(profiler, "install", None)
+            if profiler.enabled and callable(installer):
+                try:
+                    installer()
+                except Exception:
+                    # 采集安装失败不得影响设置保存结果。
+                    pass
+        self._diagnostic(
+            "diagnostics.settings_updated",
+            component="diagnostics",
+            status="ready",
+            enabled=log_enabled,
+        )
+        return self.diagnostics_snapshot()
+
+    def _bool_cfg(self, key: str) -> bool:
+        value = self.config.get(key, False)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     def _float_cfg(self, key: str, default: float) -> float:
         try:
@@ -1202,6 +1279,7 @@ class OperatorSettings:
                 "pairing_identity_source",
                 "pairing_identity_sync_state",
                 "bridge_api_key",
+                *_DIAGNOSTICS_KEYS,
             }
             for key in changes
         ):
@@ -1269,6 +1347,16 @@ class OperatorSettings:
             self.diagnostic_log.record(event, **fields)
         except Exception:
             return
+
+
+def _strict_bool(value: object, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise OperatorSettingsError(
+            "invalid_diagnostics_switch",
+            422,
+            f"诊断开关 {field} 必须是布尔值",
+        )
+    return value
 
 
 def _single_line(value: object, limit: int) -> str:

@@ -78,6 +78,14 @@ class QuestChainSettingsRequest(BaseModel):
     excluded_plugins: str = Field(default="", max_length=512)
 
 
+class DiagnosticsSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    diagnostic_log_enabled: bool
+    diagnostic_plugin_timing_enabled: bool
+    diagnostic_platform_log_enabled: bool
+
+
 class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -401,6 +409,18 @@ class PairingHttpApi:
                 "Read redacted Embodiment Bridge diagnostics",
             ),
             (
+                "pairing/diagnostics-settings",
+                self.diagnostics_settings_overview,
+                ["GET"],
+                "Read Embodiment Bridge diagnostics switches",
+            ),
+            (
+                "pairing/diagnostics-settings",
+                self.save_diagnostics_settings,
+                ["POST"],
+                "Save Embodiment Bridge diagnostics switches",
+            ),
+            (
                 "pairing/identity-candidates",
                 self.identity_candidates,
                 ["GET"],
@@ -589,6 +609,39 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "quest_chain": settings})
         except Exception as exc:
             return self._error(exc, "save_quest_chain_settings")
+
+    async def diagnostics_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "diagnostics_settings": (
+                        self.operator_settings.diagnostics_snapshot()
+                    ),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "diagnostics_settings_overview")
+
+    async def save_diagnostics_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(DiagnosticsSettingsRequest)
+            settings = await self.operator_settings.save_diagnostics_settings(
+                diagnostic_log_enabled=payload.diagnostic_log_enabled,
+                diagnostic_plugin_timing_enabled=(
+                    payload.diagnostic_plugin_timing_enabled
+                ),
+                diagnostic_platform_log_enabled=(
+                    payload.diagnostic_platform_log_enabled
+                ),
+            )
+            return _json_no_store(
+                {"success": True, "diagnostics_settings": settings}
+            )
+        except Exception as exc:
+            return self._error(exc, "save_diagnostics_settings")
 
     async def save_stt_settings(self) -> Any:
         try:

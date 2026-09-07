@@ -6,6 +6,7 @@ let personaSettings = null;
 let platformSettings = null;
 let questIdentitySettings = null;
 let questChainSettings = null;
+let diagnosticsSettings = null;
 let serviceState = null;
 let serviceRefreshInFlight = null;
 let personaProfiles = null;
@@ -2362,6 +2363,64 @@ function renderUnifiedTimeline(client, serverEvents) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// 诊断开关：三个 bool 配置键（独立日志写盘 / 钩子耗时采集 / 平台日志桥接），
+// 保存后由后端立即热更新运行时组件。
+// ---------------------------------------------------------------------------
+
+function renderDiagnosticsSettings(settings) {
+  diagnosticsSettings = settings || {};
+  const logSwitch = document.getElementById("diagnostic-log-enabled");
+  const timingSwitch = document.getElementById("diagnostic-plugin-timing-enabled");
+  const platformSwitch = document.getElementById("diagnostic-platform-log-enabled");
+  const button = document.getElementById("save-diagnostics-settings-button");
+  const status = document.getElementById("diagnostics-settings-status");
+  if (!logSwitch || !timingSwitch || !platformSwitch || !button || !status) return;
+  const writable = diagnosticsSettings.config_writable === true;
+  logSwitch.checked = diagnosticsSettings.diagnostic_log_enabled === true;
+  timingSwitch.checked = diagnosticsSettings.diagnostic_plugin_timing_enabled === true;
+  platformSwitch.checked = diagnosticsSettings.diagnostic_platform_log_enabled === true;
+  [logSwitch, timingSwitch, platformSwitch, button].forEach((node) => {
+    node.disabled = !writable;
+  });
+  if (!writable) {
+    status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
+    return;
+  }
+  status.textContent = logSwitch.checked
+    ? "独立日志已开启，脱敏摘要正在写入数据目录。"
+    : "独立日志默认关闭；勾选并保存后立即开始写盘。";
+}
+
+async function loadDiagnosticsSettings() {
+  const response = await apiGet("pairing/diagnostics-settings");
+  renderDiagnosticsSettings(response.diagnostics_settings);
+}
+
+async function saveDiagnosticsSettings() {
+  const button = document.getElementById("save-diagnostics-settings-button");
+  if (!button || button.disabled) return;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/diagnostics-settings",
+    payload: () => ({
+      diagnostic_log_enabled:
+        document.getElementById("diagnostic-log-enabled").checked,
+      diagnostic_plugin_timing_enabled:
+        document.getElementById("diagnostic-plugin-timing-enabled").checked,
+      diagnostic_platform_log_enabled:
+        document.getElementById("diagnostic-platform-log-enabled").checked
+    }),
+    okToast: "诊断开关已保存并立即生效",
+    errorToast: "诊断开关保存失败：",
+    onOk: (response) => renderDiagnosticsSettings(response.diagnostics_settings),
+    onFinally: () => {
+      button.disabled = diagnosticsSettings?.config_writable !== true;
+    },
+  });
+}
+
 async function loadDiagnostics({ silent = false } = {}) {
   if (diagnosticsRefreshInFlight) return diagnosticsRefreshInFlight;
   const button = document.getElementById("load-diagnostics");
@@ -2626,6 +2685,9 @@ function bindEvents() {
   document
     .getElementById("load-diagnostics")
     .addEventListener("click", () => loadDiagnostics());
+  document
+    .getElementById("save-diagnostics-settings-button")
+    .addEventListener("click", saveDiagnosticsSettings);
   const autoScroll = document.getElementById("diagnostics-auto-scroll");
   autoScroll.checked = diagnosticAutoScroll;
   autoScroll.addEventListener("change", () => {
@@ -2683,6 +2745,7 @@ const INITIAL_DATA_SECTIONS = [
   { key: "persona", label: "实时人格", load: loadPersonaSettings },
   { key: "persona-library", label: "具身人格库", load: loadPersonaProfiles },
   { key: "quest-identity", label: "Quest 身份", load: loadQuestIdentitySettings },
+  { key: "diagnostics", label: "诊断开关", load: loadDiagnosticsSettings },
   { key: "quick-pairing", label: "快速绑定", load: loadQuickPairingStatus }
 ];
 
@@ -2695,6 +2758,7 @@ function markInitialSectionFailed(key) {
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
     persona: ["persona-status", "实时人格读取失败，可单独重试。"],
     "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"],
+    diagnostics: ["diagnostics-settings-status", "诊断开关读取失败，可单独重试。"],
     "quick-pairing": ["quick-pairing-status", "快速绑定状态读取失败，可单独重试。"]
   };
   const target = messages[key];

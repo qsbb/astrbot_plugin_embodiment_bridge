@@ -1354,6 +1354,113 @@ def test_quest_persona_library_conversion_activation_and_live_fallback(
     asyncio.run(scenario())
 
 
+def test_diagnostics_settings_are_dashboard_protected_and_apply_immediately(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(
+                    server.url("/pairing/diagnostics-settings")
+                )
+                assert denied.status == 401
+                assert (await denied.json())["data"]["code"] == (
+                    "astrbot_auth_required"
+                )
+
+                api_key_denied = await client.get(
+                    server.url("/pairing/diagnostics-settings"),
+                    headers=AUTH_HEADERS,
+                )
+                assert api_key_denied.status == 401
+                assert (await api_key_denied.json())["data"]["code"] == (
+                    "astrbot_dashboard_auth_required"
+                )
+
+                overview = await client.get(
+                    server.url("/pairing/diagnostics-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert overview.status == 200
+                snapshot = (await overview.json())["diagnostics_settings"]
+                assert snapshot == {
+                    "diagnostic_log_enabled": False,
+                    "diagnostic_plugin_timing_enabled": False,
+                    "diagnostic_platform_log_enabled": False,
+                    "config_writable": True,
+                }
+
+                saved = await client.post(
+                    server.url("/pairing/diagnostics-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "diagnostic_log_enabled": True,
+                        "diagnostic_plugin_timing_enabled": True,
+                        "diagnostic_platform_log_enabled": True,
+                    },
+                )
+                assert saved.status == 200
+                saved_body = (await saved.json())["diagnostics_settings"]
+                assert saved_body["diagnostic_log_enabled"] is True
+                assert saved_body["diagnostic_plugin_timing_enabled"] is True
+                assert saved_body["diagnostic_platform_log_enabled"] is True
+                plugin = bundle.plugin
+                assert plugin.config["diagnostic_log_enabled"] is True
+                assert plugin.config["diagnostic_plugin_timing_enabled"] is True
+                assert plugin.config["diagnostic_platform_log_enabled"] is True
+                # 热更新：独立日志立即开始写盘，钩子 profiler 立即启用采集。
+                assert plugin.diagnostic_log.enabled is True
+                assert plugin.diagnostic_log.platform_log_enabled is True
+                assert plugin.plugin_hook_profiler.enabled is True
+                # configure() 通过事件循环任务异步拉起写盘协程；显式 start 是
+                # 幂等的，保证 flush 时写盘循环已经接管队列。
+                await plugin.diagnostic_log.start()
+                assert await plugin.diagnostic_log.flush() is True
+                assert (plugin.data_dir / "embodiment_bridge.log").exists()
+
+                disabled = await client.post(
+                    server.url("/pairing/diagnostics-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "diagnostic_log_enabled": False,
+                        "diagnostic_plugin_timing_enabled": False,
+                        "diagnostic_platform_log_enabled": False,
+                    },
+                )
+                assert disabled.status == 200
+                assert plugin.diagnostic_log.enabled is False
+                assert plugin.diagnostic_log.platform_log_enabled is False
+                assert plugin.plugin_hook_profiler.enabled is False
+
+                for body in (
+                    {
+                        "diagnostic_log_enabled": "yes",
+                        "diagnostic_plugin_timing_enabled": False,
+                        "diagnostic_platform_log_enabled": False,
+                    },
+                    {
+                        "diagnostic_log_enabled": True,
+                        "diagnostic_plugin_timing_enabled": True,
+                        "diagnostic_platform_log_enabled": True,
+                        "unexpected": True,
+                    },
+                ):
+                    rejected = await client.post(
+                        server.url("/pairing/diagnostics-settings"),
+                        headers=PAGE_AUTH,
+                        json=body,
+                    )
+                    assert rejected.status == 422
+                    assert (await rejected.json())["data"]["code"] == (
+                        "schema_validation_failed"
+                    )
+                assert plugin.diagnostic_log.enabled is False
+
+    asyncio.run(scenario())
+
+
 def test_diagnostics_projection_is_dashboard_protected_and_redacted(
     monkeypatch: Any,
     tmp_path: Any,

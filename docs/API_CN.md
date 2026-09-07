@@ -204,7 +204,7 @@ sequenceDiagram
 
 - Dashboard 根路径、全局 `/api/v1/*` 和其他插件路径。
 - `pairing/create`、`pairing/status`、`pairing/revoke`、`pairing/overview`。
-- `pairing/listener-port`、`pairing/operator-settings`、`pairing/fast-action-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-conversion-start`、`pairing/persona-conversion-status`、`pairing/persona-conversion-cancel`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/identity-candidates`、`pairing/identity-selection`。
+- `pairing/listener-port`、`pairing/operator-settings`、`pairing/fast-action-settings`、`pairing/stt-settings`、`pairing/persona-settings`、`pairing/persona-library`、`pairing/persona-converter-settings`、`pairing/persona-convert`、`pairing/persona-conversion-start`、`pairing/persona-conversion-status`、`pairing/persona-conversion-cancel`、`pairing/persona-profile-open`、`pairing/persona-profile-save`、`pairing/persona-profile-activate`、`pairing/persona-profile-delete`、`pairing/quest-identity-settings`、`pairing/diagnostics`、`pairing/diagnostics-settings`、`pairing/identity-candidates`、`pairing/identity-selection`。
 - 任意 query、编码后的路径分隔符/点段、反斜杠、`..` 或 URL 字符串。
 
 匿名 exchange 请求必须是 `application/json`、具有唯一合法的 `Content-Length` 且正文不超过 16 KiB；chunked、空体、额外字段和未知协议版本会被拒绝。成功结构仍是 Protocol 1.0：
@@ -245,6 +245,8 @@ sequenceDiagram
 | GET | `/pairing/quest-identity-settings` | 200 | 读取脱敏的具身客户端、平台、Bot、主人和统一身份控制面状态；路径名为 1.0 兼容字段 |
 | POST | `/pairing/quest-identity-settings` | 200 | 保存 Quest 身份；有“序”时原子写入主人和摘要白名单，缺失时启用“临”本地精确绑定 |
 | GET | `/pairing/diagnostics` | 200 | 读取仅含阶段、错误类型、耗时和状态的脱敏诊断投影 |
+| GET | `/pairing/diagnostics-settings` | 200 | 读取三个诊断开关（独立日志写盘 / 钩子耗时采集 / 平台日志桥接）的当前值 |
+| POST | `/pairing/diagnostics-settings` | 200 | 原子持久化三个诊断开关并立即热更新运行时组件 |
 | GET | `/pairing/identity-candidates` | 200 | 通过“情”的版本化只读契约读取脱敏自然人候选 |
 | POST | `/pairing/identity-selection` | 200 | 持久化或清除 `relationship_person_id` |
 
