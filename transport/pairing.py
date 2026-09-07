@@ -17,6 +17,7 @@ from ..adapters.identity_control_plane import authenticated_principal_digest
 from ..core.pairing import (
     PAIRING_PROTOCOL_VERSION,
     PUBLIC_API_PATH,
+    normalize_pairing_exchange_url,
     PairingCreateRequest,
     PairingError,
     PairingExchangeRequest,
@@ -33,6 +34,7 @@ from ..core.diagnostic_labels import (
 )
 from ..core.operator_settings import OperatorSettingsError
 from ..core.plugin_identity import PLUGIN_ID, ROUTE_PREFIX
+from .builtin_listener import normalize_listener_public_url
 from ..core.persona_service import QuestPersonaServiceError
 from ..core.service_control import BridgeServiceControlError
 
@@ -130,6 +132,13 @@ class ServiceControlRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     enabled: bool
+
+
+class PublicUrlSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    pairing_listener_public_url: str = Field(default="", max_length=2048)
+    pairing_public_url: str = Field(default="", max_length=2048)
 
 
 class ListenerPortSettingsRequest(BaseModel):
@@ -287,6 +296,18 @@ class PairingHttpApi:
                 self.save_listener_port,
                 ["POST"],
                 "Persist and apply the built-in Quest listener port",
+            ),
+            (
+                "pairing/public-url-settings",
+                self.public_url_settings_overview,
+                ["GET"],
+                "Read the advertised public URLs for pairing",
+            ),
+            (
+                "pairing/public-url-settings",
+                self.save_public_url_settings,
+                ["POST"],
+                "Persist and apply the advertised public URLs",
             ),
             (
                 "pairing/operator-settings",
@@ -582,6 +603,97 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "service": service})
         except Exception as exc:
             return self._error(exc, "save_listener_port")
+
+    def _public_url_snapshot(self) -> dict[str, Any]:
+        from ..core.config_persistence import config_is_writable
+
+        config = self.operator_settings.config
+        return {
+            "pairing_listener_public_url": str(
+                config.get("pairing_listener_public_url", "") or ""
+            ),
+            "pairing_public_url": str(
+                config.get("pairing_public_url", "") or ""
+            ),
+            "config_writable": config_is_writable(config),
+        }
+
+    async def public_url_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {"success": True, "public_urls": self._public_url_snapshot()}
+            )
+        except Exception as exc:
+            return self._error(exc, "public_url_settings_overview")
+
+    async def save_public_url_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(PublicUrlSettingsRequest)
+            config = self.operator_settings.config
+            allow_private = bool(config.get("allow_private_http_pairing", False))
+            allow_remote = bool(config.get("allow_insecure_remote_http", False))
+            listener_raw = payload.pairing_listener_public_url.strip()
+            quest_raw = payload.pairing_public_url.strip()
+            # 空串 = 清除（快速绑定将处于未就绪，状态如实展示）。
+            listener_url = (
+                normalize_listener_public_url(
+                    listener_raw,
+                    allow_private_http=allow_private,
+                    allow_remote_http=allow_remote,
+                )
+                if listener_raw
+                else ""
+            )
+            quest_url = (
+                normalize_pairing_exchange_url(
+                    quest_raw,
+                    allow_private_http=allow_private,
+                    allow_remote_http=allow_remote,
+                )
+                if quest_raw
+                else ""
+            )
+            service = await self.service.set_public_urls(
+                listener_public_url=listener_url,
+                quest_public_url=quest_url,
+            )
+            # 与 save_listener_port 相同的 exchange URL 重配路径。
+            if quest_url:
+                self.pairing_defaults["public_url"] = quest_url
+            else:
+                self.pairing_defaults["public_url"] = ""
+            if self.listener.config.enabled:
+                if self.listener.ready and self.listener.public_exchange_url:
+                    self.manager.configure_exchange_url(
+                        self.listener.public_exchange_url,
+                        missing_reason="pairing_listener_public_url_missing",
+                    )
+                else:
+                    status = self.listener.status_snapshot()
+                    self.manager.configure_exchange_url(
+                        "",
+                        missing_reason=str(
+                            status.get("reason") or "listener_unavailable"
+                        ),
+                    )
+            self.diagnostic_log.record(
+                "public_url.settings_updated",
+                component="pairing",
+                status="ok",
+                listener_url_configured=bool(listener_url),
+                quest_url_configured=bool(quest_url),
+            )
+            return _json_no_store(
+                {
+                    "success": True,
+                    "service": service,
+                    "public_urls": self._public_url_snapshot(),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "save_public_url_settings")
 
     async def operator_settings_overview(self) -> Any:
         try:

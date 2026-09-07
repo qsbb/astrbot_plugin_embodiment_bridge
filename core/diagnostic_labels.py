@@ -166,6 +166,7 @@ EVENT_LABELS: dict[str, str] = {
     "quest_tool_filter.settings_updated": "工具过滤设置已更新并立即生效",
     "knowledge_environment.settings_updated": "知识与环境集成设置已更新并立即生效",
     "tts.settings_updated": "语音合成设置已更新并立即生效",
+    "public_url.settings_updated": "配对公网地址已更新并立即生效",
 }
 
 # ── 诊断环节 / 组件（原 app.js diagnosticStageLabel）──────────────────────

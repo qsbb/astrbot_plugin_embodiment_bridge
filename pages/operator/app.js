@@ -237,6 +237,57 @@ function renderIntegrations(integrations) {
   });
 }
 
+let publicUrlSettings = {};
+
+function renderPublicUrlSettings(urls) {
+  publicUrlSettings = urls || {};
+  const writable = publicUrlSettings.config_writable === true;
+  const listenerInput = document.getElementById("pairing-listener-public-url");
+  const questInput = document.getElementById("pairing-public-url");
+  const button = document.getElementById("save-public-url-button");
+  const status = document.getElementById("public-url-status");
+  if (!listenerInput || !questInput || !button || !status) return;
+  listenerInput.value = publicUrlSettings.pairing_listener_public_url || "";
+  questInput.value = publicUrlSettings.pairing_public_url || "";
+  listenerInput.disabled = !writable;
+  questInput.disabled = !writable;
+  button.disabled = !writable;
+  status.textContent = writable
+    ? (listenerInput.value && questInput.value
+        ? "已配置。修改后立即生效，保存前请确认客户端可达。"
+        : "未完整配置——这是快速绑定未就绪的最常见原因。")
+    : "当前 AstrBot 配置对象不支持安全保存。";
+}
+
+async function loadPublicUrlSettings() {
+  const response = await apiGet("pairing/public-url-settings");
+  renderPublicUrlSettings(response.public_urls);
+}
+
+async function savePublicUrlSettings() {
+  const button = document.getElementById("save-public-url-button");
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/public-url-settings",
+    payload: () => ({
+      pairing_listener_public_url:
+        (document.getElementById("pairing-listener-public-url") || {}).value || "",
+      pairing_public_url:
+        (document.getElementById("pairing-public-url") || {}).value || ""
+    }),
+    okToast: "配对地址已保存并立即生效",
+    errorToast: "配对地址保存失败：",
+    onOk: (response) => {
+      renderPublicUrlSettings(response.public_urls);
+      if (response.service) renderServiceStatus(response.service);
+    },
+    onFinally: () => {
+      button.disabled = publicUrlSettings?.config_writable !== true;
+    },
+  });
+}
+
 function renderServiceStatus(service) {
   serviceState = service || {};
   const enabled = serviceState.enabled === true;
@@ -2816,6 +2867,9 @@ function bindEvents() {
   document
     .getElementById("save-listener-port-button")
     .addEventListener("click", saveListenerPort);
+  document
+    .getElementById("save-public-url-button")
+    .addEventListener("click", savePublicUrlSettings);
   document.getElementById("chat-provider-id").addEventListener("change", (event) => {
     document.getElementById("save-model-button").disabled =
       !event.currentTarget.value;
@@ -3061,6 +3115,7 @@ const INITIAL_DATA_SECTIONS = [
   { key: "persona-library", label: "具身人格库", load: loadPersonaProfiles },
   { key: "quest-identity", label: "Quest 身份", load: loadQuestIdentitySettings },
   { key: "diagnostics", label: "诊断开关", load: loadDiagnosticsSettings },
+  { key: "public-url", label: "配对地址", load: loadPublicUrlSettings },
   { key: "quick-pairing", label: "快速绑定", load: loadQuickPairingStatus }
 ];
 
@@ -3077,6 +3132,7 @@ function markInitialSectionFailed(key) {
     persona: ["persona-status", "实时人格读取失败，可单独重试。"],
     "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"],
     diagnostics: ["diagnostics-settings-status", "诊断开关读取失败，可单独重试。"],
+    "public-url": ["public-url-status", "配对地址读取失败，可单独重试。"],
     "quick-pairing": ["quick-pairing-status", "快速绑定状态读取失败，可单独重试。"]
   };
   const target = messages[key];

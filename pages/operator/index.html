@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.4.0-5" />
+  <link rel="stylesheet" href="./style.css?v=1.4.0-6" />
 </head>
 <body>
   <main class="shell">
@@ -496,6 +496,19 @@
       </div>
 
       <div id="settings-group-runtime" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-runtime" data-settings-group="runtime">
+      <section class="setting-panel" aria-labelledby="public-url-title">
+        <span class="section-label">配对地址</span>
+        <h2 id="public-url-title">公网访问地址</h2>
+        <p>具身客户端访问本服务使用的地址。「快速绑定未就绪」最常见的原因就是这里没有配置。保存后立即生效，无需重启。</p>
+        <label for="pairing-listener-public-url">监听器公网地址</label>
+        <input id="pairing-listener-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520" />
+        <p class="field-help">客户端可达的监听器地址；私网 HTTP 需先在配置文件显式开启对应安全开关。</p>
+        <label for="pairing-public-url">临桥服务公网地址</label>
+        <input id="pairing-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520/…/astrbot_plugin_embodiment_bridge" />
+        <p id="public-url-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-public-url-button" class="primary" type="button" aria-busy="false" disabled>保存配对地址</button>
+      </section>
+
       <section class="setting-panel integrations-panel" aria-labelledby="integrations-title">
         <span class="section-label">系列集成</span>
         <h2 id="integrations-title">系列插件集成状态</h2>
@@ -590,6 +603,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.4.0-5"></script>
+  <script type="module" src="./app.js?v=1.4.0-6"></script>
 </body>
 </html>

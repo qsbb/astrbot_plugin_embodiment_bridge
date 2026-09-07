@@ -314,6 +314,26 @@ class BridgeServiceControl:
     async def _persist(self, enabled: bool) -> None:
         await self._persist_changes({"bridge_service_enabled": enabled})
 
+    async def set_public_urls(
+        self,
+        *,
+        listener_public_url: str,
+        quest_public_url: str,
+    ) -> dict[str, Any]:
+        """持久化两个公网地址并热更新监听器公告 URL（B9）。
+
+        入参必须是已归一化的 URL 或空串（校验在 transport 层完成）。
+        """
+        async with self._lock:
+            await self._persist_changes(
+                {
+                    "pairing_listener_public_url": listener_public_url,
+                    "pairing_public_url": quest_public_url,
+                }
+            )
+            self.listener.configure_public_url(listener_public_url)
+            return await self.status_snapshot()
+
     async def _persist_changes(self, changes: dict[str, Any]) -> None:
         if not config_is_writable(self.config):
             raise BridgeServiceControlError(

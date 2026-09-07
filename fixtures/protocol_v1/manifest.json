@@ -407,6 +407,18 @@
       "path": "/pairing/tts-settings",
       "success_status": 200,
       "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/public-url-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/public-url-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
     }
   ],
   "enums": {

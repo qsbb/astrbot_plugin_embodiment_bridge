@@ -1874,3 +1874,81 @@ def test_trusted_proxy_source_header_binds_exchange_to_quest_ip(
                 assert exchanged.status == 200
 
     asyncio.run(scenario())
+
+
+def test_public_url_settings_validate_persist_and_hot_apply(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    """B9：配对公网地址端点的鉴权、校验、持久化与热更新。"""
+
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                # 未认证 401
+                unauth = await client.get(server.url("/pairing/public-url-settings"))
+                assert unauth.status == 401
+
+                # GET 快照（默认空）
+                got = await client.get(
+                    server.url("/pairing/public-url-settings"), headers=PAGE_AUTH
+                )
+                assert got.status == 200
+                snapshot = (await got.json())["public_urls"]
+                assert snapshot["config_writable"] is True
+
+                # 校验：缺 scheme / 带认证信息 422
+                for bad in ("example.com:8520", "https://user:pass@example.com/"):
+                    rejected = await client.post(
+                        server.url("/pairing/public-url-settings"),
+                        headers=PAGE_AUTH,
+                        json={
+                            "pairing_listener_public_url": bad,
+                            "pairing_public_url": "",
+                        },
+                    )
+                    assert rejected.status == 422, bad
+
+                # 合法 https 保存：持久化 + 监听器公告地址热更新
+                saved = await client.post(
+                    server.url("/pairing/public-url-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "pairing_listener_public_url": "https://bridge.example.com:8520",
+                        "pairing_public_url": (
+                            "https://bridge.example.com:8520"
+                            "/api/v1/plugins/extensions/astrbot_plugin_embodiment_bridge"
+                        ),
+                    },
+                )
+                assert saved.status == 200
+                body = await saved.json()
+                assert body["public_urls"]["pairing_listener_public_url"].startswith(
+                    "https://bridge.example.com:8520"
+                )
+                assert bundle.plugin.config["pairing_listener_public_url"].startswith(
+                    "https://bridge.example.com"
+                )
+                assert bundle.plugin.config["pairing_public_url"].startswith(
+                    "https://bridge.example.com"
+                )
+                # 热更新：监听器公告地址已换（不要求 listener 处于 ready）
+                assert bundle.plugin.pairing_listener.config.public_exchange_url.startswith(
+                    "https://bridge.example.com"
+                )
+
+                # 空串清除
+                cleared = await client.post(
+                    server.url("/pairing/public-url-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "pairing_listener_public_url": "",
+                        "pairing_public_url": "",
+                    },
+                )
+                assert cleared.status == 200
+                assert bundle.plugin.config["pairing_listener_public_url"] == ""
+                assert bundle.plugin.pairing_listener.config.public_exchange_url == ""
+
+    asyncio.run(scenario())

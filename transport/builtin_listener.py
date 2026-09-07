@@ -335,6 +335,19 @@ class BuiltinQuestListener:
         self._bound_port = normalized
         self._reason = "disabled" if not self.config.enabled else "not_started"
 
+    def configure_public_url(self, public_exchange_url: str) -> None:
+        """运行时更新对外公告地址（只影响配对载荷里的 URL，不需要重绑端口）。"""
+        normalized = str(public_exchange_url or "")
+        self.config = replace(
+            self.config,
+            public_exchange_url=normalized,
+            public_url_reason=(
+                "" if normalized else "pairing_listener_public_url_missing"
+            ),
+        )
+        if not normalized:
+            self._reason = "pairing_listener_public_url_missing"
+
     async def start(self) -> None:
         started = asyncio.get_running_loop().time()
         async with self._lifecycle_lock:
