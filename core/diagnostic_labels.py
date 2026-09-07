@@ -32,6 +32,7 @@ REASON_LABELS: dict[str, str] = {
     "quest_enriched_pipeline_timeout": "临专属链路处理超时",
     "quest_enriched_pipeline_unavailable": "临专属链路不可用",
     "chat_provider_not_configured": "尚未选择临的聊天 Provider",
+    "MEMBERS_DEGRADED": "部分成员未就绪",
     "astrbot_pipeline_not_woken": "AstrBot 消息事件未通过唤醒规则",
     "astrbot_pipeline_reply_capture_empty": "AstrBot 已执行发送，但回复捕获为空",
     "stt_empty": "没有识别到有效语音",
@@ -351,6 +352,9 @@ INTEGRATION_STATUS_LABELS: dict[str, str] = {
     "adapter_unavailable": "适配器不可用",
     "degraded": "需检查",
     "unknown": "未知",
+    "ready_for_authorization": "已配置，待授权",
+    "authorization_gated": "等待授权",
+    "not_configured": "未配置",
 }
 
 # ── 诊断日志状态（原 app.js loadDiagnostics 内联表）───────────────────────
