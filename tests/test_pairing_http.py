@@ -1461,6 +1461,131 @@ def test_diagnostics_settings_are_dashboard_protected_and_apply_immediately(
     asyncio.run(scenario())
 
 
+def test_tts_settings_are_dashboard_protected_strict_and_apply_immediately(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    async def scenario() -> None:
+        bundle = build_plugin(monkeypatch, tmp_path)
+        async with LiveHttpServer(bundle) as server:
+            async with ClientSession() as client:
+                denied = await client.get(server.url("/pairing/tts-settings"))
+                assert denied.status == 401
+                assert (await denied.json())["data"]["code"] == (
+                    "astrbot_auth_required"
+                )
+
+                api_key_denied = await client.get(
+                    server.url("/pairing/tts-settings"),
+                    headers=AUTH_HEADERS,
+                )
+                assert api_key_denied.status == 401
+                assert (await api_key_denied.json())["data"]["code"] == (
+                    "astrbot_dashboard_auth_required"
+                )
+
+                overview = await client.get(
+                    server.url("/pairing/tts-settings"),
+                    headers=PAGE_AUTH,
+                )
+                assert overview.status == 200
+                snapshot = (await overview.json())["tts"]
+                assert snapshot == {
+                    "enable_voice_hub_tts": True,
+                    "enable_astrbot_tts": False,
+                    "tts_timeout_seconds": 60.0,
+                    "max_tts_audio_seconds": 120,
+                    "voice_hub_available": False,
+                    "voice_hub_status": "provider_unavailable",
+                    "astrbot_tts_available": False,
+                    "active_source": "none",
+                    "config_writable": True,
+                }
+
+                saved = await client.post(
+                    server.url("/pairing/tts-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "enable_voice_hub_tts": True,
+                        "enable_astrbot_tts": True,
+                        "tts_timeout_seconds": 30.0,
+                        "max_tts_audio_seconds": 45,
+                    },
+                )
+                assert saved.status == 200
+                saved_body = (await saved.json())["tts"]
+                assert saved_body["enable_voice_hub_tts"] is True
+                assert saved_body["enable_astrbot_tts"] is True
+                assert saved_body["tts_timeout_seconds"] == 30.0
+                assert saved_body["max_tts_audio_seconds"] == 45
+                plugin = bundle.plugin
+                assert plugin.config["enable_voice_hub_tts"] is True
+                assert plugin.config["enable_astrbot_tts"] is True
+                assert plugin.config["tts_timeout_seconds"] == 30.0
+                assert plugin.config["max_tts_audio_seconds"] == 45
+                # 热更新：两个 TTS 适配器运行时属性立即改写。
+                assert plugin.voice_hub_tts.enabled is True
+                assert plugin.voice_hub_tts.max_output_bytes == 24_000 * 2 * 45
+                assert plugin.astrbot_tts.enabled is True
+                assert plugin.astrbot_tts.timeout_seconds == 30.0
+                assert plugin.astrbot_tts.max_output_bytes == 24_000 * 2 * 45
+
+                disabled = await client.post(
+                    server.url("/pairing/tts-settings"),
+                    headers=PAGE_AUTH,
+                    json={
+                        "enable_voice_hub_tts": False,
+                        "enable_astrbot_tts": False,
+                        "tts_timeout_seconds": 60,
+                        "max_tts_audio_seconds": 120,
+                    },
+                )
+                assert disabled.status == 200
+                assert plugin.voice_hub_tts.enabled is False
+                assert plugin.voice_hub_tts.status == "disabled"
+                assert plugin.astrbot_tts.enabled is False
+
+                for body in (
+                    {
+                        "enable_voice_hub_tts": "yes",
+                        "enable_astrbot_tts": False,
+                        "tts_timeout_seconds": 60.0,
+                        "max_tts_audio_seconds": 120,
+                    },
+                    {
+                        "enable_voice_hub_tts": True,
+                        "enable_astrbot_tts": False,
+                        "tts_timeout_seconds": 0.5,
+                        "max_tts_audio_seconds": 120,
+                    },
+                    {
+                        "enable_voice_hub_tts": True,
+                        "enable_astrbot_tts": False,
+                        "tts_timeout_seconds": 60.0,
+                        "max_tts_audio_seconds": 301,
+                    },
+                    {
+                        "enable_voice_hub_tts": True,
+                        "enable_astrbot_tts": False,
+                        "tts_timeout_seconds": 60.0,
+                        "max_tts_audio_seconds": 120,
+                        "unexpected": True,
+                    },
+                ):
+                    rejected = await client.post(
+                        server.url("/pairing/tts-settings"),
+                        headers=PAGE_AUTH,
+                        json=body,
+                    )
+                    assert rejected.status == 422
+                    assert (await rejected.json())["data"]["code"] == (
+                        "schema_validation_failed"
+                    )
+                assert plugin.astrbot_tts.enabled is False
+
+    asyncio.run(scenario())
+
+
 def test_diagnostics_projection_is_dashboard_protected_and_redacted(
     monkeypatch: Any,
     tmp_path: Any,

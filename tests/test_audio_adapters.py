@@ -15,6 +15,9 @@ from astrbot_plugin_embodiment_bridge.adapters.stt import (
     AstrBotSTTAdapter,
 )
 from astrbot_plugin_embodiment_bridge.adapters.tts import AstrBotTTSAdapter
+from astrbot_plugin_embodiment_bridge.adapters.voice_hub_tts import (
+    VoiceHubTTSAdapter,
+)
 
 
 class ProviderContext:
@@ -370,3 +373,47 @@ def test_astrbot_tts_adapter_rejects_invalid_or_oversized_wav(
             ]
 
     asyncio.run(scenario())
+
+
+class _QuietLogger:
+    def info(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def warning(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+def test_tts_adapters_configure_hot_updates_runtime_state(tmp_path: Path) -> None:
+    # operator 语音合成面板的热更新路径：保存后直接调用 configure() 改写
+    # 运行时属性，下一次合成即生效，无需重启插件。
+    provider = FileTTSProvider(tmp_path / "a.wav")
+    astrbot = AstrBotTTSAdapter(
+        ProviderContext(tts=provider),
+        enabled=False,
+        timeout_seconds=60.0,
+        max_audio_seconds=120,
+    )
+    assert astrbot.available is False
+
+    astrbot.configure(enabled=True, timeout_seconds=30.0, max_audio_seconds=45)
+    assert astrbot.enabled is True
+    assert astrbot.timeout_seconds == 30.0
+    assert astrbot.max_output_bytes == 24_000 * 2 * 45
+    assert astrbot.available is True
+
+    astrbot.configure(timeout_seconds=0.2)
+    assert astrbot.timeout_seconds == 1.0
+
+    voice = VoiceHubTTSAdapter(ProviderContext(), _QuietLogger(), enabled=True)
+    assert voice.available is False
+    assert voice.status == "provider_unavailable"
+
+    voice.configure(enabled=False, max_audio_seconds=30)
+    assert voice.enabled is False
+    assert voice.status == "disabled"
+    assert voice.max_output_bytes == 24_000 * 2 * 30
+
+    voice.configure(enabled=True, timeout_seconds=999.0)
+    assert voice.enabled is True
+    assert voice.status == "enabled"
+    assert voice.timeout_seconds == 180.0

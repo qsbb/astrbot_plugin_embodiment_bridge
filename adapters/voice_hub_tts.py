@@ -46,6 +46,25 @@ class VoiceHubTTSAdapter:
         self._missing_logged = False
         self._incompatible_logged = False
 
+    def configure(
+        self,
+        *,
+        enabled: bool | None = None,
+        timeout_seconds: float | None = None,
+        max_audio_seconds: int | None = None,
+    ) -> None:
+        # 热更新入口：operator 设置保存后直接改写运行时属性；状态行在下一次
+        # available 探测时重新评估。
+        if enabled is not None:
+            self.enabled = bool(enabled)
+            self.status = "enabled" if self.enabled else "disabled"
+        if timeout_seconds is not None:
+            self.timeout_seconds = min(max(float(timeout_seconds), 1.0), 180.0)
+        if max_audio_seconds is not None:
+            self.max_output_bytes = (
+                OUTPUT_SAMPLE_RATE * OUTPUT_CHANNELS * 2 * max(1, int(max_audio_seconds))
+            )
+
     @property
     def available(self) -> bool:
         if self._closed or not self.enabled:

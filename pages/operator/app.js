@@ -2,6 +2,7 @@ let bridge = null;
 let operatorSettings = null;
 let fastActionSettings = null;
 let sttSettings = null;
+let ttsSettings = null;
 let personaSettings = null;
 let platformSettings = null;
 let questIdentitySettings = null;
@@ -564,6 +565,53 @@ function renderSttSettings(settings) {
     : "当前 AstrBot 配置对象不支持安全保存。";
 }
 
+// ---------------------------------------------------------------------------
+// 语音合成（TTS）：两个开关（「声」优先 / AstrBot TTS 总开关）+ 高级折叠区
+// 两个数值（合成超时 / 单轮时长上限）。保存后由后端立即热更新两个 TTS
+// 适配器；「声」未安装时自动回退 AstrBot TTS。
+// ---------------------------------------------------------------------------
+
+function ttsStatusMessage(settings) {
+  const voiceHubOn = settings.enable_voice_hub_tts === true;
+  const astrbotOn = settings.enable_astrbot_tts === true;
+  const source = String(settings.active_source || "none");
+  if (source === "voice_hub") return "正在优先使用「声」语音输出。";
+  if (source === "astrbot") return voiceHubOn
+    ? "「声」当前不可用，已自动回退 AstrBot TTS。"
+    : "正在使用 AstrBot TTS。";
+  if (!voiceHubOn && !astrbotOn) return "语音合成已关闭；回复仅下发文字。";
+  if (voiceHubOn && !astrbotOn) {
+    return "「声」未安装或不可用，且 AstrBot TTS 已关闭；语音输出暂不可用。";
+  }
+  return "「声」与 AstrBot TTS 当前均不可用；语音输出暂不可用。";
+}
+
+function renderTtsSettings(settings) {
+  ttsSettings = settings || {};
+  const voiceHubSwitch = document.getElementById("voice-hub-tts-enabled");
+  const astrbotSwitch = document.getElementById("astrbot-tts-enabled");
+  const timeoutInput = document.getElementById("tts-timeout-seconds");
+  const maxAudioInput = document.getElementById("tts-max-audio-seconds");
+  const button = document.getElementById("save-tts-button");
+  const status = document.getElementById("tts-status");
+  if (!voiceHubSwitch || !astrbotSwitch || !timeoutInput || !maxAudioInput ||
+    !button || !status) return;
+  const writable = ttsSettings.config_writable === true;
+  voiceHubSwitch.checked = ttsSettings.enable_voice_hub_tts === true;
+  astrbotSwitch.checked = ttsSettings.enable_astrbot_tts === true;
+  if (document.activeElement !== timeoutInput) {
+    timeoutInput.value = String(Number(ttsSettings.tts_timeout_seconds ?? 60));
+  }
+  if (document.activeElement !== maxAudioInput) {
+    maxAudioInput.value = String(Number(ttsSettings.max_tts_audio_seconds ?? 120));
+  }
+  [voiceHubSwitch, astrbotSwitch, timeoutInput, maxAudioInput, button]
+    .forEach((node) => { node.disabled = !writable; });
+  status.textContent = writable
+    ? ttsStatusMessage(ttsSettings)
+    : "当前 AstrBot 配置对象不支持安全保存。";
+}
+
 function renderPlatformSettings(platform) {
   platformSettings = platform || {};
   const select = document.getElementById("trusted-platform-id");
@@ -681,6 +729,12 @@ async function loadFastActionSettings() {
 async function loadSttSettings() {
   const response = await apiGet("pairing/stt-settings");
   renderSttSettings(response.stt);
+  return true;
+}
+
+async function loadTtsSettings() {
+  const response = await apiGet("pairing/tts-settings");
+  renderTtsSettings(response.tts);
   return true;
 }
 
@@ -1952,6 +2006,39 @@ async function saveSttSettings() {
   });
 }
 
+async function saveTtsSettings() {
+  const button = document.getElementById("save-tts-button");
+  const timeoutSeconds = Number(document.getElementById("tts-timeout-seconds").value);
+  const maxAudioSeconds = Number(
+    document.getElementById("tts-max-audio-seconds").value
+  );
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 120) {
+    toast("单次合成超时必须在 1 到 120 秒之间", true);
+    return;
+  }
+  if (!Number.isInteger(maxAudioSeconds) || maxAudioSeconds < 5 || maxAudioSeconds > 300) {
+    toast("单轮语音最长必须在 5 到 300 秒之间（整数）", true);
+    return;
+  }
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/tts-settings",
+    payload: () => ({
+      enable_voice_hub_tts: document.getElementById("voice-hub-tts-enabled").checked,
+      enable_astrbot_tts: document.getElementById("astrbot-tts-enabled").checked,
+      tts_timeout_seconds: timeoutSeconds,
+      max_tts_audio_seconds: maxAudioSeconds
+    }),
+    okToast: "语音合成设置已保存并立即生效",
+    errorToast: "语音合成保存失败：",
+    onOk: (response) => renderTtsSettings(response.tts),
+    onFinally: () => {
+      button.disabled = ttsSettings?.config_writable !== true;
+    },
+  });
+}
+
 async function savePlatformSettings() {
   const button = document.getElementById("save-platform-button");
   await saveSection({
@@ -2554,6 +2641,9 @@ function bindEvents() {
     .getElementById("save-stt-button")
     .addEventListener("click", saveSttSettings);
   document
+    .getElementById("save-tts-button")
+    .addEventListener("click", saveTtsSettings);
+  document
     .getElementById("save-platform-button")
     .addEventListener("click", savePlatformSettings);
   document
@@ -2741,6 +2831,7 @@ const INITIAL_DATA_SECTIONS = [
   { key: "quest-chain", label: "对话链路", load: loadQuestChainSettings },
   { key: "fast-action", label: "快速动作", load: loadFastActionSettings },
   { key: "stt", label: "语音识别", load: loadSttSettings },
+  { key: "tts", label: "语音合成", load: loadTtsSettings },
   { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
   { key: "persona", label: "实时人格", load: loadPersonaSettings },
   { key: "persona-library", label: "具身人格库", load: loadPersonaProfiles },
@@ -2755,6 +2846,7 @@ function markInitialSectionFailed(key) {
     "quest-chain": ["quest-chain-status", "对话链路设置读取失败，可单独重试。"],
     "fast-action": ["fast-action-status", "快速动作设置读取失败，可单独重试。"],
     stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
+    tts: ["tts-status", "语音合成设置读取失败，可单独重试。"],
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],
     persona: ["persona-status", "实时人格读取失败，可单独重试。"],
     "quest-identity": ["quest-identity-status", "Quest 身份读取失败，可单独重试。"],

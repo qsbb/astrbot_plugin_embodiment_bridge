@@ -161,6 +161,7 @@ EVENT_LABELS: dict[str, str] = {
     "plugin_hook_profiler.scan": "插件钩子扫描完成",
     "plugin_hook.completed": "插件钩子执行完成",
     "diagnostics.settings_updated": "诊断开关已更新并立即生效",
+    "tts.settings_updated": "语音合成设置已更新并立即生效",
 }
 
 # ── 诊断环节 / 组件（原 app.js diagnosticStageLabel）──────────────────────
