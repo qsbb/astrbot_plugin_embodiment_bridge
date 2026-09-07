@@ -1420,6 +1420,9 @@ def test_diagnostics_projection_is_dashboard_protected_and_redacted(
                 assert body["diagnostics"]["root_cause"] == {
                     "stage": "llm",
                     "code": "llm_failed",
+                    # 里程碑 3 起根因随下发附加中文 label（加法字段）。
+                    "stage_label": "模型生成",
+                    "reason_label": "模型生成失败",
                 }
                 bundle.plugin.diagnostic_log.record(
                     "llm.completed",

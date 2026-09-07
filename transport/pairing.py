@@ -25,6 +25,12 @@ from ..core.pairing import (
     PairingRevokeRequest,
     PairingStatusRequest,
 )
+from ..core.diagnostic_labels import (
+    diagnostics_status_label,
+    enrich_diagnostic_event,
+    reason_label,
+    stage_label,
+)
 from ..core.operator_settings import OperatorSettingsError
 from ..core.plugin_identity import PLUGIN_ID, ROUTE_PREFIX
 from ..core.persona_service import QuestPersonaServiceError
@@ -858,55 +864,57 @@ class PairingHttpApi:
                     continue
                 details = event.get("details")
                 details = details if isinstance(details, dict) else {}
-                projected.append(
-                    {
-                        "timestamp": str(event.get("timestamp") or "")[:40],
-                        "event": str(event.get("code") or "")[:80],
-                        "component": str(details.get("component") or "")[:64],
-                        "code": str(details.get("code") or "")[:80],
-                        "reason_code": str(details.get("reason_code") or "")[:80],
-                        "error_type": str(details.get("error_type") or "")[:80],
-                        "phase": str(details.get("phase") or "")[:48],
-                        "operation": str(details.get("operation") or "")[:48],
-                        "duration_ms": details.get("duration_ms"),
-                        "http_status": details.get("http_status"),
-                        "status": str(details.get("status") or "")[:32],
-                        "bytes": details.get("bytes"),
-                        "chunks": details.get("chunks"),
-                        "event_count": details.get("event_count"),
-                        "queue_depth": details.get("queue_depth"),
-                        "plugin_name": str(details.get("plugin_name") or "")[:96],
-                        "plugin_module": str(details.get("plugin_module") or "")[:96],
-                        "hook": str(details.get("hook") or "")[:64],
-                        "method": str(details.get("method") or "")[:96],
-                        "priority": details.get("priority"),
-                        "stopped": details.get("stopped"),
-                        "authorized": details.get("authorized"),
-                        "text_sent": details.get("text_sent"),
-                        "audio_sent": details.get("audio_sent"),
-                        # Detailed timing spans (safe, bounded integers only).
-                        "span_name": str(details.get("span_name") or "")[:80],
-                        "span_kind": str(details.get("span_kind") or "")[:48],
-                        "wall_ms": details.get("wall_ms"),
-                        "active_ms": details.get("active_ms"),
-                        "start_offset_ms": details.get("start_offset_ms"),
-                        "end_offset_ms": details.get("end_offset_ms"),
-                        "queue_wait_ms": details.get("queue_wait_ms"),
-                        "lock_wait_ms": details.get("lock_wait_ms"),
-                        "provider_wait_ms": details.get("provider_wait_ms"),
-                        "provider_first_token_ms": details.get("provider_first_token_ms"),
-                        "provider_total_ms": details.get("provider_total_ms"),
-                        "provider_request_offset_ms": details.get("provider_request_offset_ms"),
-                        "provider_first_token_offset_ms": details.get("provider_first_token_offset_ms"),
-                        "provider_end_offset_ms": details.get("provider_end_offset_ms"),
-                        "event_loop_lag_ms": details.get("event_loop_lag_ms"),
-                        "cache_hit": details.get("cache_hit"),
-                        "retry_count": details.get("retry_count"),
-                        "timeout": details.get("timeout"),
-                        "fallback": details.get("fallback"),
-                        "trace_id": str(details.get("trace_id") or "")[:40],
-                    }
-                )
+                item: dict[str, Any] = {
+                    "timestamp": str(event.get("timestamp") or "")[:40],
+                    "event": str(event.get("code") or "")[:80],
+                    "component": str(details.get("component") or "")[:64],
+                    "code": str(details.get("code") or "")[:80],
+                    "reason_code": str(details.get("reason_code") or "")[:80],
+                    "error_type": str(details.get("error_type") or "")[:80],
+                    "phase": str(details.get("phase") or "")[:48],
+                    "operation": str(details.get("operation") or "")[:48],
+                    "duration_ms": details.get("duration_ms"),
+                    "http_status": details.get("http_status"),
+                    "status": str(details.get("status") or "")[:32],
+                    "bytes": details.get("bytes"),
+                    "chunks": details.get("chunks"),
+                    "event_count": details.get("event_count"),
+                    "queue_depth": details.get("queue_depth"),
+                    "plugin_name": str(details.get("plugin_name") or "")[:96],
+                    "plugin_module": str(details.get("plugin_module") or "")[:96],
+                    "hook": str(details.get("hook") or "")[:64],
+                    "method": str(details.get("method") or "")[:96],
+                    "priority": details.get("priority"),
+                    "stopped": details.get("stopped"),
+                    "authorized": details.get("authorized"),
+                    "text_sent": details.get("text_sent"),
+                    "audio_sent": details.get("audio_sent"),
+                    # Detailed timing spans (safe, bounded integers only).
+                    "span_name": str(details.get("span_name") or "")[:80],
+                    "span_kind": str(details.get("span_kind") or "")[:48],
+                    "wall_ms": details.get("wall_ms"),
+                    "active_ms": details.get("active_ms"),
+                    "start_offset_ms": details.get("start_offset_ms"),
+                    "end_offset_ms": details.get("end_offset_ms"),
+                    "queue_wait_ms": details.get("queue_wait_ms"),
+                    "lock_wait_ms": details.get("lock_wait_ms"),
+                    "provider_wait_ms": details.get("provider_wait_ms"),
+                    "provider_first_token_ms": details.get("provider_first_token_ms"),
+                    "provider_total_ms": details.get("provider_total_ms"),
+                    "provider_request_offset_ms": details.get("provider_request_offset_ms"),
+                    "provider_first_token_offset_ms": details.get("provider_first_token_offset_ms"),
+                    "provider_end_offset_ms": details.get("provider_end_offset_ms"),
+                    "event_loop_lag_ms": details.get("event_loop_lag_ms"),
+                    "cache_hit": details.get("cache_hit"),
+                    "retry_count": details.get("retry_count"),
+                    "timeout": details.get("timeout"),
+                    "fallback": details.get("fallback"),
+                    "trace_id": str(details.get("trace_id") or "")[:40],
+                }
+                # 加法 enrich：附加中文 label 字段（不改变任何既有键），
+                # 前端直接渲染 label，码值字段保留用于兼容与排查。
+                enrich_diagnostic_event(item)
+                projected.append(item)
             root_cause = {"stage": "", "code": ""}
             failure_statuses = {
                 "blocked",
@@ -928,11 +936,17 @@ class PairingHttpApi:
                     }
                 elif status in success_statuses and stage == root_cause["stage"]:
                     root_cause = {"stage": "", "code": ""}
+            diagnostics_status = str(snapshot.get("status") or "unavailable")[:32]
+            if root_cause["code"]:
+                # 加法 enrich：根因附中文 label，stage/code 字段保持不变。
+                root_cause["stage_label"] = stage_label(root_cause["stage"])
+                root_cause["reason_label"] = reason_label(root_cause["code"])
             return _json_no_store(
                 {
                     "success": True,
                     "diagnostics": {
-                        "status": str(snapshot.get("status") or "unavailable")[:32],
+                        "status": diagnostics_status,
+                        "status_label": diagnostics_status_label(diagnostics_status),
                         "reason": str(snapshot.get("reason") or "")[:48],
                         "root_cause": root_cause,
                         "events": projected,

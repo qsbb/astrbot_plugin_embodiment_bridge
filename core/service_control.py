@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config_persistence import config_is_writable, save_config_changes
+from .diagnostic_labels import service_reason_label, service_status_label
 
 
 class BridgeServiceUnavailable(RuntimeError):
@@ -95,6 +96,9 @@ class BridgeServiceControl:
             "ready": status == "running",
             "status": status,
             "reason": reason,
+            # 加法 label 字段（向后兼容）：operator 页直接渲染，码值保留。
+            "status_label": service_status_label(status),
+            "reason_label": service_reason_label(reason),
             "listener": {
                 "configured": listener.get("enabled") is True,
                 "ready": listener.get("ready") is True,

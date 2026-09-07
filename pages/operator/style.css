@@ -49,6 +49,7 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
 .state-dot { width: 9px; height: 9px; border-radius: 50%; background: #d3a84a; }
 .runtime-state.ready .state-dot { background: #55d7aa; }
 .runtime-state.error .state-dot { background: #df6d69; }
+.runtime-state.warning .state-dot { background: #d3a84a; }
 .service-console {
   display: grid;
   gap: 22px;
@@ -84,7 +85,9 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   font-weight: 800;
 }
 .status-badge.running { border-color: #346f5c; color: #8ce4c4; background: #162b25; }
+.status-badge.ready { border-color: #346f5c; color: #8ce4c4; background: #162b25; }
 .status-badge.stopped { border-color: #73423f; color: #f1a09a; background: #2c1b1a; }
+.status-badge.loading { border-color: #4a5754; color: #b9cbc5; background: #1c2624; }
 .service-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid #2c3d3b; }
 .metric-item { display: grid; gap: 4px; padding: 16px 18px 0; }
 .metric-item + .metric-item { border-left: 1px solid #2c3d3b; }

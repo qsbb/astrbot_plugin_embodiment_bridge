@@ -17,6 +17,11 @@ from ..adapters.persona_converter import (
     PersonaConversionError,
     PersonaConverter,
 )
+from .diagnostic_labels import (
+    conversion_job_status_label,
+    persona_conversion_stage_label,
+    reason_label,
+)
 from .persona_profiles import (
     PersonaConversion,
     PersonaProfile,
@@ -946,14 +951,19 @@ class QuestPersonaService:
             "job_id": job.job_id,
             "status": job.status,
             "stage": job.stage,
+            # 加法 label 字段（向后兼容）：operator 页直接渲染阶段中文文案。
+            "status_label": conversion_job_status_label(job.status),
+            "stage_label": persona_conversion_stage_label(job.stage),
             "source_type": job.source_kind,
             "elapsed_ms": max(0, round((ended - started) * 1000)),
         }
         if job.status == "completed" and job.result is not None:
             payload["result"] = job.result
         elif job.status == "failed":
+            error_code = job.error_code or "persona_conversion_failed"
             payload["error"] = {
-                "code": job.error_code or "persona_conversion_failed",
+                "code": error_code,
+                "label": reason_label(error_code),
                 "message": job.error_message or "人格转换失败，请查看下方独立日志",
             }
         return payload

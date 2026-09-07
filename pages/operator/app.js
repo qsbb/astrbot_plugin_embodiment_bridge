@@ -89,6 +89,7 @@ function setRuntimeState(kind, label) {
   const node = document.querySelector(".runtime-state");
   node.classList.toggle("ready", kind === "ready");
   node.classList.toggle("error", kind === "error");
+  node.classList.toggle("warning", kind === "warning");
   document.getElementById("runtime-label").textContent = label;
 }
 
@@ -116,22 +117,61 @@ function setButtonBusy(button, busy, busyText) {
   return true;
 }
 
-function serviceReasonLabel(reason) {
-  const labels = {
-    ready: "服务运行正常",
-    service_disabled: "服务已由管理员关闭",
-    disabled: "内置 8520 监听尚未启用",
-    not_started: "监听器尚未启动",
-    bind_failed: "监听端口绑定失败",
-    start_failed: "监听器启动失败",
-    invalid_enabled: "监听开关配置无效",
-    invalid_bind_host: "监听地址配置无效",
-    invalid_port: "监听端口配置无效",
-    invalid_upstream_url: "AstrBot 回环上游配置无效",
-    listener_unavailable: "内置监听器不可用",
-    pairing_listener_public_url_missing: "服务已运行，但尚未配置客户端可达地址"
-  };
-  return labels[String(reason || "")] || "服务状态需要检查";
+// 表驱动保存助手：统一 busy 态 / 错误提示 / finally 复位，各分区只提供
+// endpoint、payload 与差异化回调（协议字段名保持既有形态，见各 payload()）。
+async function saveSection({
+  button,
+  busyText,
+  endpoint,
+  payload,
+  okToast,
+  errorToast,
+  onOk,
+  onError,
+  onFinally,
+}) {
+  if (!setButtonBusy(button, true, busyText ?? button.textContent)) return;
+  try {
+    const response = await apiPost(endpoint, payload());
+    if (onOk) await onOk(response);
+    const message = typeof okToast === "function" ? okToast(response) : okToast;
+    if (message) toast(message);
+  } catch (error) {
+    if (onError) {
+      onError(error);
+    } else {
+      const prefix = typeof errorToast === "function"
+        ? errorToast(error)
+        : errorToast ?? "保存失败：";
+      toast(prefix + error.message, true);
+    }
+  } finally {
+    setButtonBusy(button, false);
+    if (onFinally) onFinally();
+  }
+}
+
+// 同构下拉渲染：占位项 + 可选项 + “已配置但不可用”兜底项 + 选中与禁用。
+function fillSelect(select, {
+  items,
+  selected = "",
+  emptyLabel,
+  itemLabel = (item) => String(item?.id || ""),
+  itemValue = (item) => String(item?.id || ""),
+  missingLabel = (id) => "已配置但当前不可用 · " + id,
+  disabled = false,
+}) {
+  select.replaceChildren(new Option(emptyLabel, ""));
+  items.forEach((item) => {
+    const value = itemValue(item);
+    if (!value) return;
+    select.add(new Option(itemLabel(item), value));
+  });
+  if (selected && !items.some((item) => itemValue(item) === selected)) {
+    select.add(new Option(missingLabel(selected), selected));
+  }
+  select.value = selected;
+  select.disabled = disabled;
 }
 
 function renderCapability(name, available, enabled) {
@@ -151,16 +191,11 @@ function renderServiceStatus(service) {
   const enabled = serviceState.enabled === true;
   const status = String(serviceState.status || "degraded");
   const badge = document.getElementById("service-status-badge");
-  const statusLabels = {
-    running: "运行中",
-    stopped: "已关闭",
-    degraded: "需检查"
-  };
-  badge.textContent = statusLabels[status] || "未知";
+  badge.textContent = serviceState.status_label || "未知";
   badge.className = "status-badge " + status;
 
   document.getElementById("service-summary").textContent =
-    serviceReasonLabel(serviceState.reason);
+    serviceState.reason_label || "服务状态需要检查";
   const listener = serviceState.listener || {};
   const listenerConfigured = listener.configured === true;
   const bindHost = String(listener.bind_host || "");
@@ -285,28 +320,18 @@ function renderOperatorSettings(settings) {
   const providers = Array.isArray(operatorSettings.providers)
     ? operatorSettings.providers
     : [];
-  select.replaceChildren();
   if (!providers.length) {
-    select.add(new Option("没有可用的决策 / 回退 Provider", ""));
+    select.replaceChildren(new Option("没有可用的决策 / 回退 Provider", ""));
     select.disabled = true;
   } else {
-    select.add(new Option("请选择决策 / 回退模型", ""));
-    providers.forEach((provider) => {
-      select.add(new Option(providerLabel(provider), provider.id));
+    fillSelect(select, {
+      items: providers,
+      selected: operatorSettings.selected_id || "",
+      emptyLabel: "请选择决策 / 回退模型",
+      itemLabel: providerLabel,
+      missingLabel: (id) => "已配置但不可用 · " + id,
+      disabled: operatorSettings.config_writable !== true,
     });
-    if (
-      operatorSettings.selected_id &&
-      !providers.some((provider) => provider.id === operatorSettings.selected_id)
-    ) {
-      select.add(
-        new Option(
-          "已配置但不可用 · " + operatorSettings.selected_id,
-          operatorSettings.selected_id
-        )
-      );
-    }
-    select.value = operatorSettings.selected_id || "";
-    select.disabled = operatorSettings.config_writable !== true;
   }
 
   const status = document.getElementById("model-status");
@@ -375,29 +400,31 @@ async function loadQuestChainSettings() {
 async function saveQuestChainSettings() {
   const button = document.getElementById("save-quest-chain-button");
   if (!button || button.disabled) return;
-  button.disabled = true;
-  button.setAttribute("aria-busy", "true");
-  try {
-    const numberValue = (id) => {
-      const node = document.getElementById(id);
-      const value = node ? Number(node.value) : NaN;
-      return Number.isFinite(value) ? value : null;
-    };
-    const response = await apiPost("pairing/quest-chain-settings", {
-      per_hook_budget_seconds: numberValue("quest-chain-per-hook"),
-      total_hook_budget_seconds: numberValue("quest-chain-total-hook"),
-      llm_timeout_seconds: numberValue("quest-chain-llm-timeout"),
-      memory_cache_ttl_seconds: numberValue("quest-chain-cache-ttl"),
-      excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || ""
-    });
-    renderQuestChainSettings(response.quest_chain);
-    toast("已保存：临专属链路参数");
-  } catch (error) {
-    toast(error.message || "保存链路模式失败", true);
-  } finally {
-    button.setAttribute("aria-busy", "false");
-    button.disabled = questChainSettings?.config_writable !== true;
-  }
+  await saveSection({
+    button,
+    // 保持既有交互：busy 期间不替换按钮文案。
+    endpoint: "pairing/quest-chain-settings",
+    payload: () => {
+      const numberValue = (id) => {
+        const node = document.getElementById(id);
+        const value = node ? Number(node.value) : NaN;
+        return Number.isFinite(value) ? value : null;
+      };
+      return {
+        per_hook_budget_seconds: numberValue("quest-chain-per-hook"),
+        total_hook_budget_seconds: numberValue("quest-chain-total-hook"),
+        llm_timeout_seconds: numberValue("quest-chain-llm-timeout"),
+        memory_cache_ttl_seconds: numberValue("quest-chain-cache-ttl"),
+        excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || ""
+      };
+    },
+    okToast: "已保存：临专属链路参数",
+    onOk: (response) => renderQuestChainSettings(response.quest_chain),
+    onError: (error) => toast(error.message || "保存链路模式失败", true),
+    onFinally: () => {
+      button.disabled = questChainSettings?.config_writable !== true;
+    },
+  });
 }
 
 function renderFastActionSettings(settings) {
@@ -417,16 +444,13 @@ function renderFastActionSettings(settings) {
 
   checkbox.checked = enabled;
   checkbox.disabled = !writable;
-  select.replaceChildren(new Option("请选择快速动作模型", ""));
-  providers.forEach((provider) => {
-    const id = String(provider?.id || "");
-    if (id) select.add(new Option(providerLabel(provider), id));
+  fillSelect(select, {
+    items: providers,
+    selected,
+    emptyLabel: "请选择快速动作模型",
+    itemLabel: providerLabel,
+    disabled: !writable || !providers.length,
   });
-  if (selected && !providers.some((provider) => String(provider?.id || "") === selected)) {
-    select.add(new Option("已配置但当前不可用 · " + selected, selected));
-  }
-  select.value = selected;
-  select.disabled = !writable || !providers.length;
   const effectiveTimeout = Number(fastActionSettings.effective_timeout_seconds);
   const timeoutValue = fastActionTimeoutInputValue(fastActionSettings);
   if (document.activeElement !== timeoutInput) timeoutInput.value = String(timeoutValue);
@@ -467,26 +491,27 @@ function fastActionTimeoutInputValue(settings) {
 
 async function saveFastActionSettings() {
   const button = document.getElementById("save-fast-action-button");
-  if (!setButtonBusy(button, true, "正在保存…")) return;
-  try {
-    const enabled = document.getElementById("fast-action-enabled").checked;
-    const providerId = document.getElementById("fast-action-provider-id").value;
-    const timeoutSeconds = Number(document.getElementById("fast-action-timeout-seconds").value);
-    const response = await apiPost("pairing/fast-action-settings", {
-      enabled,
-      provider_id: providerId,
-      timeout_seconds: timeoutSeconds
-    });
-    renderFastActionSettings(response.fast_action);
-    toast(enabled
+  const enabled = document.getElementById("fast-action-enabled").checked;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/fast-action-settings",
+    payload: () => {
+      const providerId = document.getElementById("fast-action-provider-id").value;
+      const timeoutSeconds = Number(document.getElementById("fast-action-timeout-seconds").value);
+      return {
+        enabled,
+        provider_id: providerId,
+        timeout_seconds: timeoutSeconds
+      };
+    },
+    okToast: () => enabled
       ? "异步快速动作已启用"
-      : "异步快速动作已关闭，动作将走主回复链路");
-  } catch (error) {
-    toast("快速动作设置保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    renderFastActionSettings(fastActionSettings || {});
-  }
+      : "异步快速动作已关闭，动作将走主回复链路",
+    errorToast: "快速动作设置保存失败：",
+    onOk: (response) => renderFastActionSettings(response.fast_action),
+    onFinally: () => renderFastActionSettings(fastActionSettings || {}),
+  });
 }
 
 
@@ -513,15 +538,13 @@ function renderSttSettings(settings) {
     : [];
   const selected = String(sttSettings.selected_id || "");
   const writable = sttSettings.config_writable === true;
-  select.replaceChildren(new Option("关闭 Quest 语音识别", ""));
-  providers.forEach((provider) => {
-    select.add(new Option(sttProviderLabel(provider), provider.id));
+  fillSelect(select, {
+    items: providers,
+    selected,
+    emptyLabel: "关闭 Quest 语音识别",
+    itemLabel: sttProviderLabel,
+    disabled: !writable,
   });
-  if (selected && !providers.some((provider) => provider.id === selected)) {
-    select.add(new Option("已配置但当前不可用 · " + selected, selected));
-  }
-  select.value = selected;
-  select.disabled = !writable;
   button.disabled = !writable;
 
   const messages = {
@@ -548,21 +571,21 @@ function renderPlatformSettings(platform) {
   const platforms = Array.isArray(platformSettings.platforms)
     ? platformSettings.platforms
     : [];
-  select.replaceChildren(new Option("不使用正式消息平台", ""));
-  platforms.forEach((item) => {
-    const id = String(item?.id || "");
-    const displayName = String(item?.display_name || item?.adapter_type || id);
-    const adapterType = String(item?.adapter_type || "");
-    const label = displayName === adapterType
-      ? displayName + " · " + id
-      : displayName + " · " + adapterType + " · " + id;
-    select.add(new Option(label, id));
+  fillSelect(select, {
+    items: platforms,
+    selected,
+    emptyLabel: "不使用正式消息平台",
+    itemLabel: (item) => {
+      const id = String(item?.id || "");
+      const displayName = String(item?.display_name || item?.adapter_type || id);
+      const adapterType = String(item?.adapter_type || "");
+      return displayName === adapterType
+        ? displayName + " · " + id
+        : displayName + " · " + adapterType + " · " + id;
+    },
+    missingLabel: (id) => "已配置但不可用 · " + id,
+    disabled: platformSettings.config_writable !== true || !platforms.length,
   });
-  if (selected && !platforms.some((item) => String(item?.id || "") === selected)) {
-    select.add(new Option("已配置但不可用 · " + selected, selected));
-  }
-  select.value = selected;
-  select.disabled = platformSettings.config_writable !== true || !platforms.length;
   button.disabled = select.disabled;
 
   const messages = {
@@ -593,21 +616,18 @@ function renderPersonaSettings(persona) {
   const personas = Array.isArray(personaSettings.personas)
     ? personaSettings.personas
     : [];
-  personaSelect.replaceChildren(new Option("AstrBot 明确默认人格", ""));
-  personas.forEach((item) => {
-    personaSelect.add(new Option(String(item.id || ""), String(item.id || "")));
-  });
   const selectedPersona = String(personaSettings.persona_selected
     ? personaSettings.astrbot_persona_id || ""
     : "");
-  if (
-    selectedPersona &&
-    !personas.some((item) => String(item.id || "") === selectedPersona)
-  ) {
-    personaSelect.add(new Option("已选择但不可用", selectedPersona));
-  }
-  personaSelect.value = selectedPersona;
-  personaSelect.disabled = !writable || sourceMode !== "astrbot";
+  fillSelect(personaSelect, {
+    items: personas,
+    selected: selectedPersona,
+    emptyLabel: "AstrBot 明确默认人格",
+    itemLabel: (item) => String(item.id || ""),
+    itemValue: (item) => String(item.id || ""),
+    missingLabel: () => "已选择但不可用",
+    disabled: !writable || sourceMode !== "astrbot",
+  });
 
   const fields = {
     "character-name": personaSettings.character_name,
@@ -690,19 +710,19 @@ function populatePersonaConverterProviders(catalog) {
   const select = document.getElementById("persona-converter-provider");
   const providers = safeArray(catalog.providers);
   const selected = String(catalog.persona_converter_provider_id || "");
-  select.replaceChildren(new Option("请选择转换模型", ""));
-  providers.forEach((provider) => {
-    const id = String(provider?.id || "");
-    if (!id) return;
-    const model = String(provider?.model || "未标注模型");
-    const adapter = String(provider?.adapter_type || "未知适配器");
-    select.add(new Option(`${model} · ${adapter} · ${id}`, id));
+  fillSelect(select, {
+    items: providers,
+    selected,
+    emptyLabel: "请选择转换模型",
+    itemLabel: (provider) => {
+      const id = String(provider?.id || "");
+      const model = String(provider?.model || "未标注模型");
+      const adapter = String(provider?.adapter_type || "未知适配器");
+      return `${model} · ${adapter} · ${id}`;
+    },
+    missingLabel: () => "已配置但当前不可用",
+    disabled: catalog.config_writable === false || providers.length === 0,
   });
-  if (selected && !providers.some((provider) => String(provider?.id || "") === selected)) {
-    select.add(new Option("已配置但当前不可用", selected));
-  }
-  select.value = selected;
-  select.disabled = catalog.config_writable === false || providers.length === 0;
   document.getElementById("save-persona-converter-provider").disabled =
     select.disabled || !select.value || select.value === selected;
 }
@@ -715,17 +735,21 @@ function populatePersonaImportSources(catalog) {
       ? safeArray(catalog.source_personas)
       : safeArray(personaSettings?.personas);
   const current = select.value;
-  select.replaceChildren(new Option("请选择 AstrBot 来源人格", ""));
-  sources.forEach((persona) => {
-    const id = String(persona?.id || persona?.persona_id || "");
-    if (!id) return;
-    const name = String(persona?.display_name || persona?.name || id);
-    select.add(new Option(name === id ? id : `${name} · ${id}`, id));
+  const personaId = (persona) => String(persona?.id || persona?.persona_id || "");
+  fillSelect(select, {
+    items: sources,
+    selected: current && sources.some((persona) => personaId(persona) === current)
+      ? current
+      : "",
+    emptyLabel: "请选择 AstrBot 来源人格",
+    itemLabel: (persona) => {
+      const id = personaId(persona);
+      const name = String(persona?.display_name || persona?.name || id);
+      return name === id ? id : `${name} · ${id}`;
+    },
+    itemValue: personaId,
+    disabled: catalog.config_writable === false || sources.length === 0,
   });
-  if (current && sources.some((persona) =>
-    String(persona?.id || persona?.persona_id || "") === current
-  )) select.value = current;
-  select.disabled = catalog.config_writable === false || sources.length === 0;
 }
 
 function appendReportItems(listId, values) {
@@ -1051,27 +1075,29 @@ async function loadPersonaProfiles() {
 async function savePersonaConverterProvider() {
   const button = document.getElementById("save-persona-converter-provider");
   const providerId = document.getElementById("persona-converter-provider").value;
-  if (!providerId || !setButtonBusy(button, true, "正在保存…")) return;
-  try {
-    const response = await apiPost("pairing/persona-converter-settings", {
-      persona_converter_provider_id: providerId
-    });
-    if (response.library) renderPersonaProfiles(response.library);
-    else if (personaProfiles) {
-      personaProfiles.persona_converter_provider_id = providerId;
-      personaProfiles.converter_provider_id = providerId;
-      personaProfiles.converter_selected_available = true;
-    }
-    toast("人格转换模型已保存");
-  } catch (error) {
-    toast("转换模型保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = !document.getElementById("persona-converter-provider").value ||
-      document.getElementById("persona-converter-provider").value ===
-        String(personaProfiles?.persona_converter_provider_id || "");
-    updatePersonaEditorActions();
-  }
+  if (!providerId) return;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/persona-converter-settings",
+    payload: () => ({ persona_converter_provider_id: providerId }),
+    onOk: (response) => {
+      if (response.library) renderPersonaProfiles(response.library);
+      else if (personaProfiles) {
+        personaProfiles.persona_converter_provider_id = providerId;
+        personaProfiles.converter_provider_id = providerId;
+        personaProfiles.converter_selected_available = true;
+      }
+    },
+    okToast: "人格转换模型已保存",
+    errorToast: "转换模型保存失败：",
+    onFinally: () => {
+      button.disabled = !document.getElementById("persona-converter-provider").value ||
+        document.getElementById("persona-converter-provider").value ===
+          String(personaProfiles?.persona_converter_provider_id || "");
+      updatePersonaEditorActions();
+    },
+  });
 }
 
 function applyPersonaConversionResult(response) {
@@ -1135,6 +1161,9 @@ async function convertPersona() {
   personaConversionJobSnapshot = {
     status: "queued",
     stage: "accepted",
+    // 首个轮询返回前的本地占位；后续快照一律以后端 label 字段为准。
+    status_label: "排队中",
+    stage_label: "任务已受理",
     elapsed_ms: 0
   };
   setPersonaConversionLocked(true);
@@ -1236,24 +1265,6 @@ function restorePersonaConversionEditor(context) {
   }
 }
 
-function personaConversionStageLabel(stage) {
-  const labels = {
-    accepted: "任务已受理",
-    source_lookup: "正在读取来源人格",
-    source_ready: "来源人格读取完成",
-    provider_wait: "正在等待转换模型首个流块",
-    provider_first_chunk: "转换模型已开始响应",
-    provider_streaming: "转换模型正在持续生成",
-    provider_response: "模型生成已返回",
-    response_validation: "正在校验转换结果结构",
-    response_validated: "转换结果结构校验完成",
-    preview_ready: "转换预览已就绪",
-    failed: "转换失败",
-    cancelled: "转换已取消"
-  };
-  return labels[String(stage || "")] || "正在处理转换任务";
-}
-
 function isPersonaConversionJobFinished(status) {
   return ["completed", "failed", "cancelled"].includes(String(status || ""));
 }
@@ -1263,7 +1274,7 @@ function personaConversionErrorMessage(job) {
   return String(
     job?.error_message ||
     job?.error?.message ||
-    (code ? diagnosticReasonLabel(code) : "") ||
+    (code ? job?.error?.label || String(code) : "") ||
     "后台转换任务失败"
   );
 }
@@ -1304,10 +1315,14 @@ function renderPersonaConversionJob(job) {
   const progress = document.getElementById("persona-conversion-progress");
   const convertButton = document.getElementById("convert-persona-button");
   const cancelButton = document.getElementById("cancel-persona-conversion-button");
-  const stage = personaConversionStageLabel(job?.stage);
+  const stage = String(
+    job?.stage_label || job?.stage || "正在处理转换任务"
+  );
   personaConversionJobSnapshot = {
     status,
     stage: String(job?.stage || "accepted"),
+    status_label: String(job?.status_label || ""),
+    stage_label: String(job?.stage_label || ""),
     elapsed_ms: Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
   };
   progress.hidden = false;
@@ -1804,37 +1819,42 @@ async function loadQuickPairingStatus() {
 
 async function saveQuestIdentitySettings() {
   const button = document.getElementById("save-quest-identity-button");
-  if (!setButtonBusy(button, true, "正在保存并验证…")) return;
   const apiKeyInput = document.getElementById("quest-api-key");
-  const apiKey = apiKeyInput.value;
-  try {
-    const response = await apiPost("pairing/quest-identity-settings", {
+  await saveSection({
+    button,
+    busyText: "正在保存并验证…",
+    endpoint: "pairing/quest-identity-settings",
+    payload: () => ({
       client_id: document.getElementById("quest-client-id").value,
       platform_id: document.getElementById("trusted-platform-id").value,
       bot_id: document.getElementById("quest-bot-id").value,
       user_id: document.getElementById("quest-user-id").value,
-      api_key: apiKey
-    });
-    renderQuestIdentitySettings(response.identity);
-    await loadPlatformSettings();
-    toast(response.identity.control_plane?.source === "identity_guardian"
-      ? "Quest 身份已保存到“序”并验证"
-      : "Quest 身份已保存到“临”的本地精确绑定");
-  } catch (error) {
-    toast("Quest 身份保存失败：" + error.message, true);
-  } finally {
-    apiKeyInput.value = "";
-    setButtonBusy(button, false);
-    button.disabled = questIdentitySettings?.config_writable !== true;
-  }
+      api_key: apiKeyInput.value
+    }),
+    onOk: async (response) => {
+      renderQuestIdentitySettings(response.identity);
+      await loadPlatformSettings();
+    },
+    okToast: (response) =>
+      response.identity.control_plane?.source === "identity_guardian"
+        ? "Quest 身份已保存到“序”并验证"
+        : "Quest 身份已保存到“临”的本地精确绑定",
+    errorToast: "Quest 身份保存失败：",
+    onFinally: () => {
+      apiKeyInput.value = "";
+      button.disabled = questIdentitySettings?.config_writable !== true;
+    },
+  });
 }
 
 async function savePersonaSettings() {
   const button = document.getElementById("save-persona-button");
-  if (!setButtonBusy(button, true, "正在保存…")) return;
   let sourceSaved = false;
-  try {
-    const response = await apiPost("pairing/persona-settings", {
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/persona-settings",
+    payload: () => ({
       persona_source_mode: document.getElementById("persona-source-mode").value,
       astrbot_persona_id: document.getElementById("astrbot-persona-id").value,
       character_name: document.getElementById("character-name").value,
@@ -1847,76 +1867,81 @@ async function savePersonaSettings() {
       character_user_relationship: document.getElementById(
         "character-user-relationship"
       ).value
-    });
-    renderPersonaSettings(response.persona);
-    sourceSaved = true;
-    await loadPersonaProfiles();
-    toast("实时人格来源已保存并启用");
-  } catch (error) {
-    toast(
-      sourceSaved
-        ? "实时人格来源已启用，但状态刷新失败：" + error.message
-        : "角色身份保存失败：" + error.message,
-      true
-    );
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = personaSettings?.config_writable !== true;
-  }
+    }),
+    onOk: async (response) => {
+      renderPersonaSettings(response.persona);
+      sourceSaved = true;
+      await loadPersonaProfiles();
+    },
+    okToast: "实时人格来源已保存并启用",
+    onError: (error) => {
+      toast(
+        sourceSaved
+          ? "实时人格来源已启用，但状态刷新失败：" + error.message
+          : "角色身份保存失败：" + error.message,
+        true
+      );
+    },
+    onFinally: () => {
+      button.disabled = personaSettings?.config_writable !== true;
+    },
+  });
 }
 
 async function saveModelSelection() {
   const button = document.getElementById("save-model-button");
   const selected = document.getElementById("chat-provider-id").value;
-  if (!selected || !setButtonBusy(button, true, "正在保存…")) return;
-  try {
-    const response = await apiPost("pairing/operator-settings", {
-      chat_provider_id: selected
-    });
-    renderOperatorSettings(response.settings);
-    toast("临直连与交互决策模型已保存并立即生效");
-  } catch (error) {
-    toast("模型保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = !document.getElementById("chat-provider-id").value;
-  }
+  if (!selected) return;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/operator-settings",
+    payload: () => ({ chat_provider_id: selected }),
+    okToast: "临直连与交互决策模型已保存并立即生效",
+    errorToast: "模型保存失败：",
+    onOk: (response) => renderOperatorSettings(response.settings),
+    onFinally: () => {
+      button.disabled = !document.getElementById("chat-provider-id").value;
+    },
+  });
 }
 
 async function saveSttSettings() {
   const button = document.getElementById("save-stt-button");
-  if (!setButtonBusy(button, true, "正在保存…")) return;
-  try {
-    const response = await apiPost("pairing/stt-settings", {
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/stt-settings",
+    payload: () => ({
       provider_id: document.getElementById("stt-provider-id").value
-    });
-    renderSttSettings(response.stt);
-    toast(response.stt?.selected_id
+    }),
+    okToast: (response) => response.stt?.selected_id
       ? "语音识别 Provider 已保存并立即生效"
-      : "Quest 语音识别已关闭");
-  } catch (error) {
-    toast("语音识别保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = sttSettings?.config_writable !== true;
-  }
+      : "Quest 语音识别已关闭",
+    errorToast: "语音识别保存失败：",
+    onOk: (response) => renderSttSettings(response.stt),
+    onFinally: () => {
+      button.disabled = sttSettings?.config_writable !== true;
+    },
+  });
 }
 
 async function savePlatformSettings() {
   const button = document.getElementById("save-platform-button");
-  if (!setButtonBusy(button, true, "\u6b63\u5728\u4fdd\u5b58\u2026")) return;
-  try {
-    const response = await apiPost("pairing/platform-settings", {
+  await saveSection({
+    button,
+    busyText: "\u6b63\u5728\u4fdd\u5b58\u2026",
+    endpoint: "pairing/platform-settings",
+    payload: () => ({
       trusted_platform_id: document.getElementById("trusted-platform-id").value
-    });
-    renderPlatformSettings(response.platform);
-    toast("\u5e73\u53f0\u5df2\u4fdd\u5b58\u5e76\u7acb\u5373\u751f\u6548");
-  } catch (error) {
-    toast("\u5e73\u53f0\u4fdd\u5b58\u5931\u8d25\uff1a" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = document.getElementById("trusted-platform-id").disabled;
-  }
+    }),
+    okToast: "\u5e73\u53f0\u5df2\u4fdd\u5b58\u5e76\u7acb\u5373\u751f\u6548",
+    errorToast: "\u5e73\u53f0\u4fdd\u5b58\u5931\u8d25\uff1a",
+    onOk: (response) => renderPlatformSettings(response.platform),
+    onFinally: () => {
+      button.disabled = document.getElementById("trusted-platform-id").disabled;
+    },
+  });
 }
 
 function identityUnavailableMessage(status) {
@@ -1995,303 +2020,27 @@ async function loadIdentityCandidates() {
 async function saveIdentitySelection() {
   const button = document.getElementById("save-identity-button");
   const personId = document.getElementById("relationship-person-select").value;
-  if (!setButtonBusy(button, true, "正在保存…")) return;
-  try {
-    const response = await apiPost("pairing/identity-selection", {
-      person_id: personId
-    });
-    renderOperatorSettings(response.settings);
-    toast(personId
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/identity-selection",
+    payload: () => ({ person_id: personId }),
+    okToast: () => personId
       ? "自然人与正式消息身份已同步"
-      : "已关闭“情”的关系上下文；Quest 基础对话身份保持不变");
-  } catch (error) {
-    toast("自然人保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-    button.disabled = document.getElementById(
-      "relationship-person-select"
-    ).disabled;
-  }
+      : "已关闭“情”的关系上下文；Quest 基础对话身份保持不变",
+    errorToast: "自然人保存失败：",
+    onOk: (response) => renderOperatorSettings(response.settings),
+    onFinally: () => {
+      button.disabled = document.getElementById(
+        "relationship-person-select"
+      ).disabled;
+    },
+  });
 }
 
-function diagnosticReasonLabel(code) {
-  const labels = {
-    owner_not_configured: "“序”尚未为这组 Quest 原始身份配置主人",
-    quest_identity_not_allowlisted: "Quest 原始身份不在“序”的允许列表",
-    local_identity_not_configured: "“临”的本地 Quest 身份尚未配置完整",
-    local_api_principal_mismatch: "Quest 使用的 AstrBot API Key 与本地绑定不一致",
-    local_quest_identity_mismatch: "具身客户端、平台、Bot 或主人用户与本地绑定不一致",
-    invalid_user_id: "Quest 用户 ID 无效或仍是占位值",
-    missing_user_id: "Quest 用户 ID 缺失",
-    invalid_bot_id: "Quest Bot ID 无效",
-    missing_bot_id: "Quest Bot ID 缺失",
-    client_id_mismatch: "具身客户端 ID 与服务端配置不一致",
-    trusted_platform_not_configured: "尚未配置可进入 EventBus 的 AstrBot 平台",
-    trusted_platform_unavailable: "已配置的 AstrBot 平台当前不可用",
-    astrbot_event_api_unavailable: "当前 AstrBot 不提供消息事件接口",
-    astrbot_message_pipeline_unavailable: "AstrBot 消息链路不可用",
-    astrbot_pipeline_reply_required_missing: "AstrBot 消息链未生成本轮明确要求的文字回复",
-    astrbot_pipeline_timeout: "AstrBot 消息链处理超时",
-    astrbot_pipeline_empty_reply: "AstrBot 消息链没有返回可用内容",
-    astrbot_pipeline_event_stopped: "AstrBot 消息事件已由插件接管，但未留下可用正文",
-    astrbot_pipeline_not_woken: "AstrBot 消息事件未通过唤醒规则",
-    astrbot_pipeline_reply_capture_empty: "AstrBot 已执行发送，但回复捕获为空",
-    stt_empty: "没有识别到有效语音",
-    stt_unavailable: "语音识别服务未配置",
-    stt_failed: "语音识别失败",
-    llm_failed: "模型生成失败",
-    tts_failed: "语音合成失败，文字回复仍可能可用",
-    audio_upload_backpressure: "音频上传速度跟不上录音",
-    audio_http_request_failed: "音频上传请求失败",
-    turn_failed: "对话生成失败",
-    interaction_failed: "触碰交互决策失败",
-    fast_action_disabled: "异步快速动作已关闭",
-    fast_action_provider_not_configured: "尚未选择快速动作模型",
-    fast_action_selected_missing: "已选快速动作模型当前不可用",
-    fast_action_provider_catalog_unavailable: "快速动作模型目录当前不可用",
-    fast_action_timeout: "快速动作模型等待超时，将尝试保守的本地动作兜底",
-    fast_action_invalid_output: "快速动作模型返回了不符合动作协议的内容",
-    fast_action_failed: "快速动作决策失败，普通回复不受影响",
-    fast_action_enabled: "已由独立快速动作模型处理",
-    fast_action_selected: "快速动作已先于主回复选定",
-    autonomous_greeting: "根据明确的问候或告别选择自然挥手",
-    autonomous_introduction: "根据自我介绍语境选择自然挥手",
-    autonomous_appreciation: "根据感谢或道歉语境选择轻微鞠躬",
-    autonomous_agreement: "根据明确赞同语境选择自然点头",
-    autonomous_celebration: "根据明确庆祝语境选择自然抬手",
-    autonomous_gesture_cooldown: "短时间内已做过相同自主动作，本轮保持待机",
-    reply_path_selected: "主回复链路已先选定动作",
-    conversion_timeout: "人格转换模型等待超时",
-    conversion_first_chunk_timeout: "人格转换模型首个流块等待超时",
-    conversion_stream_idle_timeout: "人格转换模型输出流长时间无新数据",
-    conversion_stream_unsupported: "所选模型 Provider 不支持流式人格转换",
-    conversion_response_too_large: "人格转换模型返回内容过大",
-    conversion_provider_failed: "人格转换模型调用失败",
-    conversion_response_invalid: "人格转换结果无法解析",
-    conversion_schema_invalid: "人格转换结果结构不符合要求",
-    conversion_schema_unsupported: "人格转换结果版本不受支持",
-    persona_conversion_failed: "人格转换任务失败",
-    conversion_job_in_progress: "已有其他人格转换正在运行",
-    conversion_job_not_found: "人格转换任务不存在或已经过期",
-    response_first_event_timeout: "后端接收后没有返回首个事件",
-    response_event_stall_timeout: "后端事件流在回复结束前停滞",
-    ready: "链路就绪"
-  };
-  return labels[String(code || "")] || String(code || "未发现明确错误码");
-}
-
-function diagnosticStageLabel(value) {
-  const labels = {
-    configuration: "配置",
-    authorization: "身份授权",
-    identity: "身份授权",
-    session: "会话",
-    health: "健康检查",
-    sse: "实时事件",
-    transport: "HTTP 传输",
-    audio_input: "音频上传",
-    audio_upload: "音频上传",
-    microphone: "麦克风",
-    stt: "语音识别",
-    message_pipeline: "AstrBot/EventBus",
-    action: "角色动作",
-    eventbus: "AstrBot/EventBus",
-    llm: "模型生成",
-    tts: "语音合成",
-    reply: "回复交付",
-    turn: "对话轮次",
-    audio_playback: "音频播放",
-    interrupt: "打断",
-    persona: "人格转换",
-    persona_conversion: "人格转换",
-    persona_source: "人格来源读取",
-    persona_model: "人格模型生成",
-    persona_validation: "人格结构校验"
-  };
-  return labels[String(value || "")] || String(value || "运行链路");
-}
-
-function diagnosticEventLabel(value) {
-  const labels = {
-    "session.authorization": "完成身份授权检查",
-    "session.authorization_error": "身份授权检查异常",
-    "session.started": "会话已建立",
-    "sse.connected": "SSE 已连接",
-    "sse.disconnected": "SSE 已断开",
-    "turn.accepted": "后端已接收轮次",
-    "audio.received": "音频上传完成",
-    "stt.started": "开始语音识别",
-    "stt.completed": "语音识别完成",
-    "stt.error": "语音识别失败",
-    "message_pipeline.selected": "选择回复链路",
-    "message_pipeline.started": "进入 AstrBot EventBus",
-    "message_pipeline.completed": "AstrBot EventBus 返回",
-    "message_pipeline.blocked": "AstrBot EventBus 被阻止",
-    "message_pipeline.fallback": "消息链路发生降级",
-    "message_pipeline.stopped_after_fast_action": "EventBus 已完成动作轮但没有正文",
-    "message_pipeline.required_reply_missing": "EventBus 缺少明确要求的文字回复",
-    "fast_action.started": "快速动作模型开始判断",
-    "fast_action.provider_resolved": "快速动作模型已定位",
-    "fast_action.request_queued": "快速动作请求已发出",
-    "fast_action.first_chunk": "快速动作模型首个流块已到达",
-    "fast_action.provider_completed": "快速动作模型生成完成",
-    "fast_action.parsed": "快速动作结果解析完成",
-    "fast_action.parsed_no_action": "快速动作模型决定本轮不做动作",
-    "fast_action.parse_invalid": "快速动作结果格式无效",
-    "fast_action.timeout": "快速动作模型等待超时",
-    "fast_action.provider_error": "快速动作模型调用失败",
-    "fast_action.provider_unavailable": "快速动作模型当前不可用",
-    "fast_action.local_fallback_selected": "已选择保守的本地自主动作",
-    "fast_action.explicit_selected": "明确动作命令已立即选定",
-    "fast_action.explicit_rejected": "不安全或歧义动作命令已拒绝",
-    "fast_action.completed": "快速动作判断完成",
-    "fast_action.cancelled": "EventBus 已选动作，快速动作模型已取消",
-    "fast_action.skipped": "快速动作已回退或跳过",
-    "fast_action.error": "快速动作判断失败",
-    "fast_action.settings_updated": "快速动作设置已更新",
-    "avatar.action.eventbus_outcome": "EventBus 动作工具结果",
-    "avatar.action.main_delivery_parallel": "正文与动作并行交付",
-    "avatar.action.reply_wait_for_arbitration": "回复结束前等待动作仲裁",
-    "avatar.action.arbitration_winner": "动作仲裁胜者已确定",
-    "avatar.intent.emitted": "动作意图已下发",
-    "avatar.intent.dropped": "动作意图未下发",
-    reply_text_first_emitted: "首个文字事件已下发",
-    reply_audio_first_emitted: "首个音频事件已下发",
-    "audio.upload.completed": "音频上传汇总完成",
-    "avatar.action.tool_skipped": "主回复动作工具已切换",
-    "avatar.action.tool_superseded": "主回复动作工具已被快速动作替代",
-    "avatar.intent.skipped": "重复动作意图已抑制",
-    "llm.completed": "模型生成完成",
-    "llm.error": "模型生成失败",
-    "tts.completed": "语音合成完成",
-    "tts.error": "语音合成失败",
-    "persona.convert.started": "开始转换具身人格",
-    "persona.convert.completed": "具身人格预览转换完成",
-    "persona.convert.failed": "具身人格转换失败",
-    "persona.convert.job.queued": "人格转换后台任务已排队",
-    "persona.convert.job.cancelled": "人格转换后台任务已取消",
-    "persona.convert.cancelled": "人格转换后台任务已取消",
-    "persona.convert.source.started": "开始读取人格来源",
-    "persona.convert.source.completed": "人格来源读取完成",
-    "persona.convert.model.started": "转换模型开始生成",
-    "persona.convert.model.first_chunk": "转换模型首个流块已到达",
-    "persona.convert.model.streaming": "转换模型正在持续生成",
-    "persona.convert.model.completed": "转换模型生成完成",
-    "persona.convert.validation.started": "开始校验转换结果结构",
-    "persona.convert.validation.completed": "转换结果结构校验完成",
-    "persona.convert.draft.created": "转换预览草稿已就绪",
-    "persona.convert.progress": "人格转换任务实时进度",
-    "persona.save.started": "开始保存具身人格",
-    "persona.save.completed": "具身人格文件保存完成",
-    "persona.save.failed": "具身人格保存失败",
-    "persona.activate.started": "开始切换当前具身人格",
-    "persona.activate.completed": "当前具身人格切换完成",
-    "persona.activate.failed": "具身人格切换失败",
-    "persona.overlay.injected": "具身人格已注入 Quest 对话",
-    "persona.overlay.skipped": "本轮未注入具身人格",
-    "reply.completed": "回复交付完成",
-    "reply.failed": "回复交付失败",
-    "http.health": "健康检查完成",
-    "http.error": "HTTP 请求失败",
-    "plugin_hook_profiler.scan": "插件钩子扫描完成",
-    "plugin_hook.completed": "插件钩子执行完成"
-  };
-  return labels[String(value || "")] || String(value || "诊断事件");
-}
-
-function diagnosticStatusLabel(value) {
-  const labels = {
-    ok: "正常",
-    ready: "就绪",
-    authorized: "已授权",
-    connected: "已连接",
-    completed: "完成",
-    processing: "处理中",
-    uploading: "上传中",
-    awaiting_audio: "等待音频",
-    limited: "受限",
-    unavailable: "不可用",
-    fallback: "已降级",
-    blocked: "已阻止",
-    error: "错误",
-    failed: "失败",
-    timeout: "超时",
-    disconnected: "已断开",
-    cancelled: "已取消",
-    no_action: "无需动作",
-    selected: "已选择",
-    superseded: "已由更早结果接管",
-    closed: "已关闭"
-  };
-  return labels[String(value || "")] || String(value || "状态未知");
-}
-
-function diagnosticActionLabel(value) {
-  const labels = {
-    idle: "待机",
-    talk: "说话",
-    wave: "挥手",
-    bow: "鞠躬",
-    dance: "播放选定舞蹈",
-    dance_next: "切换下一支舞蹈",
-    raise_hand: "抬手",
-    turn_half: "转身",
-    sit: "坐下",
-    lie: "躺下",
-    nod: "点头",
-    sway: "轻微摆动",
-    crouch: "下蹲",
-    handshake: "握手反应",
-    head_pat: "摸头反应",
-    cheek_pinch: "捏脸反应",
-    refuse: "拒绝",
-    step_back: "后退"
-  };
-  return labels[String(value || "")] || String(value || "未知动作");
-}
-
-function diagnosticActionSourceLabel(value) {
-  const labels = {
-    explicit_request: "用户明确命令",
-    fast_provider: "快速动作模型",
-    local_context_fallback: "本地社交动作兜底",
-    eventbus_tool: "AstrBot 动作工具",
-    direct_model: "直接回复模型",
-    interaction_policy: "触碰交互策略",
-    fallback: "基础动作兜底",
-    fast_provider_pending: "等待快速动作模型",
-    fast_provider_fallback: "快速动作本地兜底",
-    main_reply_suppressed: "主回复动作已抑制",
-    eventbus_tool_fallback: "EventBus 动作兜底"
-  };
-  return labels[String(value || "")] || String(value || "未知来源");
-}
-
-function diagnosticSpanLabel(name) {
-  const labels = {
-    "stt.turn": "语音识别",
-    "stt.streaming_wait": "流式识别等待",
-    "stt.final_emit": "识别结果下发",
-    "turn.processing": "整轮处理",
-    "quest_chain.event_create": "决策事件创建",
-    "quest_chain.build_request": "构建请求",
-    "quest_chain.request_hooks": "模型前置插件钩子",
-    "quest_chain.llm": "LLM 模型生成",
-    "quest_chain.response_hooks": "模型后置插件钩子",
-    "context.history_snapshot": "历史快照",
-    "context.relationship_snapshot": "关系快照",
-    "tts.pipeline": "语音合成",
-    "tts.segment": "语音合成段",
-    "reply.audio_emit": "回复音频下发",
-    "eventbus.generate": "EventBus 生成",
-    "eventbus.queue_wait": "EventBus 排队",
-    "eventbus.processing": "EventBus 处理"
-  };
-  const value = String(name || "");
-  if (!value) return "未知跨度";
-  if (value.startsWith("quest_chain.hook.")) return `钩子：${value.slice("quest_chain.hook.".length)}`;
-  return labels[value] || value;
-}
+// 诊断事件的中文标签（event/stage/status/reason/action/span 等）已下沉到
+// 服务端 core/diagnostic_labels.py，由 pairing/diagnostics 投影时以
+// `*_label` 加法字段随事件下发；此处只做 `label || 原始码值` 渲染。
 
 function diagnosticMeta(event) {
   const parts = [];
@@ -2299,16 +2048,18 @@ function diagnosticMeta(event) {
     String(event.event || "").startsWith("persona.convert.") &&
     event.phase
   ) {
-    parts.push(`阶段：${personaConversionStageLabel(event.phase)}`);
+    parts.push(`阶段：${String(event.phase_label || event.phase)}`);
   }
   if (Number.isFinite(event.http_status)) parts.push(`HTTP ${event.http_status}`);
   if (Number.isFinite(event.duration_ms)) parts.push(`${Math.round(event.duration_ms)} ms`);
   if (Number.isFinite(event.chunks)) parts.push(`${event.chunks} 块`);
   if (Number.isFinite(event.bytes)) parts.push(`${event.bytes} 字节`);
   if (Number.isFinite(event.event_count)) parts.push(`${event.event_count} 个事件`);
-  if (event.operation) parts.push(`动作：${diagnosticActionLabel(event.operation)}`);
+  if (event.operation) {
+    parts.push(`动作：${String(event.operation_label || event.operation)}`);
+  }
   if (event.action_source) {
-    parts.push(`来源：${diagnosticActionSourceLabel(event.action_source)}`);
+    parts.push(`来源：${String(event.action_source_label || event.action_source)}`);
   }
   if (event.method) parts.push(`方式：${String(event.method)}`);
   if (event.plugin_name) parts.push(`插件：${String(event.plugin_name)}`);
@@ -2390,7 +2141,9 @@ function renderDiagnosticEvents(events) {
       status: isPersonaConversionJobFinished(snapshot.status)
         ? snapshot.status
         : "processing",
+      status_label: snapshot.status_label,
       phase: snapshot.stage,
+      phase_label: snapshot.stage_label,
       duration_ms: snapshot.elapsed_ms
     });
   }
@@ -2402,13 +2155,14 @@ function renderDiagnosticEvents(events) {
     const timestamp = event.timestamp
       ? new Date(event.timestamp).toLocaleTimeString("zh-CN", { hour12: false })
       : "--:--:--";
-    const stageText = event.span_name
-      ? diagnosticSpanLabel(event.span_name)
-      : diagnosticStageLabel(event.component);
+    const stageText = String(
+      event.span_label || event.component_label ||
+      event.span_name || event.component || "运行链路"
+    );
     const parts = [
-      `${timestamp} [${stageText}] ${diagnosticStatusLabel(status)}`,
-      diagnosticEventLabel(event.event),
-      reason ? diagnosticReasonLabel(reason) : "",
+      `${timestamp} [${stageText}] ${event.status_label || "状态未知"}`,
+      String(event.event_label || event.event || "诊断事件"),
+      reason ? String(event.reason_label || reason) : "",
       diagnosticMeta(event)
     ].filter(Boolean);
     item.textContent = parts.join(" · ");
@@ -2426,11 +2180,14 @@ function renderDiagnosticSummary(events) {
   const durations = {};
   events.forEach((event) => {
     if (Number.isFinite(event.duration_ms)) {
-      durations[String(event.component || "runtime")] = Math.round(event.duration_ms);
+      const stageKey = String(
+        event.component_label || event.component || "runtime"
+      );
+      durations[stageKey] = Math.round(event.duration_ms);
     }
   });
   const durationText = Object.entries(durations).slice(-5)
-    .map(([stage, value]) => `${diagnosticStageLabel(stage)} ${value}ms`)
+    .map(([stage, value]) => `${stage} ${value}ms`)
     .join(" · ") || "暂无耗时记录";
   summary.replaceChildren();
   [
@@ -2562,7 +2319,7 @@ function renderUnifiedTimeline(client, serverEvents) {
         const line = document.createElement("div");
         line.className = `diagnostic-line status-${String(event.status || "unknown")}`;
         const parts = [
-          `[服务端] [${event.span_name || diagnosticStageLabel(event.component)}]`
+          `[服务端] [${event.span_name || event.component_label || String(event.component || "")}]`
         ];
         if (Number.isFinite(event.start_offset_ms)) {
           parts.push(`+${Math.round(event.start_offset_ms)}ms`);
@@ -2589,18 +2346,12 @@ async function loadDiagnostics({ silent = false } = {}) {
       const response = await apiGet("pairing/diagnostics");
       const diagnostics = response.diagnostics || {};
       const events = Array.isArray(diagnostics.events) ? diagnostics.events : [];
-      const statusLabels = {
-        ready: "可用",
-        memory_only: "内存诊断可用（文件日志未启用）",
-        disabled: "未启用",
-        unavailable: "暂不可用"
-      };
       const status = String(diagnostics.status || "unavailable");
       document.getElementById("diagnostics-status").textContent =
-        `实时刷新 · 状态：${statusLabels[status] || status} · 事件：${events.length} 条`;
+        `实时刷新 · 状态：${diagnostics.status_label || status} · 事件：${events.length} 条`;
       const rootCause = diagnostics.root_cause || {};
       document.getElementById("diagnostics-root-cause").textContent = rootCause.code
-        ? `当前根因：${diagnosticStageLabel(rootCause.stage)} · ${diagnosticReasonLabel(rootCause.code)}`
+        ? `当前根因：${rootCause.stage_label || rootCause.stage} · ${rootCause.reason_label || rootCause.code}`
         : "当前根因：未发现明确的失败事件";
       renderDiagnosticSummary(events);
       renderDiagnosticEvents(events);
