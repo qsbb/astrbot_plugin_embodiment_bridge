@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.3.0-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.3.0-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.3.0-1")
+    assert '<script type="module" src="./app.js?v=1.3.0-2"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.3.0-2" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.3.0-2")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -417,6 +417,78 @@ def test_operator_page_supports_explicit_quest_persona_conversion_workflow() -> 
     assert "data-conversion-was-disabled" in js
     assert ".persona-panel.conversion-locked" in css
     assert "隐藏推理内容" in html
+
+
+def test_operator_page_settings_panels_grouped_into_category_tabs() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    # 页面级分类标签栏：运行 / 设备与绑定 / 对话与模型 / 人格。
+    assert 'id="settings-tabs"' in html
+    assert 'aria-label="设置分类"' in html
+    assert html.count('role="tablist"') == 2  # 页面级 + 人格工作区子 tab
+    for tab_id, group in (
+        ("settings-tab-runtime", "runtime"),
+        ("settings-tab-devices", "devices"),
+        ("settings-tab-dialogue", "dialogue"),
+        ("settings-tab-persona", "persona"),
+    ):
+        assert f'id="{tab_id}"' in html
+        assert f'data-settings-tab="{group}"' in html
+        assert f'aria-controls="settings-group-{group}"' in html
+        assert f'id="settings-group-{group}"' in html
+        assert f'data-settings-group="{group}"' in html
+        assert f'aria-labelledby="{tab_id}"' in html
+
+    # 默认激活「运行」，其余分组初始 hidden。
+    assert 'data-settings-group="runtime">' in html
+    assert 'data-settings-group="runtime" hidden' not in html
+    assert 'data-settings-group="devices" hidden>' in html
+    assert 'data-settings-group="dialogue" hidden>' in html
+    assert 'data-settings-group="persona" hidden>' in html
+    assert 'id="settings-tab-runtime" class="segment active"' in html
+    assert 'aria-selected="true"' in html
+
+    # 各分组收纳的面板（按面板标题 id 判定归属）。
+    group_positions = {
+        group: html.index(f'id="settings-group-{group}"')
+        for group in ("dialogue", "persona", "devices", "runtime")
+    }
+    ordered = sorted(group_positions, key=group_positions.get)
+    slices = {}
+    for index, group in enumerate(ordered):
+        end = (
+            group_positions[ordered[index + 1]]
+            if index + 1 < len(ordered)
+            else html.index('class="boundary-note"')
+        )
+        slices[group] = html[group_positions[group] : end]
+    for title_id in (
+        "model-title",
+        "fast-action-title",
+        "stt-provider-title",
+        "platform-title",
+        "quest-chain-title",
+    ):
+        assert f'aria-labelledby="{title_id}"' in slices["dialogue"]
+    assert 'aria-labelledby="persona-title"' in slices["persona"]
+    assert 'aria-labelledby="quest-identity-title"' in slices["devices"]
+    assert 'aria-labelledby="identity-title"' in slices["devices"]
+    assert 'aria-labelledby="diagnostics-title"' in slices["runtime"]
+    # 人格工作区内部子 tab 保持原样（两级 tab 是预期形态）。
+    assert 'id="persona-workflow-tabs"' in slices["persona"]
+
+    # 前端绑定：点击切换 + roving 方向键导航，默认激活运行。
+    assert "function setActiveSettingsGroup(group)" in js
+    assert 'setActiveSettingsGroup("runtime")' in js
+    assert "[data-settings-tab]" in js
+    assert "[data-settings-group]" in js
+    assert "panel.hidden = panel.dataset.settingsGroup !== group" in js
+    assert "tab.tabIndex = selected ? 0 : -1" in js
+
+    assert ".settings-tabs" in css
+    assert ".settings-group" in css
 
 
 def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> None:

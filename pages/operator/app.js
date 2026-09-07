@@ -848,6 +848,18 @@ function updatePersonaEditorActions() {
   );
 }
 
+function setActiveSettingsGroup(group) {
+  document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
+    const selected = tab.dataset.settingsTab === group;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  document.querySelectorAll("[data-settings-group]").forEach((panel) => {
+    panel.hidden = panel.dataset.settingsGroup !== group;
+  });
+}
+
 function setPersonaWorkflowMode(mode) {
   personaWorkflowMode = ["live", "import", "independent"].includes(mode)
     ? mode
@@ -2487,6 +2499,27 @@ function bindEvents() {
         source_mode: document.getElementById("persona-source-mode").value
       });
     });
+  setActiveSettingsGroup("runtime");
+  document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setActiveSettingsGroup(tab.dataset.settingsTab);
+    });
+    tab.addEventListener("keydown", (event) => {
+      const tabs = Array.from(
+        document.querySelectorAll("[data-settings-tab]")
+      );
+      const current = tabs.indexOf(event.currentTarget);
+      let target = -1;
+      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target < 0) return;
+      event.preventDefault();
+      tabs[target].click();
+      tabs[target].focus();
+    });
+  });
   document.querySelectorAll("[data-persona-workflow-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       const nextMode = button.dataset.personaWorkflowMode;

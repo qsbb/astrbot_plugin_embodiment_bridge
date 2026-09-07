@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.3.0-1" />
+  <link rel="stylesheet" href="./style.css?v=1.3.0-2" />
 </head>
 <body>
   <main class="shell">
@@ -93,7 +93,15 @@
       </div>
     </section>
 
+    <div id="settings-tabs" class="settings-tabs segmented-control" role="tablist" aria-label="设置分类">
+      <button id="settings-tab-runtime" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="settings-group-runtime" data-settings-tab="runtime">运行</button>
+      <button id="settings-tab-devices" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-devices" data-settings-tab="devices" tabindex="-1">设备与绑定</button>
+      <button id="settings-tab-dialogue" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-dialogue" data-settings-tab="dialogue" tabindex="-1">对话与模型</button>
+      <button id="settings-tab-persona" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-persona" data-settings-tab="persona" tabindex="-1">人格</button>
+    </div>
+
     <section class="settings-grid" aria-label="具身服务设置">
+      <div id="settings-group-dialogue" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-dialogue" data-settings-group="dialogue" hidden>
       <section class="setting-panel" aria-labelledby="model-title">
         <span class="section-label">决策与回退</span>
         <h2 id="model-title">临直连 / 交互决策模型</h2>
@@ -184,7 +192,9 @@
         <p id="quest-chain-status" class="field-status" role="status">尚未读取</p>
         <button id="save-quest-chain-button" class="primary" type="button" aria-busy="false" disabled>保存链路参数</button>
       </section>
+      </div>
 
+      <div id="settings-group-persona" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-persona" data-settings-group="persona" hidden>
       <section class="setting-panel persona-panel" aria-labelledby="persona-title">
         <div class="persona-heading">
           <div>
@@ -339,7 +349,9 @@
           </div>
         </div>
       </section>
+      </div>
 
+      <div id="settings-group-devices" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-devices" data-settings-group="devices" hidden>
       <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">
         <span class="section-label">身份与绑定</span>
         <h2 id="quest-identity-title">Quest 身份</h2>
@@ -401,7 +413,9 @@
         <p id="identity-status" class="field-status" role="status">当前可保持留空；读取候选仅用于启用关系增强。</p>
         <button id="save-identity-button" class="primary" type="button" aria-busy="false">保存可选关系设置</button>
       </section>
+      </div>
 
+      <div id="settings-group-runtime" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-runtime" data-settings-group="runtime">
       <section class="setting-panel diagnostics-panel" aria-labelledby="diagnostics-title">
         <span class="section-label">诊断</span>
         <h2 id="diagnostics-title">“临”独立日志</h2>
@@ -427,6 +441,7 @@
         <strong class="diagnostics-timeline-title">端到端统一时间线（Quest 段 / 服务端段）</strong>
         <div id="client-timeline" class="diagnostics-events" aria-live="polite"></div>
       </section>
+      </div>
     </section>
 
     <section class="boundary-note" aria-label="权限边界">
@@ -467,6 +482,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.3.0-1"></script>
+  <script type="module" src="./app.js?v=1.3.0-2"></script>
 </body>
 </html>
