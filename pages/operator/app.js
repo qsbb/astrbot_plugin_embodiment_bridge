@@ -7,6 +7,8 @@ let platformSettings = null;
 let questIdentitySettings = null;
 let questChainSettings = null;
 let diagnosticsSettings = null;
+let questToolFilterSettings = null;
+let knowledgeEnvironmentSettings = null;
 let serviceState = null;
 let serviceRefreshInFlight = null;
 let personaProfiles = null;
@@ -425,6 +427,155 @@ async function saveQuestChainSettings() {
     onError: (error) => toast(error.message || "保存链路模式失败", true),
     onFinally: () => {
       button.disabled = questChainSettings?.config_writable !== true;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Quest 工具过滤：总开关 + observe/enforce 分段控件。observe 只记录会拦什么，
+// 不真拦；设计动线是先观测数日确认零误伤再切 enforce。保存后后端写配置，
+// on_llm_request 钩子每次调用都重读配置，立即生效。
+// ---------------------------------------------------------------------------
+
+function setQuestToolFilterMode(mode) {
+  document.querySelectorAll("[data-tool-filter-mode]").forEach((button) => {
+    const selected = button.dataset.toolFilterMode === mode;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-checked", selected ? "true" : "false");
+  });
+}
+
+function selectedQuestToolFilterMode() {
+  const active = document.querySelector("[data-tool-filter-mode].segment.active");
+  const mode = active ? String(active.dataset.toolFilterMode || "") : "";
+  return mode === "enforce" ? "enforce" : "observe";
+}
+
+function renderQuestToolFilterSettings(settings) {
+  questToolFilterSettings = settings || {};
+  const enabledSwitch = document.getElementById("quest-tool-filter-enabled");
+  const modeGroup = document.getElementById("quest-tool-filter-mode");
+  const button = document.getElementById("save-quest-tool-filter-button");
+  const status = document.getElementById("quest-tool-filter-status");
+  if (!enabledSwitch || !modeGroup || !button || !status) return;
+  const writable = questToolFilterSettings.config_writable === true;
+  enabledSwitch.checked = questToolFilterSettings.enabled !== false;
+  enabledSwitch.disabled = !writable;
+  setQuestToolFilterMode(
+    questToolFilterSettings.mode === "enforce" ? "enforce" : "observe"
+  );
+  modeGroup
+    .querySelectorAll("[data-tool-filter-mode]")
+    .forEach((node) => {
+      node.disabled = !writable;
+    });
+  button.disabled = !writable;
+  if (!writable) {
+    status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
+    return;
+  }
+  status.textContent = enabledSwitch.checked
+    ? questToolFilterSettings.mode === "enforce"
+      ? "过滤已启用：真拦截模式，命中工具已从 Quest 会话的模型请求中移除。"
+      : "过滤已启用：observe 只观测不拦截，建议先观测数日再切 enforce。"
+    : "工具过滤已关闭；Quest 会话会看到全部已注册工具。";
+}
+
+async function loadQuestToolFilterSettings() {
+  const response = await apiGet("pairing/quest-tool-filter-settings");
+  renderQuestToolFilterSettings(response.quest_tool_filter);
+}
+
+async function saveQuestToolFilterSettings() {
+  const button = document.getElementById("save-quest-tool-filter-button");
+  if (!button || button.disabled) return;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/quest-tool-filter-settings",
+    payload: () => ({
+      enabled: document.getElementById("quest-tool-filter-enabled").checked,
+      mode: selectedQuestToolFilterMode()
+    }),
+    okToast: "工具过滤设置已保存并立即生效",
+    errorToast: "工具过滤设置保存失败：",
+    onOk: (response) => renderQuestToolFilterSettings(response.quest_tool_filter),
+    onFinally: () => {
+      button.disabled = questToolFilterSettings?.config_writable !== true;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 知识与环境集成：两个只读契约开关 + 全局知识条数（1-10）。保存后由后端
+// 直接改写 orchestrator 持有的适配器属性，下一轮对话即生效。
+// ---------------------------------------------------------------------------
+
+function renderKnowledgeEnvironmentSettings(settings) {
+  knowledgeEnvironmentSettings = settings || {};
+  const knowledgeSwitch = document.getElementById("enable-global-knowledge");
+  const topKInput = document.getElementById("global-knowledge-top-k");
+  const environmentSwitch = document.getElementById("enable-environment-context");
+  const button = document.getElementById("save-knowledge-environment-button");
+  const status = document.getElementById("knowledge-environment-status");
+  if (!knowledgeSwitch || !topKInput || !environmentSwitch || !button || !status) {
+    return;
+  }
+  const writable = knowledgeEnvironmentSettings.config_writable === true;
+  knowledgeSwitch.checked =
+    knowledgeEnvironmentSettings.enable_global_knowledge !== false;
+  environmentSwitch.checked =
+    knowledgeEnvironmentSettings.enable_environment_context !== false;
+  const topK = Number(knowledgeEnvironmentSettings.global_knowledge_top_k);
+  if (document.activeElement !== topKInput) {
+    topKInput.value = String(
+      Number.isInteger(topK) && topK >= 1 && topK <= 10 ? topK : 5
+    );
+  }
+  [knowledgeSwitch, topKInput, environmentSwitch, button].forEach((node) => {
+    node.disabled = !writable;
+  });
+  if (!writable) {
+    status.textContent = "当前 AstrBot 配置对象不支持安全保存。";
+    return;
+  }
+  const parts = [];
+  parts.push(knowledgeSwitch.checked ? "全局知识已开启" : "全局知识已关闭");
+  parts.push(
+    environmentSwitch.checked ? "环境上下文已开启" : "环境上下文已关闭"
+  );
+  status.textContent = parts.join("；") + "；未安装对应插件时自动降级。";
+}
+
+async function loadKnowledgeEnvironmentSettings() {
+  const response = await apiGet("pairing/knowledge-environment-settings");
+  renderKnowledgeEnvironmentSettings(response.knowledge_environment);
+}
+
+async function saveKnowledgeEnvironmentSettings() {
+  const button = document.getElementById("save-knowledge-environment-button");
+  if (!button || button.disabled) return;
+  await saveSection({
+    button,
+    busyText: "正在保存…",
+    endpoint: "pairing/knowledge-environment-settings",
+    payload: () => {
+      const topK = Number(document.getElementById("global-knowledge-top-k").value);
+      return {
+        enable_global_knowledge:
+          document.getElementById("enable-global-knowledge").checked,
+        global_knowledge_top_k:
+          Number.isInteger(topK) && topK >= 1 && topK <= 10 ? topK : 5,
+        enable_environment_context:
+          document.getElementById("enable-environment-context").checked
+      };
+    },
+    okToast: "知识与环境集成已保存并立即生效",
+    errorToast: "知识与环境设置保存失败：",
+    onOk: (response) =>
+      renderKnowledgeEnvironmentSettings(response.knowledge_environment),
+    onFinally: () => {
+      button.disabled = knowledgeEnvironmentSettings?.config_writable !== true;
     },
   });
 }
@@ -2688,6 +2839,20 @@ function bindEvents() {
   document
     .getElementById("save-diagnostics-settings-button")
     .addEventListener("click", saveDiagnosticsSettings);
+  document
+    .getElementById("save-quest-tool-filter-button")
+    .addEventListener("click", saveQuestToolFilterSettings);
+  document
+    .querySelectorAll("[data-tool-filter-mode]")
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        if (button.disabled) return;
+        setQuestToolFilterMode(button.dataset.toolFilterMode);
+      });
+    });
+  document
+    .getElementById("save-knowledge-environment-button")
+    .addEventListener("click", saveKnowledgeEnvironmentSettings);
   const autoScroll = document.getElementById("diagnostics-auto-scroll");
   autoScroll.checked = diagnosticAutoScroll;
   autoScroll.addEventListener("change", () => {
@@ -2739,6 +2904,8 @@ const INITIAL_DATA_SECTIONS = [
   { key: "service", label: "服务状态", load: () => loadServiceStatus() },
   { key: "operator", label: "聊天模型", load: loadOperatorSettings },
   { key: "quest-chain", label: "对话链路", load: loadQuestChainSettings },
+  { key: "quest-tool-filter", label: "工具过滤", load: loadQuestToolFilterSettings },
+  { key: "knowledge-environment", label: "知识与环境", load: loadKnowledgeEnvironmentSettings },
   { key: "fast-action", label: "快速动作", load: loadFastActionSettings },
   { key: "stt", label: "语音识别", load: loadSttSettings },
   { key: "platform", label: "正式消息链路", load: loadPlatformSettings },
@@ -2753,6 +2920,8 @@ function markInitialSectionFailed(key) {
   const messages = {
     operator: ["model-status", "聊天模型读取失败，可单独重试。"],
     "quest-chain": ["quest-chain-status", "对话链路设置读取失败，可单独重试。"],
+    "quest-tool-filter": ["quest-tool-filter-status", "工具过滤设置读取失败，可单独重试。"],
+    "knowledge-environment": ["knowledge-environment-status", "知识与环境设置读取失败，可单独重试。"],
     "fast-action": ["fast-action-status", "快速动作设置读取失败，可单独重试。"],
     stt: ["stt-status", "语音识别设置读取失败，可单独重试。"],
     platform: ["platform-status", "正式消息链路读取失败，可单独重试。"],

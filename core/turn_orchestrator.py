@@ -182,6 +182,33 @@ class TurnOrchestrator:
         )
         self.output_chunk_ms = min(max(output_chunk_ms, 40), 100)
 
+    def configure_knowledge_environment(
+        self,
+        *,
+        knowledge_enabled: bool | None = None,
+        knowledge_top_k: int | None = None,
+        environment_enabled: bool | None = None,
+    ) -> None:
+        """热更新知识/环境集成开关，下一轮对话即生效。
+
+        与 ``allow_direct_provider_fallback`` 同为运行时属性赋值语义：
+        ``_read_knowledge`` / ``_read_environment`` 每次调用都读适配器的
+        ``enabled`` / ``top_k``，无需重建 orchestrator。
+        """
+        if self.knowledge is not None:
+            if knowledge_enabled is not None:
+                self.knowledge.enabled = bool(knowledge_enabled)
+                self.knowledge.status = (
+                    "enabled" if knowledge_enabled else "disabled"
+                )
+            if knowledge_top_k is not None:
+                self.knowledge.top_k = min(max(int(knowledge_top_k), 1), 10)
+        if self.environment is not None and environment_enabled is not None:
+            self.environment.enabled = bool(environment_enabled)
+            self.environment.status = (
+                "enabled" if environment_enabled else "disabled"
+            )
+
     async def authorize_session(
         self,
         owner: str,

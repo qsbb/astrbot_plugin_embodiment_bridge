@@ -202,6 +202,41 @@
         <p id="quest-chain-status" class="field-status" role="status">尚未读取</p>
         <button id="save-quest-chain-button" class="primary" type="button" aria-busy="false" disabled>保存链路参数</button>
       </section>
+
+      <section class="setting-panel" aria-labelledby="quest-tool-filter-title">
+        <span class="section-label">工具治理</span>
+        <h2 id="quest-tool-filter-title">Quest 工具过滤</h2>
+        <p>仅具身会话（伴夏/Quest）生效：在模型请求级裁剪 QQ 群管、直播、桌面皮套等 Quest 上无意义的工具，其他平台会话完全不受影响。</p>
+        <label class="mode-switch" for="quest-tool-filter-enabled">
+          <input id="quest-tool-filter-enabled" type="checkbox" checked />
+          <span>启用 Quest 工具过滤</span>
+        </label>
+        <div id="quest-tool-filter-mode" class="segmented-control tool-filter-mode" role="radiogroup" aria-label="工具过滤模式">
+          <button id="quest-tool-filter-mode-observe" class="segment active" type="button" role="radio" aria-checked="true" data-tool-filter-mode="observe">observe · 只观测</button>
+          <button id="quest-tool-filter-mode-enforce" class="segment" type="button" role="radio" aria-checked="false" data-tool-filter-mode="enforce">enforce · 真拦截</button>
+        </div>
+        <p id="quest-tool-filter-mode-help" class="field-help">observe 只观测不拦截，建议先观测数日再切 enforce；观测记录可在「运行」标签的诊断事件中查看。</p>
+        <p id="quest-tool-filter-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-quest-tool-filter-button" class="primary" type="button" aria-busy="false" disabled>保存工具过滤</button>
+      </section>
+
+      <section class="setting-panel" aria-labelledby="knowledge-environment-title">
+        <span class="section-label">上下文集成</span>
+        <h2 id="knowledge-environment-title">知识与环境集成</h2>
+        <p>对话时带入「主动学习」的全局知识证据与「环境感知」的缓存事实；两者都是只读契约，未安装对应插件时自动降级，无副作用。保存后立即生效。</p>
+        <label class="mode-switch" for="enable-global-knowledge">
+          <input id="enable-global-knowledge" type="checkbox" checked />
+          <span>读取全局知识（仅 global 域，不含私人用户域）</span>
+        </label>
+        <label for="global-knowledge-top-k">每轮最多带入的知识条数（1-10）</label>
+        <input id="global-knowledge-top-k" type="number" min="1" max="10" step="1" value="5" inputmode="numeric" />
+        <label class="mode-switch" for="enable-environment-context">
+          <input id="enable-environment-context" type="checkbox" checked />
+          <span>读取环境上下文（只读缓存，不触发联网）</span>
+        </label>
+        <p id="knowledge-environment-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-knowledge-environment-button" class="primary" type="button" aria-busy="false" disabled>保存知识与环境</button>
+      </section>
       </div>
 
       <div id="settings-group-persona" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-persona" data-settings-group="persona" hidden>
