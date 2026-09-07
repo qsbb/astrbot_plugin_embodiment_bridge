@@ -210,7 +210,7 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         registered = {
             (route, tuple(methods)) for route, _, methods, _ in context.routes
         }
-        assert len(registered) == 61
+        assert len(registered) == 60
         assert (
             "/astrbot_plugin_embodiment_bridge/playback/receipt",
             ("POST",),
@@ -314,7 +314,6 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         for suffix, methods in {
             "persona-library": ("GET",),
             "persona-converter-settings": ("POST",),
-            "persona-convert": ("POST",),
             "persona-conversion-start": ("POST",),
             "persona-conversion-status": ("POST",),
             "persona-conversion-cancel": ("POST",),
@@ -562,7 +561,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
             },
         )
         assert plugin.pairing_listener.ready is False
-        assert len(context.routes) == 61
+        assert len(context.routes) == 60
 
         constructor_probe = await asyncio.start_server(
             lambda _r, _w: None,

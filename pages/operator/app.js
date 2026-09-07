@@ -321,7 +321,6 @@ function renderOperatorSettings(settings) {
   }
   document.getElementById("save-model-button").disabled =
     select.disabled || !select.value;
-  renderDialogueMode(settings.dialogue_mode || {});
 
   const selectedPerson = String(operatorSettings.relationship_person_id || "");
   const personSelect = document.getElementById("relationship-person-select");
@@ -332,25 +331,6 @@ function renderOperatorSettings(settings) {
     personSelect.add(new Option("已选择 · " + selectedPerson, selectedPerson));
   }
   personSelect.value = selectedPerson;
-}
-
-function renderDialogueMode(mode) {
-  const direct = mode.direct_mode === true;
-  const checkbox = document.getElementById("quest-direct-dialogue-mode");
-  const button = document.getElementById("save-dialogue-mode-button");
-  const status = document.getElementById("quest-dialogue-mode-status");
-  if (!checkbox || !button || !status) return;
-  checkbox.checked = direct;
-  checkbox.disabled = operatorSettings.config_writable !== true;
-  button.disabled = checkbox.disabled || !String(operatorSettings.selected_id || "");
-  status.textContent = checkbox.disabled
-    ? "当前 AstrBot 配置对象不支持安全保存。"
-    : direct
-      ? "已启用：不需要 Bot/User，不进入 EventBus。"
-      : "未启用：正式 EventBus 模式需要服务端身份绑定。";
-  if (!operatorSettings.selected_available) {
-    status.textContent = "请先选择一个聊天 Provider；基础模式也需要模型。";
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -509,25 +489,6 @@ async function saveFastActionSettings() {
   }
 }
 
-async function saveDialogueMode() {
-  const button = document.getElementById("save-dialogue-mode-button");
-  if (!setButtonBusy(button, true, "保存中…")) return;
-  try {
-    const response = await apiPost("pairing/operator-settings", {
-      chat_provider_id: document.getElementById("chat-provider-id").value,
-      direct_mode: document.getElementById("quest-direct-dialogue-mode").checked
-    });
-    renderDialogueMode(response.settings?.dialogue_mode || {});
-    toast(response.settings?.dialogue_mode?.direct_mode
-      ? "已启用基础对话模式；不进入 EventBus"
-      : "已切回正式 EventBus 模式");
-    await loadQuestIdentitySettings();
-  } catch (error) {
-    toast("模式保存失败：" + error.message, true);
-  } finally {
-    setButtonBusy(button, false);
-  }
-}
 
 function sttProviderLabel(provider) {
   const id = String(provider?.id || "");
@@ -2751,9 +2712,6 @@ function bindEvents() {
   document
     .getElementById("save-fast-action-button")
     .addEventListener("click", saveFastActionSettings);
-  document
-    .getElementById("save-dialogue-mode-button")
-    .addEventListener("click", saveDialogueMode);
   document
     .getElementById("save-quest-chain-button")
     .addEventListener("click", saveQuestChainSettings);

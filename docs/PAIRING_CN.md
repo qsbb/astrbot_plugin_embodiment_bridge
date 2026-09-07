@@ -10,17 +10,17 @@
 4. 私网优先启用内置 listener：配置 `pairing_listener_enabled`、监听 IP/端口、固定 loopback 上游和 `pairing_listener_public_url`。它直接复用同一个配对状态机，不要求新客户端预先持有 AstrBot API Key。
 5. 旧 `pairing_exchange_proxy_url` 仍可作为外部 Nginx 兼容 fallback；它不再是私网唯一入口。AstrBot 的 `register_web_api` 本身仍不支持匿名例外，详情见 [PAIRING_BOOTSTRAP_AUDIT_CN.md](PAIRING_BOOTSTRAP_AUDIT_CN.md)。
 6. 公网必须部署客户端信任的 HTTPS。受控私网可显式启用 `allow_private_http_pairing`，但只接受私网 IP 字面量；内置 listener 不终止公网 TLS。
-7. 在 AstrBot 已安装插件页面打开本插件的“具身客户端快速绑定”Page。
+7. 在 AstrBot 已安装插件页面打开本插件的“具身服务控制台”Page（1.3.0 起快速绑定收编进控制台，独立配对 Page 已移除）。
 
-快速绑定 Page 不再承担角色或连接设置。它不会读取、显示或让操作者填写客户端 IP、AstrBot API Key、平台身份、客户端 ID、用户/机器人/群组 ID、关系档案 ID 或有效期。
+控制台内的快速绑定区不承担角色或连接设置。它不会读取、显示或让操作者填写客户端 IP、AstrBot API Key、平台身份、客户端 ID、用户/机器人/群组 ID、关系档案 ID 或有效期。
 
 关系自然人由“临”的具身服务控制台管理。服务端会通过“情”解析唯一活跃私聊账号，再通过“序”的既有只读绑定契约授权；该过程不新增主人，也不把真实 Bot/User/UMO 返回 Page 或客户端。
 
 ## Page 操作
 
-Bridge 就绪后，Page 只显示“生成绑定二维码”。点击后显示二维码、6 位短码、倒计时和客户端兑换状态。配对默认 120 秒有效；关闭或重载插件会使未完成的配对立即失效。
+Bridge 就绪后，绑定区显示“生成绑定二维码”。点击后显示二维码、6 位短码、倒计时和客户端兑换状态。配对默认 120 秒有效；关闭或重载插件会使未完成的配对立即失效。
 
-复制短码或撤销配对期间，对应按钮会暂时禁用，并在请求结束后恢复。如果服务端返回当前 Page 尚不认识的配对状态，Page 会停止复制、撤销和轮询，提示重新生成配对码，避免把未知状态误判为仍可使用。
+复制短码或撤销配对期间，对应按钮会暂时禁用，并在请求结束后恢复。如果服务端返回当前页面尚不认识的配对状态，页面会停止复制、撤销和轮询，提示重新生成配对码，避免把未知状态误判为仍可使用。
 
 ## 伴夏（Quest）中的操作
 
@@ -32,7 +32,7 @@ Bridge 就绪后，Page 只显示“生成绑定二维码”。点击后显示�
    - `bot.example.com:7443`
    - `https://bot.example.com:7443`
    - 完整插件 Base URL
-4. 用面板数字键输入 Page 上的 6 位短码。
+4. 用面板数字键输入控制台显示的 6 位短码。
 5. 点击 `CONNECT`。伴夏成功兑换后会原子写入 `embodiment_bridge.json`，并立即重载配置、建立 AstrBot 会话，不需要重启应用。
 
 配对服务器地址会保存在伴夏 `PlayerPrefs` 中，下一次只需输入新的 6 位短码。

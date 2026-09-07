@@ -51,7 +51,7 @@ $bridgeBytes = New-Object byte[] 32
 | `pairing_listener_public_url` | 具身客户端可达的主机 base URL 或精确 exchange URL；不猜宿主机 IP |
 | `pairing_exchange_proxy_url` | 可选旧外部代理 fallback；内置 listener 未就绪或 public URL 不合法时才使用 |
 | `pairing_trusted_proxy_ip` | 仅供旧外部代理路径；内置 listener 始终使用直接 peer IP，不信任转发来源头 |
-| `allow_private_http_pairing` | 只在受控私网启用；由服务端固定，快速绑定页不显示，公网继续强制 HTTPS |
+| `allow_private_http_pairing` | 只在受控私网启用；由服务端固定，不在 Page 上显示，公网继续强制 HTTPS |
 | `pairing_public_url` / `pairing_astrbot_api_key` | 服务端快速绑定使用的 Quest 地址与专用 plugin-scope Key；不进入 Page、二维码或日志 |
 | Bot/User 规范身份 | 在具身服务控制台明确填写或从“情”解析；只存插件数据目录的 `server_identity.json`，AstrBot 配置 Page 不回显；配对交换只下发占位值 |
 | `pairing_ttl_seconds` | 服务端固定的一次性凭证 TTL，默认 120 秒；Page 只显示剩余时间 |

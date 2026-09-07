@@ -185,51 +185,6 @@ def test_quick_pairing_page_request_uses_server_only_defaults(
     asyncio.run(scenario())
 
 
-def test_direct_dialogue_mode_allows_pairing_without_bot_or_user_identity(
-    monkeypatch: Any,
-    tmp_path: Any,
-) -> None:
-    async def scenario() -> None:
-        bundle = build_plugin(
-            monkeypatch,
-            tmp_path,
-            config_overrides={
-                "quest_direct_dialogue_mode": True,
-                "pairing_bot_id": "",
-                "pairing_user_id": "",
-                "trusted_platform_id": "",
-                "trusted_client_id": "",
-            },
-        )
-        async with LiveHttpServer(bundle) as server:
-            async with ClientSession() as client:
-                overview = await client.get(
-                    server.url("/pairing/overview"), headers=PAGE_AUTH
-                )
-                assert overview.status == 200
-                body = await overview.json()
-                assert body["quick_pairing_ready"] is True
-
-                created = await client.post(
-                    server.url("/pairing/create"),
-                    headers=PAGE_AUTH,
-                    json={"protocol_version": "1.0"},
-                )
-                assert created.status == 201
-                pairing = (await created.json())["pairing"]
-                exchanged = await client.post(
-                    server.url("/pairing/exchange"),
-                    headers=PAGE_AUTH,
-                    json={"protocol_version": "1.0", "code": pairing["short_code"]},
-                )
-                assert exchanged.status == 200
-                configuration = (await exchanged.json())["data"]["configuration"]
-                assert configuration["user_id"] == "quest-direct-user"
-                assert configuration["bot_id"] == "quest-direct-bridge"
-
-    asyncio.run(scenario())
-
-
 def test_pairing_exchange_rejects_malformed_or_dual_credentials(
     monkeypatch: Any,
     tmp_path: Any,
@@ -1289,18 +1244,9 @@ def test_quest_persona_library_conversion_activation_and_live_fallback(
                 )
                 assert "private contract persona prompt" not in repr(job)
 
-                preview_response = await client.post(
-                    server.url("/pairing/persona-convert"),
-                    headers=PAGE_AUTH,
-                    json={
-                        "source_type": "astrbot",
-                        "source_persona_id": "quest-persona",
-                        "display_name": "心夏",
-                        "admin_requirements": "保持自然的面对面交流。",
-                    },
-                )
-                assert preview_response.status == 200
-                preview = await preview_response.json()
+                # 1.3.0 起同步 persona-convert 端点已移除：预览直接取
+                # 异步任务结果（同构载荷：draft_token + conversion）。
+                preview = job["result"]
                 assert preview["draft_token"]
                 assert preview["conversion"]["quest_persona_prompt"] == (
                     converted_prompt

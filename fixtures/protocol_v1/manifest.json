@@ -195,12 +195,6 @@
     },
     {
       "method": "POST",
-      "path": "/pairing/persona-convert",
-      "success_status": 200,
-      "authentication": "astrbot_dashboard"
-    },
-    {
-      "method": "POST",
       "path": "/pairing/persona-conversion-start",
       "success_status": 202,
       "authentication": "astrbot_dashboard"

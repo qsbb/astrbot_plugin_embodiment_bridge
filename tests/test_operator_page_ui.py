@@ -17,7 +17,7 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
     )
     assert metadata["pages"]["operator"] == {
         "title": "具身服务控制台",
-        "description": "控制具身客户端服务并设置 AstrBot 消息平台、人格、聊天模型与关系自然人",
+        "description": "控制具身客户端服务：配对绑定、桥接平台、人格、聊天模型与关系自然人",
     }
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
@@ -110,9 +110,6 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
         "stt-status",
         "save-stt-button",
         "trusted-platform-id",
-        "quest-direct-dialogue-mode",
-        "quest-dialogue-mode-status",
-        "save-dialogue-mode-button",
         "save-platform-button",
         "persona-source-mode",
         "astrbot-persona-id",
@@ -175,10 +172,6 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "启动前发现模型缺失时由原有 AstrBot 主回复链路处理" in html
     assert "fast_action_timeout" in js
     assert '"fast_action.completed": "快速动作判断完成"' in js
-    assert "direct_mode:" in js
-    assert "function renderDialogueMode" in js
-    assert "不走临专属链路的钩子富化" in html
-    assert "不需要 Bot/User" in html or "不需要 Bot/User" in js
     assert 'apiGet("pairing/stt-settings")' in js
     assert 'apiPost("pairing/stt-settings"' in js
     assert "load: loadSttSettings" in js

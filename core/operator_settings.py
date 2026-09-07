@@ -101,14 +101,6 @@ class OperatorSettings:
                 getattr(self.relationship, "person_id", "") or ""
             ).strip(),
             "persona": self.persona_snapshot(),
-            "dialogue_mode": {
-                "direct_mode": bool(
-                    self.config.get("quest_direct_dialogue_mode", False)
-                ),
-                "eventbus_enabled": not bool(
-                    self.config.get("quest_direct_dialogue_mode", False)
-                ),
-            },
             "fast_action": self.fast_action_snapshot(),
             "config_writable": config_is_writable(self.config),
         }
@@ -422,25 +414,6 @@ class OperatorSettings:
         await self._persist("chat_provider_id", provider_id)
         self.llm.configure_provider(provider_id)
         return self.snapshot()
-
-    async def save_dialogue_mode(self, direct_mode: bool) -> dict[str, Any]:
-        enabled = bool(direct_mode)
-        await self._persist("quest_direct_dialogue_mode", enabled)
-        orchestrator = self.orchestrator
-        if orchestrator is not None:
-            orchestrator.allow_direct_provider_fallback = enabled
-        self._diagnostic(
-            "dialogue.mode_updated",
-            component="dialogue",
-            status="ready",
-            direct_mode=enabled,
-            eventbus_enabled=not enabled,
-        )
-        return {
-            "mode": "direct_provider" if enabled else "astrbot_event_bus",
-            "direct_mode": enabled,
-            "eventbus_enabled": not enabled,
-        }
 
     def quest_chain_snapshot(self) -> dict[str, Any]:
         # 1.3.0 起移除 AstrBot 主消息链路：模式固定为 bridge（临专属链路），
@@ -1205,7 +1178,6 @@ class OperatorSettings:
                 "fast_action_provider_id",
                 "fast_action_timeout_seconds",
                 "fast_action_timeout_policy_revision",
-                "quest_direct_dialogue_mode",
                 "quest_chain_per_hook_budget_seconds",
                 "quest_chain_total_hook_budget_seconds",
                 "quest_chain_llm_timeout_seconds",

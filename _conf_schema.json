@@ -212,12 +212,6 @@
     "hint": "默认关闭。关闭时普通文字/语音只允许进入临专属链路；链路未授权或不可用会明确报错，不会静默绕过记忆、知识和其他消息插件。触碰交互仍使用受控兼容决策。",
     "default": false
   },
-  "quest_direct_dialogue_mode": {
-    "description": "无平台身份的 Quest 基础对话模式",
-    "type": "bool",
-    "hint": "开启后不走临专属链路的插件钩子富化，不需要 Bot/User 或“序”；Quest 只使用临已选择的聊天 Provider。关系、记忆和其他消息插件不会注入。默认关闭。",
-    "default": false
-  },
   "quest_chain_per_hook_budget_seconds": {
     "description": "临独立链·单个插件钩子超时秒数",
     "type": "float",

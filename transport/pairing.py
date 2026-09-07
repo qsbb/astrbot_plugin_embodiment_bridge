@@ -335,12 +335,6 @@ class PairingHttpApi:
                 "Save the dedicated Quest persona conversion Provider",
             ),
             (
-                "pairing/persona-convert",
-                self.convert_persona,
-                ["POST"],
-                "Convert an AstrBot or manual persona into a preview draft",
-            ),
-            (
                 "pairing/persona-conversion-start",
                 self.start_persona_conversion,
                 ["POST"],
@@ -522,15 +516,8 @@ class PairingHttpApi:
             settings = await self.operator_settings.save_chat_provider_id(
                 payload.chat_provider_id
             )
-            if payload.direct_mode is not None:
-                settings["dialogue_mode"] = await self.operator_settings.save_dialogue_mode(
-                    payload.direct_mode
-                )
-                self.pairing_defaults["direct_dialogue_mode"] = bool(
-                    payload.direct_mode
-                )
-                if payload.direct_mode:
-                    self.pairing_defaults["server_identity_ready"] = True
+            # 1.3.0 起「不使用平台身份」直连模式移除：direct_mode 字段仅为
+            # 兼容旧前端保留，取值一律忽略。
             return _json_no_store({"success": True, "settings": settings})
         except Exception as exc:
             return self._error(exc, "save_operator_settings")
@@ -681,21 +668,6 @@ class PairingHttpApi:
             return _json_no_store({"success": True, "library": library})
         except Exception as exc:
             return self._error(exc, "save_persona_converter_settings")
-
-    async def convert_persona(self) -> Any:
-        try:
-            self._dashboard_owner()
-            payload = await self._read_model(PersonaConvertRequest)
-            result = await self._persona_service().convert(
-                source_kind=payload.source_type,
-                source_persona_id=payload.source_persona_id,
-                source_prompt=payload.source_prompt,
-                display_name=payload.display_name,
-                admin_requirements=payload.admin_requirements,
-            )
-            return _json_no_store({"success": True, **result})
-        except Exception as exc:
-            return self._error(exc, "convert_persona")
 
     async def start_persona_conversion(self) -> Any:
         try:
@@ -1259,10 +1231,7 @@ class PairingHttpApi:
             not str(self.pairing_defaults.get(key) or "").strip() for key in required
         ):
             return False, "quick_pairing_defaults_missing"
-        if (
-            self.pairing_defaults.get("server_identity_ready") is not True
-            and self.pairing_defaults.get("direct_dialogue_mode") is not True
-        ):
+        if self.pairing_defaults.get("server_identity_ready") is not True:
             return False, "quick_pairing_server_identity_missing"
         return True, "ready"
 
@@ -1271,10 +1240,7 @@ class PairingHttpApi:
         payload: PairingCreateRequest,
     ) -> PairingCreateRequest:
         if payload.public_url:
-            if (
-                self.pairing_defaults.get("server_identity_ready") is not True
-                and self.pairing_defaults.get("direct_dialogue_mode") is not True
-            ):
+            if self.pairing_defaults.get("server_identity_ready") is not True:
                 raise PairingError(
                     "quick_pairing_server_identity_missing",
                     503,
@@ -1312,10 +1278,6 @@ class PairingHttpApi:
             ),
             "ttl_seconds": self.pairing_defaults.get("ttl_seconds", 120),
         }
-        if self.pairing_defaults.get("direct_dialogue_mode") is True:
-            values["user_id"] = "quest-direct-user"
-            values["bot_id"] = "quest-direct-bridge"
-            values["group_id"] = ""
         return PairingCreateRequest.model_validate(values)
 
     async def status(self) -> Any:

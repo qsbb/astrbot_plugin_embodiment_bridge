@@ -95,7 +95,7 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
 1. 将仓库目录安装为 `data/plugins/astrbot_plugin_embodiment_bridge/`，安装 [requirements.txt](requirements.txt) 后重载插件。
 2. 在 AstrBot 管理后台创建并启用平台或会话默认聊天模型；需要语音输入时，再创建一个正式 STT Provider。
 3. 在 AstrBot“设置 → API Key 管理”创建一把具身客户端专用 API Key，至少授予 `plugin` scope。密钥明文通常只显示一次。
-4. 打开插件的“具身服务控制台”Page。若需要正式 EventBus、记忆和其他消息插件，选择平台并完成高级身份验证；如果不想配置 Bot/User 或安装“序”，可开启“基础对话模式”，只选择一个临的聊天 Provider，Quest 对话会隔离直连该 Provider，不进入 EventBus。
+4. 打开插件的“具身服务控制台”Page：选择桥接平台实例并完成高级身份验证（Bot/User 或“序”），再选择临的聊天 Provider。自 1.3.0 起具身对话全部走临专属链路（复刻插件钩子富化、逐钩子熔断、直管模型），不进入 AstrBot 共享事件总线。
 5. 在插件配置中启用内置 listener。私网 Docker 部署的最小示例：
 
    ```text
@@ -110,8 +110,8 @@ Bridge 使用服务端保存的 Bot、User 和可信平台创建正式 AstrBot �
    ```
 
 6. Docker 同时映射 `8520:8520`。端口映射本身不会创建监听器，控制台必须显示 listener ready。
-7. 打开“具身客户端快速绑定”Page 生成 6 位短码。伴夏只需输入域名或 IP、端口和短码即可完成绑定。
-8. 通过控制台状态、认证后的 `/health` 和脱敏日志确认 EventBus、身份、STT/TTS 与 listener 状态。
+7. 在“具身服务控制台”Page 的绑定区生成 6 位短码（1.3.0 起快速绑定已收进控制台，不再有独立 Page）。伴夏只需输入域名或 IP、端口和短码即可完成绑定。
+8. 通过控制台状态、认证后的 `/health` 和脱敏日志确认临专属链路、身份、STT/TTS 与 listener 状态。
 
 公网部署必须使用客户端信任的 HTTPS，并在防火墙或反向代理继续限制来源与速率。内置 8520 listener 不提供 TLS，也不是 Dashboard 或任意 URL 的通用代理。
 

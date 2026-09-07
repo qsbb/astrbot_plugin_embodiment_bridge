@@ -992,7 +992,6 @@ def test_persona_page_routes_are_not_exposed_by_public_8520_listener() -> None:
     route_names = {
         "persona-library",
         "persona-converter-settings",
-        "persona-convert",
         "persona-conversion-start",
         "persona-conversion-status",
         "persona-conversion-cancel",
@@ -1012,7 +1011,6 @@ def test_all_persona_page_handlers_require_dashboard_authentication() -> None:
     expected = {
         "persona_library",
         "save_persona_converter_settings",
-        "convert_persona",
         "start_persona_conversion",
         "persona_conversion_status",
         "cancel_persona_conversion",

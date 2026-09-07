@@ -36,10 +36,8 @@ def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
 
 
 def test_page_assets_have_no_stale_version_cache_stamp_and_protocol_stays_1_0() -> None:
-    page = (ROOT / "pages" / "pairing" / "index.html").read_text(encoding="utf-8")
-    assert './style.css"' in page
-    assert './app.js"' in page
-    assert re.search(r"[?&](?:v|version)=", page) is None
+    # 1.3.0 起 pairing 独立页已移除（收编进 operator）；operator 页的
+    # 缓存戳断言见 test_operator_page_ui.py。
 
     manifest = json.loads(
         (ROOT / "fixtures" / "protocol_v1" / "manifest.json").read_text(
