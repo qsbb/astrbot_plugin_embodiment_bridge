@@ -266,6 +266,7 @@ class PairingManager:
                 normalized = normalize_pairing_exchange_url(
                     value,
                     allow_private_http=self.allow_private_http,
+                    allow_remote_http=self.allow_remote_http,
                 )
                 reason = "ready"
             except PairingError as exc:

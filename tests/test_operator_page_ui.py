@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.4.0-7"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-7" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-7")
+    assert '<script type="module" src="./app.js?v=1.4.0-8"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-8" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-8")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html

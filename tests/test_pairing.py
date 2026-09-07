@@ -309,3 +309,29 @@ def test_missing_exchange_proxy_fails_closed() -> None:
     with pytest.raises(PairingError) as unavailable:
         manager.create("owner", create_payload())
     assert unavailable.value.code == "pairing_bootstrap_unavailable"
+
+
+def test_configure_exchange_url_forwards_remote_http_opt_in() -> None:
+    """回归：configure_exchange_url 必须把 allow_remote_http 传给归一化器。
+
+    生产事故（2026-09-07）：监听器公告地址配置为 http://<域名>:8520、
+    allow_insecure_remote_http 已开，构造路径正常，但运行期
+    configure_exchange_url 漏传该旗标 → https_required → 快速绑定未就绪。
+    """
+    manager = pairing_manager(exchange_url="", allow_remote_http=True)
+    assert manager.bootstrap_ready is False
+    manager.configure_exchange_url(
+        "http://bridge.example.com:8520/quest/pairing/exchange",
+        missing_reason="pairing_listener_public_url_missing",
+    )
+    assert manager.bootstrap_reason == "ready"
+    assert manager.bootstrap_ready is True
+    assert manager.exchange_url.startswith("http://bridge.example.com")
+
+    strict = pairing_manager(exchange_url="")
+    strict.configure_exchange_url(
+        "http://bridge.example.com:8520/quest/pairing/exchange",
+        missing_reason="pairing_listener_public_url_missing",
+    )
+    assert strict.bootstrap_reason == "https_required"
+    assert strict.bootstrap_ready is False

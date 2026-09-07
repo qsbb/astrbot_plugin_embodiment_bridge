@@ -6,6 +6,10 @@
 
 ### Fixed
 
+- 根因修复：PairingManager.configure_exchange_url 漏传 allow_remote_http，
+  公网域名明文 HTTP 公告地址在「允许远程明文 HTTP」已开时仍被误判
+  https_required，导致快速绑定未就绪（部署回归实测复现）
+- 快速绑定原因码补中文翻译：https_required / quick_pairing_server_identity_missing
 - 系列名订正：知识与环境面板、集成标签与配置 schema 中的
   「主动学习」/「环境感知」统一改为凝心溯溪系列规范单字名「知」/「境」
 - 补集成状态/原因码中文标签：ready_for_authorization / authorization_gated /

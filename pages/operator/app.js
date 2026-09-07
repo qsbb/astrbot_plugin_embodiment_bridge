@@ -1959,7 +1959,9 @@ const QUICK_PAIRING_REASONS = {
   bridge_key_missing: "Bridge 长期密钥尚未配置",
   quick_pairing_defaults_missing: "快速绑定服务端配置尚未完成（先完成上方基础绑定）",
   pairing_listener_public_url_missing: "快速绑定公开入口尚未配置（需配置内置监听器公开 URL）",
-  pairing_bootstrap_unavailable: "快速绑定交换入口不可用"
+  pairing_bootstrap_unavailable: "快速绑定交换入口不可用",
+  https_required: "公开入口是 http 明文地址，需在配置里打开「允许远程明文 HTTP」后再保存配对地址",
+  quick_pairing_server_identity_missing: "「序」身份尚未完成授权，先完成上方身份授权"
 };
 
 /* ── 快速绑定弹窗（页内完成，不跳转：Dashboard 禁止窗口打开）── */
