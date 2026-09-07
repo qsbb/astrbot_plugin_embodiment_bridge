@@ -76,6 +76,8 @@ class QuestChainSettingsRequest(BaseModel):
     llm_timeout_seconds: float | None = Field(default=None, ge=5.0, le=120.0)
     memory_cache_ttl_seconds: float | None = Field(default=None, ge=0.0, le=600.0)
     excluded_plugins: str = Field(default="", max_length=512)
+    # 加法可选字段（1.4.0 B3）：旧前端不发该字段时保持现状。
+    allow_direct_provider_fallback: bool | None = None
 
 
 class DiagnosticsSettingsRequest(BaseModel):
@@ -605,6 +607,9 @@ class PairingHttpApi:
                 llm_timeout_seconds=payload.llm_timeout_seconds,
                 memory_cache_ttl_seconds=payload.memory_cache_ttl_seconds,
                 excluded_plugins=payload.excluded_plugins,
+                allow_direct_provider_fallback=(
+                    payload.allow_direct_provider_fallback
+                ),
             )
             return _json_no_store({"success": True, "quest_chain": settings})
         except Exception as exc:

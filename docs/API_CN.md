@@ -96,7 +96,7 @@ POST /pairing/service-control
 Content-Type: application/json
 ```
 
-状态响应只包含运行布尔值、监听地址/端口、会话统计和能力布尔值，不包含密钥、账号、Provider ID、自然人 ID、正文或音频。控制请求严格只接受：
+状态响应只包含运行布尔值、监听地址/端口、会话统计、能力布尔值和系列插件集成状态脱敏投影（`integrations[]` 仅含名称、状态、可用性、原因码与中文 label），不包含密钥、账号、Provider ID、自然人 ID、正文或音频。控制请求严格只接受：
 
 ```json
 {"enabled": false}
@@ -226,6 +226,8 @@ sequenceDiagram
 | POST | `/pairing/operator-settings` | 200 | 持久化 `chat_provider_id`，成功后立即切换临的交互决策与直连回退模型，不覆盖 EventBus 默认 Provider |
 | GET | `/pairing/fast-action-settings` | 200 | 读取快速动作开关、专用 Provider 状态及 Chat Completion Provider 安全摘要 |
 | POST | `/pairing/fast-action-settings` | 200 | 原子保存 `fast_action_enabled` 与 `fast_action_provider_id`，立即更新动作专用异步通道 |
+| GET | `/pairing/quest-chain-settings` | 200 | 读取临专属链路参数与 `allow_direct_provider_fallback` 直连回退开关当前值 |
+| POST | `/pairing/quest-chain-settings` | 200 | 原子持久化链路参数；可选布尔 `allow_direct_provider_fallback`（缺省保持现状），保存后立即热更新运行时 orchestrator |
 | GET | `/pairing/stt-settings` | 200 | 枚举已实例化正式 STT Provider 的安全摘要并读取当前选择/降级状态 |
 | POST | `/pairing/stt-settings` | 200 | 验证并持久化 `astrbot_stt_provider_id`；空值关闭 STT，成功后立即更新运行时选择 |
 | GET | `/pairing/platform-settings` | 200 | 枚举已加载平台的安全元数据并读取当前可信平台选择 |

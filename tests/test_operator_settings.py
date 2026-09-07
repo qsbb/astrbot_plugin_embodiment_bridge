@@ -1210,6 +1210,85 @@ def test_diagnostics_settings_reject_non_bool_and_keep_runtime_on_save_failure()
     asyncio.run(scenario())
 
 
+def test_quest_chain_fallback_switch_persists_and_hot_updates_orchestrator() -> (
+    None
+):
+    async def scenario() -> None:
+        config = NativeConfigStub({"allow_direct_provider_fallback": False})
+        settings = build_settings(config=config)
+        orchestrator = SimpleNamespace(
+            allow_direct_provider_fallback=False,
+            quest_enriched_pipeline=settings.quest_enriched_pipeline,
+        )
+        settings.orchestrator = orchestrator
+
+        # GET 快照携带当前值（运行时属性优先，其次配置）。
+        snapshot = settings.quest_chain_snapshot()
+        assert snapshot["allow_direct_provider_fallback"] is False
+        assert snapshot["mode"] == "bridge"
+
+        # 保存开关：持久化白名单键 + 立即热更新 orchestrator 属性。
+        saved = await settings.save_quest_chain_settings(
+            allow_direct_provider_fallback=True,
+        )
+        assert config.saves[-1] == {
+            "quest_chain_excluded_plugins": "",
+            "allow_direct_provider_fallback": True,
+        }
+        assert config["allow_direct_provider_fallback"] is True
+        assert orchestrator.allow_direct_provider_fallback is True
+        assert saved["allow_direct_provider_fallback"] is True
+
+        # 旧前端不发该字段：保持现状，不写配置、不改运行时。
+        saved = await settings.save_quest_chain_settings(excluded_plugins="")
+        assert config.saves[-1] == {"quest_chain_excluded_plugins": ""}
+        assert orchestrator.allow_direct_provider_fallback is True
+        assert saved["allow_direct_provider_fallback"] is True
+
+        # 关闭回退：持久化 False 并热更新。
+        saved = await settings.save_quest_chain_settings(
+            allow_direct_provider_fallback=False,
+        )
+        assert config.saves[-1]["allow_direct_provider_fallback"] is False
+        assert orchestrator.allow_direct_provider_fallback is False
+        assert saved["allow_direct_provider_fallback"] is False
+
+    asyncio.run(scenario())
+
+
+def test_quest_chain_fallback_switch_rejects_non_bool_and_keeps_runtime_on_failure() -> (
+    None
+):
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+        orchestrator = SimpleNamespace(
+            allow_direct_provider_fallback=False,
+            quest_enriched_pipeline=settings.quest_enriched_pipeline,
+        )
+        settings.orchestrator = orchestrator
+
+        with pytest.raises(OperatorSettingsError) as invalid:
+            await settings.save_quest_chain_settings(
+                allow_direct_provider_fallback="yes",
+            )
+        assert invalid.value.code == "invalid_direct_provider_fallback"
+        assert config.saves == []
+        assert orchestrator.allow_direct_provider_fallback is False
+
+        # 保存失败：配置回滚，运行时不热更新。
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_quest_chain_settings(
+                allow_direct_provider_fallback=True,
+            )
+        assert failed.value.code == "config_save_failed"
+        assert "allow_direct_provider_fallback" not in config
+        assert orchestrator.allow_direct_provider_fallback is False
+
+    asyncio.run(scenario())
+
+
 def test_superseded_config_revision_does_not_change_runtime() -> None:
     class SupersededConfigStub(NativeConfigStub):
         async def save_config_async(self, changes: dict[str, Any]) -> bool:

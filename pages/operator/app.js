@@ -187,6 +187,53 @@ function renderCapability(name, available, enabled) {
     : "不可用";
 }
 
+// 系列插件集成状态（只读，审计 C-6）：渲染 service-status 加法字段
+// integrations[] 的脱敏投影，只含名称/状态徽章/原因 label。
+function renderIntegrations(integrations) {
+  const list = document.getElementById("integrations-list");
+  if (!list) return;
+  const items = Array.isArray(integrations) ? integrations : [];
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("li");
+    empty.className = "integrations-empty";
+    empty.textContent = "尚未读取";
+    list.append(empty);
+    return;
+  }
+  items.forEach((integration) => {
+    const item = document.createElement("li");
+    item.className = "integration-item";
+    const name = document.createElement("span");
+    name.className = "integration-name";
+    name.textContent = String(
+      integration?.label || integration?.name || "未知集成"
+    );
+    const badge = document.createElement("span");
+    const badgeClass =
+      integration?.available === true
+        ? "ready"
+        : integration?.recognized === false
+          ? "stopped"
+          : "degraded";
+    badge.className = "status-badge " + badgeClass;
+    badge.textContent = String(
+      integration?.status_label || integration?.status || "未知"
+    );
+    item.append(name, badge);
+    const reason = String(
+      integration?.reason_label || integration?.reason || ""
+    );
+    if (reason && integration?.available !== true) {
+      const note = document.createElement("span");
+      note.className = "integration-reason";
+      note.textContent = reason;
+      item.append(note);
+    }
+    list.append(item);
+  });
+}
+
 function renderServiceStatus(service) {
   serviceState = service || {};
   const enabled = serviceState.enabled === true;
@@ -227,6 +274,8 @@ function renderServiceStatus(service) {
   ["dialogue", "bridge", "identity_configured", "stt", "tts", "avatar_actions",
     "interaction_decision", "direct_provider_fallback"]
     .forEach((name) => renderCapability(name, capabilities[name], enabled));
+
+  renderIntegrations(serviceState.integrations);
 
   const control = document.getElementById("service-control-button");
   control.dataset.nextEnabled = String(!enabled);
@@ -375,12 +424,17 @@ function renderQuestChainSettings(settings) {
   const llmTimeout = document.getElementById("quest-chain-llm-timeout");
   const cacheTtl = document.getElementById("quest-chain-cache-ttl");
   const excluded = document.getElementById("quest-chain-excluded");
+  const allowFallback = document.getElementById("quest-chain-allow-fallback");
   if (perHook) perHook.value = questChainSettings.per_hook_budget_seconds ?? 6.0;
   if (totalHook) totalHook.value = questChainSettings.total_hook_budget_seconds ?? 10.0;
   if (llmTimeout) llmTimeout.value = questChainSettings.llm_timeout_seconds ?? 30.0;
   if (cacheTtl) cacheTtl.value = questChainSettings.memory_cache_ttl_seconds ?? 30.0;
   if (excluded) excluded.value = questChainSettings.excluded_plugins || "";
-  [perHook, totalHook, llmTimeout, cacheTtl, excluded].forEach((input) => {
+  if (allowFallback) {
+    allowFallback.checked =
+      questChainSettings.allow_direct_provider_fallback === true;
+  }
+  [perHook, totalHook, llmTimeout, cacheTtl, excluded, allowFallback].forEach((input) => {
     if (input) input.disabled = !writable;
   });
   button.disabled = !writable;
@@ -417,7 +471,10 @@ async function saveQuestChainSettings() {
         total_hook_budget_seconds: numberValue("quest-chain-total-hook"),
         llm_timeout_seconds: numberValue("quest-chain-llm-timeout"),
         memory_cache_ttl_seconds: numberValue("quest-chain-cache-ttl"),
-        excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || ""
+        excluded_plugins: (document.getElementById("quest-chain-excluded") || {}).value || "",
+        allow_direct_provider_fallback: Boolean(
+          (document.getElementById("quest-chain-allow-fallback") || {}).checked
+        )
       };
     },
     okToast: "已保存：临专属链路参数",

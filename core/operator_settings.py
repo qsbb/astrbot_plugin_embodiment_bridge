@@ -433,10 +433,17 @@ class OperatorSettings:
             if pipeline is not None
             else "quest_enriched_pipeline_unavailable"
         )
+        orchestrator = self.orchestrator
+        fallback_allowed = (
+            bool(getattr(orchestrator, "allow_direct_provider_fallback", False))
+            if orchestrator is not None
+            else self._bool_cfg("allow_direct_provider_fallback")
+        )
         return {
             "mode": mode,
             "bridge_available": available,
             "bridge_availability_reason": availability_reason,
+            "allow_direct_provider_fallback": fallback_allowed,
             "per_hook_budget_seconds": self._float_cfg(
                 "quest_chain_per_hook_budget_seconds", 6.0
             ),
@@ -464,13 +471,26 @@ class OperatorSettings:
         llm_timeout_seconds: float | None = None,
         memory_cache_ttl_seconds: float | None = None,
         excluded_plugins: str = "",
+        allow_direct_provider_fallback: bool | None = None,
     ) -> dict[str, Any]:
         # mode 参数仅为兼容旧前端/旧客户端保留：任何取值都被忽略，恒为 bridge。
         normalized_mode = "bridge"
         excluded = str(excluded_plugins or "")[:512]
+        # 加法可选开关（1.4.0 B3）：旧前端不发该字段时保持现状。
+        fallback: bool | None = None
+        if allow_direct_provider_fallback is not None:
+            if not isinstance(allow_direct_provider_fallback, bool):
+                raise OperatorSettingsError(
+                    "invalid_direct_provider_fallback",
+                    422,
+                    "直连回退开关必须是布尔值",
+                )
+            fallback = allow_direct_provider_fallback
         changes: dict[str, Any] = {
             "quest_chain_excluded_plugins": excluded,
         }
+        if fallback is not None:
+            changes["allow_direct_provider_fallback"] = fallback
         if per_hook_budget_seconds is not None:
             changes["quest_chain_per_hook_budget_seconds"] = float(
                 per_hook_budget_seconds
@@ -511,6 +531,10 @@ class OperatorSettings:
                         if name.strip()
                     ),
                 )
+            if fallback is not None:
+                # 热更新：直接改写运行时 orchestrator 属性（与 main.py 启动期
+                # 赋值同路径），下一轮对话即生效。
+                orchestrator.allow_direct_provider_fallback = fallback
         self._diagnostic(
             "quest_chain.mode_updated",
             component="quest_chain",
@@ -1260,6 +1284,7 @@ class OperatorSettings:
                 "quest_chain_llm_timeout_seconds",
                 "quest_chain_memory_cache_ttl_seconds",
                 "quest_chain_excluded_plugins",
+                "allow_direct_provider_fallback",
                 "astrbot_stt_provider_id",
                 "enable_astrbot_stt",
                 "enable_plugin_mimo_stt",

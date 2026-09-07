@@ -325,6 +325,28 @@ SERVICE_STATUS_LABELS: dict[str, str] = {
     "degraded": "需检查",
 }
 
+# ── 系列插件集成项名称（供 service_status 投影 integrations[].label 使用）──
+INTEGRATION_LABELS: dict[str, str] = {
+    "identity": "身份授权",
+    "quest_enriched_pipeline": "临专属链路",
+    "knowledge": "全局知识",
+    "environment": "环境感知",
+    "voice_audio_output": "“声”语音",
+    "relationship": "“情”关系",
+    "runtime": "运行时诊断",
+}
+
+# ── 集成项状态徽章（供 integrations[].status_label 使用）───────────────────
+INTEGRATION_STATUS_LABELS: dict[str, str] = {
+    "ready": "就绪",
+    "enabled": "已启用",
+    "disabled": "未启用",
+    "unavailable": "不可用",
+    "adapter_unavailable": "适配器不可用",
+    "degraded": "需检查",
+    "unknown": "未知",
+}
+
 # ── 诊断日志状态（原 app.js loadDiagnostics 内联表）───────────────────────
 DIAGNOSTICS_STATUS_LABELS: dict[str, str] = {
     "ready": "可用",
@@ -396,6 +418,16 @@ def service_status_label(status: object) -> str:
 def diagnostics_status_label(status: object) -> str:
     raw = str(status or "")
     return DIAGNOSTICS_STATUS_LABELS.get(raw) or raw
+
+
+def integration_label(name: object) -> str:
+    raw = str(name or "")
+    return INTEGRATION_LABELS.get(raw) or raw or "未知集成"
+
+
+def integration_status_label(status: object) -> str:
+    raw = str(status or "")
+    return INTEGRATION_STATUS_LABELS.get(raw) or raw or "未知"
 
 
 def enrich_diagnostic_event(event: dict[str, object]) -> dict[str, object]:

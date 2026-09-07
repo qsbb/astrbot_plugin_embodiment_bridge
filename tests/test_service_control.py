@@ -178,6 +178,135 @@ def test_service_can_stop_close_sessions_and_start_again() -> None:
     asyncio.run(scenario())
 
 
+def test_status_snapshot_projects_integrations_without_sensitive_fields() -> None:
+    async def scenario() -> None:
+        control, _, _, _ = build_control()
+        control.orchestrator.integration_status = lambda: {
+            "identity": {
+                "configured": True,
+                "status": "ready",
+                "api_principal_digest": "digest-secret-value",
+                "bot_id": "bot-secret",
+                "client_id": "client-secret",
+            },
+            "quest_enriched_pipeline": {
+                "available": True,
+                "status": "ready",
+                "availability_reason": "ready",
+                "platform_id": "platform-secret",
+            },
+            "knowledge": {
+                "enabled": True,
+                "status": "ready",
+                "scope": "global",
+                "backend_url": "http://internal-secret",
+            },
+            "environment": {
+                "enabled": False,
+                "status": "disabled",
+                "mode": "cached_only",
+            },
+            "voice_audio_output": {
+                "enabled": True,
+                "available": False,
+                "status": "unavailable",
+                "provider_key": "sk-secret",
+            },
+            "relationship": {"status": "ready", "person_id": "person-secret"},
+            "runtime": {
+                "status": "ready",
+                "members": [{"member_id": "member-secret"}],
+            },
+            "fast_action": {"status": "disabled"},
+            "not_consumed": {"knowledge_private_scope": True},
+        }
+
+        snapshot = await control.status_snapshot()
+        integrations = snapshot["integrations"]
+        assert [item["name"] for item in integrations] == [
+            "identity",
+            "quest_enriched_pipeline",
+            "knowledge",
+            "environment",
+            "voice_audio_output",
+            "relationship",
+            "runtime",
+        ]
+        # 白名单投影：键位固定，fast_action/not_consumed 不进页面。
+        allowed_keys = {
+            "name",
+            "label",
+            "recognized",
+            "status",
+            "status_label",
+            "available",
+            "reason",
+            "reason_label",
+        }
+        for item in integrations:
+            assert set(item) == allowed_keys
+            assert isinstance(item["recognized"], bool)
+            assert isinstance(item["available"], bool)
+        rendered = repr(integrations)
+        for sensitive in (
+            "digest-secret-value",
+            "bot-secret",
+            "client-secret",
+            "platform-secret",
+            "internal-secret",
+            "sk-secret",
+            "person-secret",
+            "member-secret",
+            "api_principal_digest",
+            "provider_key",
+            "backend_url",
+            "person_id",
+            "bot_id",
+            "client_id",
+            "members",
+        ):
+            assert sensitive not in rendered
+
+        by_name = {item["name"]: item for item in integrations}
+        assert by_name["identity"]["label"] == "身份授权"
+        assert by_name["identity"]["status"] == "ready"
+        assert by_name["identity"]["status_label"] == "就绪"
+        assert by_name["identity"]["available"] is True
+        assert by_name["knowledge"]["label"] == "全局知识"
+        assert by_name["environment"]["label"] == "环境感知"
+        assert by_name["environment"]["status"] == "disabled"
+        assert by_name["environment"]["status_label"] == "未启用"
+        assert by_name["environment"]["available"] is False
+        assert by_name["voice_audio_output"]["label"] == "“声”语音"
+        assert by_name["voice_audio_output"]["available"] is False
+        assert by_name["relationship"]["label"] == "“情”关系"
+        assert by_name["runtime"]["label"] == "运行时诊断"
+        pipeline = by_name["quest_enriched_pipeline"]
+        assert pipeline["label"] == "临专属链路"
+        assert pipeline["reason"] == "ready"
+        assert pipeline["reason_label"] == "链路就绪"
+
+    asyncio.run(scenario())
+
+
+def test_status_snapshot_integrations_tolerate_missing_entries() -> None:
+    async def scenario() -> None:
+        control, _, _, _ = build_control()
+        # OrchestratorStub 默认只返回 identity / quest_enriched_pipeline 两项，
+        # 其余集成必须以 recognized=False 占位而不是抛错。
+        snapshot = await control.status_snapshot()
+        integrations = snapshot["integrations"]
+        assert len(integrations) == 7
+        by_name = {item["name"]: item for item in integrations}
+        assert by_name["identity"]["recognized"] is True
+        assert by_name["knowledge"]["recognized"] is False
+        assert by_name["knowledge"]["status"] == "unknown"
+        assert by_name["knowledge"]["available"] is False
+        assert by_name["knowledge"]["label"] == "全局知识"
+
+    asyncio.run(scenario())
+
+
 def test_service_capabilities_separate_bridge_and_direct_provider_paths() -> None:
     async def scenario() -> None:
         config = ConfigStub()

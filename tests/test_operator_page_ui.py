@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.4.0-2"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-2" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-2")
+    assert '<script type="module" src="./app.js?v=1.4.0-3"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-3" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-3")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -530,6 +530,65 @@ def test_operator_diagnostics_panel_exposes_runtime_switches() -> None:
 
     # 保存事件的诊断标签已下沉到后端标签表。
     assert '"diagnostics.settings_updated"' in labels
+
+
+def test_operator_page_exposes_integration_panel_and_direct_fallback_switch() -> (
+    None
+):
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+    labels = (PLUGIN_ROOT / "core" / "diagnostic_labels.py").read_text(
+        encoding="utf-8"
+    )
+
+    # ① 集成状态只读面板（审计 C-6）：位于「运行」标签、诊断面板之前。
+    runtime_start = html.index('data-settings-group="runtime"')
+    assert 'aria-labelledby="integrations-title"' in html[runtime_start:]
+    panel_start = html.index('class="setting-panel integrations-panel"')
+    panel_end = html.index("</section>", panel_start)
+    panel = html[panel_start:panel_end]
+    assert panel_start < html.index('class="setting-panel diagnostics-panel"')
+    assert 'id="integrations-title"' in panel
+    assert 'id="integrations-list"' in panel
+    assert "只读展示" in panel
+    assert "不含身份标识与密钥" in panel
+
+    # 前端渲染：复用 .status-badge，label 优先、码值兜底，随服务状态轮询刷新。
+    assert "function renderIntegrations(integrations)" in js
+    assert "renderIntegrations(serviceState.integrations)" in js
+    assert 'getElementById("integrations-list")' in js
+    assert '"status-badge " + badgeClass' in js
+    assert "integration?.status_label || integration?.status" in js
+    assert "integration?.reason_label || integration?.reason" in js
+    assert "integration?.label || integration?.name" in js
+    assert ".integrations-list" in css
+    assert ".status-badge.degraded" in css
+
+    # 集成名中文映射由服务端下发（core/diagnostic_labels.py）。
+    assert "def integration_label(" in labels
+    assert "def integration_status_label(" in labels
+    for name, label in (
+        ("identity", "身份授权"),
+        ("quest_enriched_pipeline", "临专属链路"),
+        ("knowledge", "全局知识"),
+        ("environment", "环境感知"),
+        ("voice_audio_output", "“声”语音"),
+        ("relationship", "“情”关系"),
+        ("runtime", "运行时诊断"),
+    ):
+        assert f'"{name}": "{label}"' in labels
+
+    # ② 直连回退开关（审计 C-9）：挂在「临专属链路」面板内，随保存提交。
+    chain_start = html.index('aria-labelledby="quest-chain-title"')
+    chain_end = html.index("</section>", chain_start)
+    chain_panel = html[chain_start:chain_end]
+    assert 'id="quest-chain-allow-fallback"' in chain_panel
+    assert "链路故障时自动回退直管模型，保证对话不中断；关闭则直接报错" in chain_panel
+    assert 'getElementById("quest-chain-allow-fallback")' in js
+    assert "questChainSettings.allow_direct_provider_fallback === true" in js
+    assert "allow_direct_provider_fallback: Boolean(" in js
+    assert 'endpoint: "pairing/quest-chain-settings"' in js
 
 
 def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> None:

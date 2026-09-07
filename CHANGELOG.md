@@ -22,6 +22,26 @@
   采集（仍以独立日志开启为前提，与 series.control 消费点门控语义一致）。
   诊断事件 `diagnostics.settings_updated` 补中文标签；页面缓存戳升至
   `?v=1.4.0-2`。
+- 系列插件集成状态只读面板（用户拍板批次 B3，审计 C-6）：
+  `BridgeServiceControl.status_snapshot` 新增加法字段 `integrations[]`——
+  对 `TurnOrchestrator.integration_status()` 做白名单逐字段重建的脱敏投影
+  （identity/quest_enriched_pipeline/knowledge/environment/
+  voice_audio_output/relationship/runtime 七项，只暴露
+  recognized/status/available/原因码与服务端中文 label，绝不带身份标识、
+  密钥或内部计数；`fast_action` 有独立面板、`not_consumed` 为内部占位，
+  均不投影）。复用既有 `pairing/service-status` 轮询链路，不新增端点；
+  集成名与状态徽章中文映射下沉 `core/diagnostic_labels.py`
+  （`integration_label`/`integration_status_label`）。operator「运行」标签
+  在诊断面板上方新增独立只读 setting-panel，复用 `.status-badge` 渲染。
+- 直连回退开关（用户拍板批次 B3，审计 C-9 开关部分）：operator「对话与
+  模型」标签的「临专属链路」面板新增 `allow_direct_provider_fallback`
+  checkbox（链路故障时自动回退直管模型，保证对话不中断；关闭则直接报错）。
+  扩展现有 `pairing/quest-chain-settings` POST（pydantic 模型加法可选
+  bool 字段，旧前端缺省保持现状），`OperatorSettings`
+  校验严格布尔后持久化（白名单加键）并立即热更新
+  `orchestrator.allow_direct_provider_fallback`（与 main.py 启动期赋值
+  同路径）；GET 快照 `quest_chain_snapshot` 补 `allow_direct_provider_fallback`
+  当前值。页面缓存戳升至 `?v=1.4.0-3`。
 
 
 ## 1.3.0 - 2026-09-07

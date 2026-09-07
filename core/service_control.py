@@ -5,7 +5,67 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config_persistence import config_is_writable, save_config_changes
-from .diagnostic_labels import service_reason_label, service_status_label
+from .diagnostic_labels import (
+    integration_label,
+    integration_status_label,
+    reason_label,
+    service_reason_label,
+    service_status_label,
+)
+
+# 集成状态只读面板（审计 C-6）的投影顺序；``fast_action`` 已有独立设置面板、
+# ``not_consumed`` 属内部占位说明，均不在页面投影内。
+_INTEGRATION_ORDER = (
+    "identity",
+    "quest_enriched_pipeline",
+    "knowledge",
+    "environment",
+    "voice_audio_output",
+    "relationship",
+    "runtime",
+)
+
+def _integration_projection(
+    integrations: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """集成状态脱敏投影：按白名单逐字段重建，绝不整体透传原始快照。
+
+    各系列适配器的 ``status_snapshot`` 可能携带身份标识、内部计数、配置
+    值甚至密钥材料；页面只暴露 ``recognized``/``status``/``available``/
+    原因码与服务端中文 label。
+    """
+
+    items: list[dict[str, Any]] = []
+    for name in _INTEGRATION_ORDER:
+        raw = integrations.get(name)
+        snapshot = raw if isinstance(raw, dict) else {}
+        status = str(snapshot.get("status") or "unknown")[:32]
+        available = snapshot.get("available")
+        if not isinstance(available, bool):
+            available = None
+            for key in ("enabled", "configured"):
+                value = snapshot.get(key)
+                if isinstance(value, bool):
+                    available = value
+                    break
+            if available is None:
+                available = status == "ready"
+        reason = str(
+            snapshot.get("availability_reason") or snapshot.get("reason") or ""
+        )[:64]
+        items.append(
+            {
+                "name": name,
+                "label": integration_label(name),
+                "recognized": isinstance(raw, dict),
+                "status": status,
+                "status_label": integration_status_label(status),
+                "available": available,
+                "reason": reason,
+                "reason_label": reason_label(reason) if reason else "",
+            }
+        )
+    return items
 
 
 class BridgeServiceUnavailable(RuntimeError):
@@ -107,6 +167,9 @@ class BridgeServiceControl:
                 "port": int(listener.get("port") or 0),
             },
             "sessions": stats,
+            # 加法字段（1.4.0 B3，向后兼容）：系列插件集成状态脱敏投影，
+            # 只含名称/状态/可用性/原因码与 label，绝不含身份标识与密钥。
+            "integrations": _integration_projection(integrations),
             "capabilities": {
                 # Legacy aggregate retained for existing clients.  New clients
                 # should use the explicit fields below.  eventbus 两个键自

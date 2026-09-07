@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.4.0-2" />
+  <link rel="stylesheet" href="./style.css?v=1.4.0-3" />
 </head>
 <body>
   <main class="shell">
@@ -196,6 +196,10 @@
             <label for="quest-chain-excluded">跳过的插件（英文逗号分隔，留空不跳过）</label>
             <input id="quest-chain-excluded" type="text" maxlength="512" autocomplete="off" placeholder="例如：我会牢牢记住你" />
           </div>
+          <label class="mode-switch" for="quest-chain-allow-fallback">
+            <input id="quest-chain-allow-fallback" type="checkbox" />
+            <span>链路故障时自动回退直管模型，保证对话不中断；关闭则直接报错</span>
+          </label>
           <p class="field-note">慢钩子超时即熔断，用该插件最近成功的富化缓存兜底；直管模型调用，不进共享事件总线。</p>
         </div>
 
@@ -427,6 +431,15 @@
       </div>
 
       <div id="settings-group-runtime" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-runtime" data-settings-group="runtime">
+      <section class="setting-panel integrations-panel" aria-labelledby="integrations-title">
+        <span class="section-label">系列集成</span>
+        <h2 id="integrations-title">系列插件集成状态</h2>
+        <p>只读展示「凝心溯溪」系列集成项的识别与运行状态，随服务状态每秒自动刷新；只含状态与原因，不含身份标识与密钥。</p>
+        <ul id="integrations-list" class="integrations-list" aria-live="polite">
+          <li class="integrations-empty">尚未读取</li>
+        </ul>
+      </section>
+
       <section class="setting-panel diagnostics-panel" aria-labelledby="diagnostics-title">
         <span class="section-label">诊断</span>
         <h2 id="diagnostics-title">“临”独立日志</h2>
@@ -512,6 +525,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.4.0-2"></script>
+  <script type="module" src="./app.js?v=1.4.0-3"></script>
 </body>
 </html>
