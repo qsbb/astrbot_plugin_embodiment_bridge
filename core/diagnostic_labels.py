@@ -336,8 +336,8 @@ SERVICE_STATUS_LABELS: dict[str, str] = {
 INTEGRATION_LABELS: dict[str, str] = {
     "identity": "身份授权",
     "quest_enriched_pipeline": "临专属链路",
-    "knowledge": "全局知识",
-    "environment": "环境感知",
+    "knowledge": "「知」知识",
+    "environment": "「境」环境",
     "voice_audio_output": "“声”语音",
     "relationship": "“情”关系",
     "runtime": "运行时诊断",

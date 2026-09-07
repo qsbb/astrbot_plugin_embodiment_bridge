@@ -272,8 +272,8 @@ def test_status_snapshot_projects_integrations_without_sensitive_fields() -> Non
         assert by_name["identity"]["status"] == "ready"
         assert by_name["identity"]["status_label"] == "就绪"
         assert by_name["identity"]["available"] is True
-        assert by_name["knowledge"]["label"] == "全局知识"
-        assert by_name["environment"]["label"] == "环境感知"
+        assert by_name["knowledge"]["label"] == "「知」知识"
+        assert by_name["environment"]["label"] == "「境」环境"
         assert by_name["environment"]["status"] == "disabled"
         assert by_name["environment"]["status_label"] == "未启用"
         assert by_name["environment"]["available"] is False
@@ -302,7 +302,7 @@ def test_status_snapshot_integrations_tolerate_missing_entries() -> None:
         assert by_name["knowledge"]["recognized"] is False
         assert by_name["knowledge"]["status"] == "unknown"
         assert by_name["knowledge"]["available"] is False
-        assert by_name["knowledge"]["label"] == "全局知识"
+        assert by_name["knowledge"]["label"] == "「知」知识"
 
     asyncio.run(scenario())
 

@@ -4,6 +4,13 @@
 
 ## 1.4.0 - 2026-09-07
 
+### Fixed
+
+- 系列名订正：知识与环境面板、集成标签与配置 schema 中的
+  「主动学习」/「环境感知」统一改为凝心溯溪系列规范单字名「知」/「境」
+- 补集成状态/原因码中文标签：ready_for_authorization / authorization_gated /
+  not_configured / MEMBERS_DEGRADED（1.4.0 部署回归实测发现穿透）
+
 ### Added
 
 - operator 页面补齐后端既有能力（B9，用户拍板）：「运行」标签新增「配对地址」

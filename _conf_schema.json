@@ -378,9 +378,9 @@
     "maximum": 30
   },
   "enable_global_knowledge": {
-    "description": "读取主动学习插件的全局知识证据",
+    "description": "读取凝心溯溪-「知」插件的全局知识证据",
     "type": "bool",
-    "hint": "依赖「主动学习」（active_learner）系列插件的 active_learner.knowledge@1.0 契约；只允许 scope=global，私人用户域保持关闭。未安装对应插件时自动降级，无副作用。",
+    "hint": "依赖凝心溯溪-「知」（active_learner）插件的 active_learner.knowledge@1.0 契约；只允许 scope=global，私人用户域保持关闭。未安装对应插件时自动降级，无副作用。",
     "default": true
   },
   "global_knowledge_top_k": {
@@ -392,9 +392,9 @@
     "maximum": 10
   },
   "enable_environment_context": {
-    "description": "读取环境感知插件的缓存事实",
+    "description": "读取凝心溯溪-「境」插件的缓存环境事实",
     "type": "bool",
-    "hint": "依赖「环境感知」（environment_awareness）系列插件的 environment.opportunity@1.0 契约，只调用不联网的 cached_read 能力。未安装对应插件时自动降级，无副作用。",
+    "hint": "依赖凝心溯溪-「境」（environment_awareness）插件的 environment.opportunity@1.0 契约，只调用不联网的 cached_read 能力。未安装对应插件时自动降级，无副作用。",
     "default": true
   },
   "enable_runtime_diagnostics": {

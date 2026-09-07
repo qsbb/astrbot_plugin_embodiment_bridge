@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.4.0-6"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-6" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-6")
+    assert '<script type="module" src="./app.js?v=1.4.0-7"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.4.0-7" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.4.0-7")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -589,8 +589,8 @@ def test_operator_page_exposes_integration_panel_and_direct_fallback_switch() ->
     for name, label in (
         ("identity", "身份授权"),
         ("quest_enriched_pipeline", "临专属链路"),
-        ("knowledge", "全局知识"),
-        ("environment", "环境感知"),
+        ("knowledge", "「知」知识"),
+        ("environment", "「境」环境"),
         ("voice_audio_output", "“声”语音"),
         ("relationship", "“情”关系"),
         ("runtime", "运行时诊断"),

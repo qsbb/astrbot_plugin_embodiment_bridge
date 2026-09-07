@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.4.0-6" />
+  <link rel="stylesheet" href="./style.css?v=1.4.0-7" />
 </head>
 <body>
   <main class="shell">
@@ -256,17 +256,17 @@
 
       <section class="setting-panel" aria-labelledby="knowledge-environment-title">
         <span class="section-label">上下文集成</span>
-        <h2 id="knowledge-environment-title">知识与环境集成</h2>
-        <p>对话时带入「主动学习」的全局知识证据与「环境感知」的缓存事实；两者都是只读契约，未安装对应插件时自动降级，无副作用。保存后立即生效。</p>
+        <h2 id="knowledge-environment-title">「知」与「境」集成</h2>
+        <p>对话时带入凝心溯溪-「知」的全局知识证据（仅 global 域）与「境」的缓存环境事实（只读缓存，不联网）；两者都是只读契约，未安装对应插件时自动降级，无副作用。保存后立即生效。</p>
         <label class="mode-switch" for="enable-global-knowledge">
           <input id="enable-global-knowledge" type="checkbox" checked />
-          <span>读取全局知识（仅 global 域，不含私人用户域）</span>
+          <span>读取「知」的全局知识（仅 global 域，不含私人用户域）</span>
         </label>
         <label for="global-knowledge-top-k">每轮最多带入的知识条数（1-10）</label>
         <input id="global-knowledge-top-k" type="number" min="1" max="10" step="1" value="5" inputmode="numeric" />
         <label class="mode-switch" for="enable-environment-context">
           <input id="enable-environment-context" type="checkbox" checked />
-          <span>读取环境上下文（只读缓存，不触发联网）</span>
+          <span>读取「境」的缓存环境事实（只读缓存，不触发联网）</span>
         </label>
         <p id="knowledge-environment-status" class="field-status" role="status">尚未读取</p>
         <button id="save-knowledge-environment-button" class="primary" type="button" aria-busy="false" disabled>保存知识与环境</button>
@@ -603,6 +603,6 @@
   </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script type="module" src="./app.js?v=1.4.0-6"></script>
+  <script type="module" src="./app.js?v=1.4.0-7"></script>
 </body>
 </html>
