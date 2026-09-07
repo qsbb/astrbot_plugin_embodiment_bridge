@@ -185,6 +185,20 @@ label { color: #bdd0ca; font-size: 14px; font-weight: 700; }
   background: #182524;
   font-weight: 800;
 }
+.tool-filter-mode {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 10px 0 0;
+  border: 1px solid #31413f;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tool-filter-mode .segment { cursor: pointer; }
+.tool-filter-mode .segment:disabled { cursor: not-allowed; opacity: 0.55; }
+.tool-filter-mode .segment.active {
+  border-bottom-color: transparent;
+  background: #182524;
+  box-shadow: inset 0 -3px 0 #55d7aa;
+}
 .settings-tabs {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0 0 18px;

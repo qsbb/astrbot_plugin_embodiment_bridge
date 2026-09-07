@@ -6,6 +6,12 @@
 
 ### Added
 
+- operator 页面补齐后端既有能力（B45，用户拍板）：「对话与模型」标签新增
+  「Quest 工具过滤」面板（总开关 + observe/enforce 灰度模式切换，保存即
+  热更新钩子闭包）与「知识与上下文注入」面板（全局知识开关 + 注入条数
+  1-10 + 环境上下文开关，保存即热更新 orchestrator）；端点
+  pairing/quest-tool-filter-settings 与 pairing/knowledge-environment-settings
+  GET/POST（dashboard 鉴权）
 - operator 页面补齐后端既有能力（用户拍板批次 1，纯前端）：
   Quest 身份卡新增「身份同步」只读状态行（pending 时服务端拒绝新具身
   会话，此前页面零线索）；能力条新增「交互决策」「直连回退」两盏灯

@@ -371,6 +371,30 @@
       "method": "GET",
       "path": "/health",
       "success_status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/quest-tool-filter-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/quest-tool-filter-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "GET",
+      "path": "/pairing/knowledge-environment-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
+    },
+    {
+      "method": "POST",
+      "path": "/pairing/knowledge-environment-settings",
+      "success_status": 200,
+      "authentication": "astrbot_dashboard"
     }
   ],
   "enums": {

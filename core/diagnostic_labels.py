@@ -161,6 +161,10 @@ EVENT_LABELS: dict[str, str] = {
     "plugin_hook_profiler.scan": "插件钩子扫描完成",
     "plugin_hook.completed": "插件钩子执行完成",
     "diagnostics.settings_updated": "诊断开关已更新并立即生效",
+    "quest.tool_filter": "已裁剪本轮 Quest 专属无关工具",
+    "quest.tool_filter.observe": "工具过滤观测记录（未真拦截）",
+    "quest_tool_filter.settings_updated": "工具过滤设置已更新并立即生效",
+    "knowledge_environment.settings_updated": "知识与环境集成设置已更新并立即生效",
 }
 
 # ── 诊断环节 / 组件（原 app.js diagnosticStageLabel）──────────────────────

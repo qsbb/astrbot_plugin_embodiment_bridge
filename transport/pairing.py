@@ -88,6 +88,21 @@ class DiagnosticsSettingsRequest(BaseModel):
     diagnostic_platform_log_enabled: bool
 
 
+class QuestToolFilterSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enabled: bool
+    mode: str = Field(pattern=r"^(?:observe|enforce)$")
+
+
+class KnowledgeEnvironmentSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    enable_global_knowledge: bool
+    global_knowledge_top_k: int = Field(ge=1, le=10)
+    enable_environment_context: bool
+
+
 class TrustedPlatformSettingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -423,6 +438,30 @@ class PairingHttpApi:
                 "Save Embodiment Bridge diagnostics switches",
             ),
             (
+                "pairing/quest-tool-filter-settings",
+                self.quest_tool_filter_settings_overview,
+                ["GET"],
+                "Read Quest tool filter settings",
+            ),
+            (
+                "pairing/quest-tool-filter-settings",
+                self.save_quest_tool_filter_settings,
+                ["POST"],
+                "Save Quest tool filter settings",
+            ),
+            (
+                "pairing/knowledge-environment-settings",
+                self.knowledge_environment_settings_overview,
+                ["GET"],
+                "Read Quest knowledge and environment integration settings",
+            ),
+            (
+                "pairing/knowledge-environment-settings",
+                self.save_knowledge_environment_settings,
+                ["POST"],
+                "Save Quest knowledge and environment integration settings",
+            ),
+            (
                 "pairing/identity-candidates",
                 self.identity_candidates,
                 ["GET"],
@@ -647,6 +686,63 @@ class PairingHttpApi:
             )
         except Exception as exc:
             return self._error(exc, "save_diagnostics_settings")
+
+    async def quest_tool_filter_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "quest_tool_filter": (
+                        self.operator_settings.quest_tool_filter_snapshot()
+                    ),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "quest_tool_filter_settings_overview")
+
+    async def save_quest_tool_filter_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(QuestToolFilterSettingsRequest)
+            settings = await self.operator_settings.save_quest_tool_filter_settings(
+                enabled=payload.enabled,
+                mode=payload.mode,
+            )
+            return _json_no_store({"success": True, "quest_tool_filter": settings})
+        except Exception as exc:
+            return self._error(exc, "save_quest_tool_filter_settings")
+
+    async def knowledge_environment_settings_overview(self) -> Any:
+        try:
+            self._dashboard_owner()
+            return _json_no_store(
+                {
+                    "success": True,
+                    "knowledge_environment": (
+                        self.operator_settings.knowledge_environment_snapshot()
+                    ),
+                }
+            )
+        except Exception as exc:
+            return self._error(exc, "knowledge_environment_settings_overview")
+
+    async def save_knowledge_environment_settings(self) -> Any:
+        try:
+            self._dashboard_owner()
+            payload = await self._read_model(KnowledgeEnvironmentSettingsRequest)
+            settings = await (
+                self.operator_settings.save_knowledge_environment_settings(
+                    enable_global_knowledge=payload.enable_global_knowledge,
+                    global_knowledge_top_k=payload.global_knowledge_top_k,
+                    enable_environment_context=payload.enable_environment_context,
+                )
+            )
+            return _json_no_store(
+                {"success": True, "knowledge_environment": settings}
+            )
+        except Exception as exc:
+            return self._error(exc, "save_knowledge_environment_settings")
 
     async def save_stt_settings(self) -> Any:
         try:

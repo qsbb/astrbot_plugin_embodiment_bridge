@@ -1304,3 +1304,221 @@ def test_superseded_config_revision_does_not_change_runtime() -> None:
             await settings.save_chat_provider_id("model-b")
         assert superseded.value.code == "config_save_superseded"
         assert settings.llm.chat_provider_id == "model-a"
+
+
+class OrchestratorIntegrationStub:
+    """Minimal orchestrator stand-in running the real hot-update method."""
+
+    def __init__(self) -> None:
+        self.knowledge = SimpleNamespace(enabled=True, top_k=5, status="enabled")
+        self.environment = SimpleNamespace(enabled=True, status="enabled")
+
+    def configure_knowledge_environment(self, **kwargs: Any) -> None:
+        from astrbot_plugin_embodiment_bridge.core.turn_orchestrator import (
+            TurnOrchestrator,
+        )
+
+        TurnOrchestrator.configure_knowledge_environment(self, **kwargs)
+
+
+def test_quest_tool_filter_settings_snapshot_save_and_hot_update() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+        diagnostic_log = DiagnosticLogStub()
+        settings.diagnostic_log = diagnostic_log
+
+        assert settings.quest_tool_filter_snapshot() == {
+            "enabled": True,
+            "mode": "observe",
+            "config_writable": True,
+        }
+
+        saved = await settings.save_quest_tool_filter_settings(
+            enabled=True,
+            mode="enforce",
+        )
+        assert config.saves == [
+            {
+                "quest_tool_filter_enabled": True,
+                "quest_tool_filter_mode": "enforce",
+            }
+        ]
+        # 热更新：main.py 的 on_llm_request 钩子每次调用都重读 config，
+        # 保存后内存配置立即生效，无需重启。
+        assert config["quest_tool_filter_enabled"] is True
+        assert config["quest_tool_filter_mode"] == "enforce"
+        assert "quest_tool_filter.settings_updated" in diagnostic_log.events
+        assert saved == {
+            "enabled": True,
+            "mode": "enforce",
+            "config_writable": True,
+        }
+
+        saved = await settings.save_quest_tool_filter_settings(
+            enabled=False,
+            mode="observe",
+        )
+        assert saved["enabled"] is False
+        assert saved["mode"] == "observe"
+        assert config["quest_tool_filter_enabled"] is False
+        assert config["quest_tool_filter_mode"] == "observe"
+
+    asyncio.run(scenario())
+
+
+def test_quest_tool_filter_settings_strict_validation_and_save_failure() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+
+        with pytest.raises(OperatorSettingsError) as invalid_switch:
+            await settings.save_quest_tool_filter_settings(
+                enabled="yes",
+                mode="observe",
+            )
+        assert invalid_switch.value.code == "invalid_quest_tool_filter_switch"
+
+        for bad_mode in ("block", "", "observer", "enforce!"):
+            with pytest.raises(OperatorSettingsError) as invalid_mode:
+                await settings.save_quest_tool_filter_settings(
+                    enabled=True,
+                    mode=bad_mode,
+                )
+            assert invalid_mode.value.code == "invalid_quest_tool_filter_mode"
+        assert config.saves == []
+
+        # 保存失败：运行时不改变，配置回滚到保存前状态。
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_quest_tool_filter_settings(
+                enabled=False,
+                mode="enforce",
+            )
+        assert failed.value.code == "config_save_failed"
+        assert "quest_tool_filter_enabled" not in config
+        assert "quest_tool_filter_mode" not in config
+        assert settings.quest_tool_filter_snapshot()["enabled"] is True
+        assert settings.quest_tool_filter_snapshot()["mode"] == "observe"
+
+    asyncio.run(scenario())
+
+
+def test_quest_tool_filter_mode_snapshot_normalizes_unknown_values() -> None:
+    config = NativeConfigStub({"quest_tool_filter_mode": "unexpected"})
+    settings = build_settings(config=config)
+    # 与钩子的生效语义一致：任何非 enforce 取值都按 observe 观测。
+    assert settings.quest_tool_filter_snapshot()["mode"] == "observe"
+
+
+def test_knowledge_environment_settings_snapshot_save_and_hot_update() -> None:
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+        orchestrator = OrchestratorIntegrationStub()
+        settings.orchestrator = orchestrator
+        diagnostic_log = DiagnosticLogStub()
+        settings.diagnostic_log = diagnostic_log
+
+        assert settings.knowledge_environment_snapshot() == {
+            "enable_global_knowledge": True,
+            "global_knowledge_top_k": 5,
+            "enable_environment_context": True,
+            "config_writable": True,
+        }
+
+        saved = await settings.save_knowledge_environment_settings(
+            enable_global_knowledge=False,
+            global_knowledge_top_k=8,
+            enable_environment_context=False,
+        )
+        assert config.saves == [
+            {
+                "enable_global_knowledge": False,
+                "global_knowledge_top_k": 8,
+                "enable_environment_context": False,
+            }
+        ]
+        # 热更新：orchestrator 持有的适配器属性被直接改写，下一轮即生效。
+        assert orchestrator.knowledge.enabled is False
+        assert orchestrator.knowledge.top_k == 8
+        assert orchestrator.knowledge.status == "disabled"
+        assert orchestrator.environment.enabled is False
+        assert orchestrator.environment.status == "disabled"
+        assert "knowledge_environment.settings_updated" in diagnostic_log.events
+        assert saved == {
+            "enable_global_knowledge": False,
+            "global_knowledge_top_k": 8,
+            "enable_environment_context": False,
+            "config_writable": True,
+        }
+
+        saved = await settings.save_knowledge_environment_settings(
+            enable_global_knowledge=True,
+            global_knowledge_top_k=3,
+            enable_environment_context=True,
+        )
+        assert saved["enable_global_knowledge"] is True
+        assert saved["global_knowledge_top_k"] == 3
+        assert orchestrator.knowledge.enabled is True
+        assert orchestrator.knowledge.status == "enabled"
+        assert orchestrator.knowledge.top_k == 3
+        assert orchestrator.environment.enabled is True
+        assert orchestrator.environment.status == "enabled"
+
+    asyncio.run(scenario())
+
+
+def test_knowledge_environment_settings_strict_validation_and_save_failure() -> (
+    None
+):
+    async def scenario() -> None:
+        config = NativeConfigStub({})
+        settings = build_settings(config=config)
+        orchestrator = OrchestratorIntegrationStub()
+        settings.orchestrator = orchestrator
+
+        with pytest.raises(OperatorSettingsError) as invalid_knowledge:
+            await settings.save_knowledge_environment_settings(
+                enable_global_knowledge="yes",
+                global_knowledge_top_k=5,
+                enable_environment_context=True,
+            )
+        assert invalid_knowledge.value.code == (
+            "invalid_knowledge_environment_switch"
+        )
+        with pytest.raises(OperatorSettingsError) as invalid_environment:
+            await settings.save_knowledge_environment_settings(
+                enable_global_knowledge=True,
+                global_knowledge_top_k=5,
+                enable_environment_context=1,
+            )
+        assert invalid_environment.value.code == (
+            "invalid_knowledge_environment_switch"
+        )
+
+        for bad_top_k in (True, 0, 11, 3.5, "5", None):
+            with pytest.raises(OperatorSettingsError) as invalid_top_k:
+                await settings.save_knowledge_environment_settings(
+                    enable_global_knowledge=True,
+                    global_knowledge_top_k=bad_top_k,
+                    enable_environment_context=True,
+                )
+            assert invalid_top_k.value.code == "invalid_global_knowledge_top_k"
+        assert config.saves == []
+
+        # 保存失败：配置回滚，orchestrator 适配器保持原状态。
+        config.fail = True
+        with pytest.raises(OperatorSettingsError) as failed:
+            await settings.save_knowledge_environment_settings(
+                enable_global_knowledge=False,
+                global_knowledge_top_k=2,
+                enable_environment_context=False,
+            )
+        assert failed.value.code == "config_save_failed"
+        assert "enable_global_knowledge" not in config
+        assert orchestrator.knowledge.enabled is True
+        assert orchestrator.knowledge.top_k == 5
+        assert orchestrator.environment.enabled is True
+
+    asyncio.run(scenario())

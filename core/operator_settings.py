@@ -34,6 +34,16 @@ _DIAGNOSTICS_KEYS = (
     "diagnostic_plugin_timing_enabled",
     "diagnostic_platform_log_enabled",
 )
+_QUEST_TOOL_FILTER_MODES = ("observe", "enforce")
+_QUEST_TOOL_FILTER_KEYS = (
+    "quest_tool_filter_enabled",
+    "quest_tool_filter_mode",
+)
+_KNOWLEDGE_ENVIRONMENT_KEYS = (
+    "enable_global_knowledge",
+    "global_knowledge_top_k",
+    "enable_environment_context",
+)
 
 
 class OperatorSettingsError(RuntimeError):
@@ -605,13 +615,152 @@ class OperatorSettings:
         )
         return self.diagnostics_snapshot()
 
-    def _bool_cfg(self, key: str) -> bool:
-        value = self.config.get(key, False)
+    def quest_tool_filter_snapshot(self) -> dict[str, Any]:
+        return {
+            "enabled": self._bool_cfg("quest_tool_filter_enabled", True),
+            "mode": self._quest_tool_filter_mode(),
+            "config_writable": config_is_writable(self.config),
+        }
+
+    def _quest_tool_filter_mode(self) -> str:
+        mode = (
+            str(self.config.get("quest_tool_filter_mode", "observe") or "observe")
+            .strip()
+            .lower()
+        )
+        # 与 main.py 钩子的生效语义一致：任何非 enforce 取值都按 observe 观测。
+        return mode if mode in _QUEST_TOOL_FILTER_MODES else "observe"
+
+    async def save_quest_tool_filter_settings(
+        self,
+        *,
+        enabled: bool,
+        mode: str,
+    ) -> dict[str, Any]:
+        switch = _strict_switch(
+            enabled,
+            "invalid_quest_tool_filter_switch",
+            "工具过滤总开关必须是布尔值",
+        )
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in _QUEST_TOOL_FILTER_MODES:
+            raise OperatorSettingsError(
+                "invalid_quest_tool_filter_mode",
+                422,
+                "工具过滤模式必须是 observe 或 enforce",
+            )
+        changes = {
+            "quest_tool_filter_enabled": switch,
+            "quest_tool_filter_mode": normalized_mode,
+        }
+        await self._persist_many(changes)
+        # 热更新：main.py 的 on_llm_request 工具过滤钩子每次调用都重新读
+        # self.config，持久化已写入内存配置；这里再显式赋值兜底，保证不支持
+        # 内存合并的配置后端同样即时生效（不新增插件属性，最小侵入）。
+        for key, value in changes.items():
+            try:
+                self.config[key] = value
+            except (AttributeError, TypeError):
+                continue
+        self._diagnostic(
+            "quest_tool_filter.settings_updated",
+            component="quest_chain",
+            status="ready",
+            enabled=switch,
+            mode=normalized_mode,
+        )
+        return self.quest_tool_filter_snapshot()
+
+    def knowledge_environment_snapshot(self) -> dict[str, Any]:
+        return {
+            "enable_global_knowledge": self._bool_cfg(
+                "enable_global_knowledge", True
+            ),
+            "global_knowledge_top_k": self._int_cfg(
+                "global_knowledge_top_k", 5, 1, 10
+            ),
+            "enable_environment_context": self._bool_cfg(
+                "enable_environment_context", True
+            ),
+            "config_writable": config_is_writable(self.config),
+        }
+
+    async def save_knowledge_environment_settings(
+        self,
+        *,
+        enable_global_knowledge: bool,
+        global_knowledge_top_k: int,
+        enable_environment_context: bool,
+    ) -> dict[str, Any]:
+        knowledge_enabled = _strict_switch(
+            enable_global_knowledge,
+            "invalid_knowledge_environment_switch",
+            "全局知识开关必须是布尔值",
+        )
+        environment_enabled = _strict_switch(
+            enable_environment_context,
+            "invalid_knowledge_environment_switch",
+            "环境上下文开关必须是布尔值",
+        )
+        top_k = global_knowledge_top_k
+        if (
+            isinstance(top_k, bool)
+            or not isinstance(top_k, int)
+            or not 1 <= top_k <= 10
+        ):
+            raise OperatorSettingsError(
+                "invalid_global_knowledge_top_k",
+                422,
+                "全局知识条数必须是 1 到 10 的整数",
+            )
+        changes = {
+            "enable_global_knowledge": knowledge_enabled,
+            "global_knowledge_top_k": top_k,
+            "enable_environment_context": environment_enabled,
+        }
+        await self._persist_many(changes)
+        # 热更新：orchestrator 持有 knowledge/environment 适配器，直接改写
+        # 运行时属性（参照 allow_direct_provider_fallback 的赋值语义），
+        # 下一轮对话的 _read_knowledge/_read_environment 即按新开关执行。
+        orchestrator = self.orchestrator
+        configure = (
+            getattr(orchestrator, "configure_knowledge_environment", None)
+            if orchestrator is not None
+            else None
+        )
+        if callable(configure):
+            configure(
+                knowledge_enabled=knowledge_enabled,
+                knowledge_top_k=top_k,
+                environment_enabled=environment_enabled,
+            )
+        self._diagnostic(
+            "knowledge_environment.settings_updated",
+            component="quest_chain",
+            status="ready",
+            knowledge_enabled=knowledge_enabled,
+            environment_enabled=environment_enabled,
+            top_k=top_k,
+        )
+        return self.knowledge_environment_snapshot()
+
+    def _bool_cfg(self, key: str, default: bool = False) -> bool:
+        value = self.config.get(key, default)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "on"}
         return bool(value)
+
+    def _int_cfg(self, key: str, default: int, minimum: int, maximum: int) -> int:
+        value = self.config.get(key, default)
+        if isinstance(value, bool):
+            return default
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return default
+        return min(max(number, minimum), maximum)
 
     def _float_cfg(self, key: str, default: float) -> float:
         try:
@@ -1305,6 +1454,8 @@ class OperatorSettings:
                 "pairing_identity_sync_state",
                 "bridge_api_key",
                 *_DIAGNOSTICS_KEYS,
+                *_QUEST_TOOL_FILTER_KEYS,
+                *_KNOWLEDGE_ENVIRONMENT_KEYS,
             }
             for key in changes
         ):
@@ -1381,6 +1532,12 @@ def _strict_bool(value: object, field: str) -> bool:
             422,
             f"诊断开关 {field} 必须是布尔值",
         )
+    return value
+
+
+def _strict_switch(value: object, code: str, message: str) -> bool:
+    if not isinstance(value, bool):
+        raise OperatorSettingsError(code, 422, message)
     return value
 
 
