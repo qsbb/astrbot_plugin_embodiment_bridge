@@ -78,7 +78,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 # Quest/伴夏具身会话需要隐藏的 QQ/直播/VTS 专属工具默认黑名单。

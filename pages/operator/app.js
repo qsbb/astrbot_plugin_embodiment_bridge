@@ -223,7 +223,8 @@ function renderServiceStatus(service) {
     String(Number(sessions.queued_events || 0));
 
   const capabilities = serviceState.capabilities || {};
-  ["dialogue", "bridge", "identity_configured", "stt", "tts", "avatar_actions"]
+  ["dialogue", "bridge", "identity_configured", "stt", "tts", "avatar_actions",
+    "interaction_decision", "direct_provider_fallback"]
     .forEach((name) => renderCapability(name, capabilities[name], enabled));
 
   const control = document.getElementById("service-control-button");
@@ -1573,6 +1574,18 @@ function renderQuestIdentitySettings(identity) {
       : "请填写具身客户端专用 API Key";
   ["quest-client-id", "quest-bot-id", "quest-user-id", "quest-api-key"]
     .forEach((id) => { document.getElementById(id).disabled = !writable; });
+
+  // 身份同步只读行：pending 时服务端拒绝新具身会话，必须可见（审计 C-4）。
+  const syncNode = document.getElementById("quest-identity-sync-state");
+  if (syncNode) {
+    const syncLabels = {
+      ready: "身份同步：就绪",
+      pending: "身份同步：进行中——同步完成前新具身会话会被拒绝",
+      failed: "身份同步：失败——请检查“情/序”后重新保存身份",
+    };
+    const syncState = String(questIdentitySettings.identity_sync_state || "ready");
+    syncNode.textContent = syncLabels[syncState] || ("身份同步：" + syncState);
+  }
 
   const control = questIdentitySettings.control_plane || {};
   let source = "未安装“序”，由“临”本地精确绑定";

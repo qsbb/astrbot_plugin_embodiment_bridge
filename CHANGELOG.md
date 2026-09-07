@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 1.4.0 - 2026-09-07
+
+### Added
+
+- operator 页面补齐后端既有能力（用户拍板批次 1，纯前端）：
+  Quest 身份卡新增「身份同步」只读状态行（pending 时服务端拒绝新具身
+  会话，此前页面零线索）；能力条新增「交互决策」「直连回退」两盏灯
+  （渲染 capabilities.interaction_decision / direct_provider_fallback，
+  字段自 1.3.0 起已在响应中）
+
+
 ## 1.3.0 - 2026-09-07
 
 ### Removed（破坏性变更：移除 AstrBot 主消息链路）
