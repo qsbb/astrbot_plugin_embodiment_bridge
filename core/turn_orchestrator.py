@@ -2048,7 +2048,13 @@ class TurnOrchestrator:
             return "AstrBot 消息链已完成，但没有产生可用回复"
         if reason == "astrbot_pipeline_timeout":
             return "AstrBot 消息链路繁忙，请稍后重试"
-        return "AstrBot 消息链路不可用，请检查临的独立日志"
+        if reason == "quest_enriched_pipeline_disabled":
+            return "临专属链路已停用，请在控制台启用"
+        if reason == "quest_enriched_pipeline_timeout":
+            return "临专属链路处理超时，请稍后重试"
+        if reason == "chat_provider_not_configured":
+            return "尚未选择临的聊天 Provider，请在控制台配置"
+        return "临专属链路不可用，请检查临的独立日志"
 
     async def _emit_pipeline_empty_error(
         self,
