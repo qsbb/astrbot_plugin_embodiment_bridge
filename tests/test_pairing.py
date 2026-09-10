@@ -407,17 +407,30 @@ def test_private_http_requires_server_and_session_opt_in() -> None:
 
 
 def test_remote_http_opt_in_allows_public_plain_http() -> None:
-    """allow_insecure_remote_http 放开私网限制：公网/内网穿透明文 HTTP 可配对。"""
+    """Remote plain HTTP requires matching server and client opt-ins."""
     remote_manager = pairing_manager(
-        exchange_url="http://192.168.50.10:8520/quest/pairing/exchange",
+        exchange_url="http://203.0.113.20:8520/quest/pairing/exchange",
         allow_remote_http=True,
     )
+    with pytest.raises(PairingError) as missing_client_opt_in:
+        remote_manager.create(
+            "owner",
+            create_payload(
+                public_url="http://203.0.113.10",
+                port=8520,
+                allow_insecure_http=False,
+                allow_insecure_remote_http=False,
+            ),
+        )
+    assert missing_client_opt_in.value.code == "https_required"
+
     created = remote_manager.create(
         "owner",
         create_payload(
             public_url="http://203.0.113.10",
             port=8520,
             allow_insecure_http=False,
+            allow_insecure_remote_http=True,
         ),
     )
     exchanged = remote_manager.exchange(
@@ -427,7 +440,16 @@ def test_remote_http_opt_in_allows_public_plain_http() -> None:
     assert exchanged.configuration["base_url"] == (
         f"http://203.0.113.10:8520{PUBLIC_API_PATH}"
     )
-    assert exchanged.configuration["allow_insecure_http"] is True
+    assert exchanged.configuration["allow_insecure_http"] is False
+    assert exchanged.configuration["allow_insecure_remote_http"] is True
+
+    # Remote opt-in must never authorize a private HTTP authority.
+    private_exchange = pairing_manager(
+        exchange_url="http://192.168.50.10:8520/quest/pairing/exchange",
+        allow_remote_http=True,
+    )
+    assert private_exchange.bootstrap_ready is False
+    assert private_exchange.bootstrap_reason == "https_required"
 
     without_opt_in = pairing_manager(
         exchange_url="https://192.168.50.10:8520/quest/pairing/exchange",
@@ -438,7 +460,8 @@ def test_remote_http_opt_in_allows_public_plain_http() -> None:
             create_payload(
                 public_url="http://203.0.113.10",
                 port=8520,
-                allow_insecure_http=True,
+                allow_insecure_http=False,
+                allow_insecure_remote_http=True,
             ),
         )
     assert public_http.value.code == "https_required"

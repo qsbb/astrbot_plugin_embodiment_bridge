@@ -18,6 +18,7 @@ from ..core.pairing import (
     PAIRING_PROTOCOL_VERSION,
     PUBLIC_API_PATH,
     normalize_pairing_exchange_url,
+    normalize_public_base_url,
     PairingCreateRequest,
     PairingError,
     PairingExchangeRequest,
@@ -633,7 +634,7 @@ class PairingHttpApi:
                 else ""
             )
             quest_url = (
-                normalize_pairing_exchange_url(
+                normalize_public_base_url(
                     quest_raw,
                     allow_private_http=allow_private,
                     allow_remote_http=allow_remote,
