@@ -5,6 +5,7 @@ import json
 from copy import copy
 from dataclasses import replace
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -46,7 +47,11 @@ from .core.config_migration import load_legacy_config_changes
 from .core.interaction_policy import InteractionPolicy
 from .core.models import FastActionFeedback, SpatialContextSnapshot, VerifiedActionFacts
 from .core.operator_settings import OperatorSettings
-from .core.pairing import PairingExchangeService, PairingManager
+from .core.pairing import (
+    PairingExchangeService,
+    PairingManager,
+    normalize_certificate_pin,
+)
 from .core.persona_profiles import PersonaProfileStore
 from .core.persona_service import (
     QuestPersonaService,
@@ -108,6 +113,23 @@ DEFAULT_QUEST_TOOL_BLACKLIST_PREFIXES: tuple[str, ...] = (
     # 我会和你在一起注册的 QQ 群一起看/一起听
     "open_together_",
 )
+
+
+def _same_effective_authority(first: str, second: str) -> bool:
+    try:
+        a = urlsplit(str(first or ""))
+        b = urlsplit(str(second or ""))
+        if a.scheme.lower() not in {"http", "https"} or b.scheme.lower() not in {"http", "https"}:
+            return False
+        if a.scheme.lower() != b.scheme.lower() or a.hostname is None or b.hostname is None:
+            return False
+        return (
+            a.hostname.lower() == b.hostname.lower()
+            and (a.port or (443 if a.scheme.lower() == "https" else 80))
+            == (b.port or (443 if b.scheme.lower() == "https" else 80))
+        )
+    except ValueError:
+        return False
 
 
 def _build_spatial_context_overlay(event: Any) -> str:
@@ -522,15 +544,10 @@ class EmbodimentBridgePlugin(Star):
             server_timing_enabled=self._bool_config("server_timing_enabled", False),
             streaming_final_grace_seconds=self.streaming_final_grace_seconds,
         )
-        self.pairing = PairingManager(
-            bridge_api_key=bridge_api_key,
-            exchange_url=pairing_exchange_proxy_url,
-            allow_private_http=allow_private_http_pairing,
-            allow_remote_http=allow_remote_http_pairing,
-        )
-        self._fallback_exchange_url = self.pairing.exchange_url
-        self._fallback_exchange_reason = self.pairing.bootstrap_reason
-        self.pairing_exchange_service = PairingExchangeService(self.pairing)
+        # Build the listener configuration first so the pairing manager can use
+        # the same effective certificate fingerprint.  This keeps the QR and
+        # exchange response authoritative even when the pin was derived from a
+        # local PEM certificate rather than copied into a second setting.
         listener_config = BuiltinListenerConfig.from_mapping(
             config,
             allow_private_http=allow_private_http_pairing,
@@ -538,6 +555,29 @@ class EmbodimentBridgePlugin(Star):
             max_json_body_bytes=max_json_body_bytes,
             max_audio_request_bytes=max_audio_request_bytes,
         )
+        pairing_pin = listener_config.certificate_pin_sha256
+        # A TLS-enabled built-in listener is the certificate trust source. Do
+        # not let the constructor bind its derived pin to an unrelated external
+        # proxy before the listener has successfully started and selected its
+        # live public authority. External HTTPS fallback is used only when the
+        # built-in listener is not terminating TLS.
+        active_tls_listener = listener_config.enabled and (
+            listener_config.tls_enabled or listener_config.tls_configuration_invalid
+        )
+        initial_exchange_url = "" if active_tls_listener else pairing_exchange_proxy_url
+        pin_authority = initial_exchange_url if pairing_pin and not active_tls_listener else ""
+        self.pairing = PairingManager(
+            bridge_api_key=bridge_api_key,
+            exchange_url=initial_exchange_url,
+            allow_private_http=allow_private_http_pairing,
+            allow_remote_http=allow_remote_http_pairing,
+            certificate_pin_sha256=pairing_pin,
+            certificate_pin_authority=pin_authority,
+            certificate_pin_error=listener_config.certificate_pin_error,
+        )
+        self._fallback_exchange_url = self.pairing.exchange_url
+        self._fallback_exchange_reason = self.pairing.bootstrap_reason
+        self.pairing_exchange_service = PairingExchangeService(self.pairing)
         self.api_principal_verifier = AstrBotApiPrincipalVerifier(
             listener_config.upstream_base_url
         )
@@ -562,6 +602,8 @@ class EmbodimentBridgePlugin(Star):
             orchestrator=self.orchestrator,
             logger=self._component_logger,
             diagnostic_log=self.diagnostic_log,
+            pairing_manager=self.pairing,
+            pairing_sync=self._sync_pairing_transport,
             enabled=self._bool_config("bridge_service_enabled", True),
             config_save_lock=self._config_save_lock,
         )
@@ -653,6 +695,7 @@ class EmbodimentBridgePlugin(Star):
                     config.get("pairing_relationship_profile_id", "") or ""
                 ),
                 "allow_insecure_http": allow_private_http_pairing,
+                "allow_insecure_remote_http": allow_remote_http_pairing,
                 "ttl_seconds": self._int_config("pairing_ttl_seconds", 120, 60, 300),
             },
             max_json_body_bytes=min(max_json_body_bytes, 65_536),
@@ -714,6 +757,53 @@ class EmbodimentBridgePlugin(Star):
         self.astrbot_tts.max_output_bytes = max_tts_bytes
         self.voice_hub_tts.max_output_bytes = max_tts_bytes
 
+    async def _sync_pairing_transport(self, *, persist_derived_public_url: bool = False) -> None:
+        listener = self.pairing_listener
+        config = listener.config
+        if listener.ready and listener.public_exchange_url:
+            self.pairing.configure_exchange_url(
+                listener.public_exchange_url,
+                missing_reason="pairing_listener_public_url_missing",
+                trusted_listener=True,
+            )
+            public_url = listener.public_exchange_url.removesuffix("/pairing/exchange")
+            if public_url:
+                self.pairing_api.pairing_defaults["public_url"] = public_url
+                configured_public = str(self.config.get("pairing_public_url", "") or "").strip()
+                if persist_derived_public_url and not configured_public:
+                    await save_config_changes(
+                        self.config,
+                        {"pairing_public_url": public_url},
+                    )
+            return
+        if config.enabled and (config.tls_enabled or config.tls_configuration_invalid):
+            self.pairing.configure_exchange_url(
+                "",
+                missing_reason=(
+                    config.certificate_pin_error
+                    or config.validation_reason
+                    or listener.status_snapshot().get("reason")
+                    or "tls_listener_unavailable"
+                ),
+            )
+            self.pairing_api.pairing_defaults["public_url"] = ""
+            return
+        if self._fallback_exchange_url:
+            self.pairing.configure_exchange_url(
+                self._fallback_exchange_url,
+                missing_reason=self._fallback_exchange_reason,
+            )
+        else:
+            self.pairing.configure_exchange_url(
+                "",
+                missing_reason=str(
+                    listener.status_snapshot().get("reason")
+                    or self._fallback_exchange_reason
+                ),
+            )
+        configured_public = str(self.config.get("pairing_public_url", "") or "").strip()
+        self.pairing_api.pairing_defaults["public_url"] = configured_public
+
     async def initialize(self) -> None:
         await self.diagnostic_log.start()
         # Install after all currently loaded plugin handlers are registered.
@@ -750,24 +840,8 @@ class EmbodimentBridgePlugin(Star):
             ready=identity_refresh["status"] in {"not_configured", "resolved"},
         )
         await self.service.initialize()
+        await self._sync_pairing_transport()
         listener_status = self.pairing_listener.status_snapshot()
-        if self.pairing_listener.ready and self.pairing_listener.public_exchange_url:
-            self.pairing.configure_exchange_url(
-                self.pairing_listener.public_exchange_url,
-                missing_reason="pairing_listener_public_url_missing",
-            )
-        elif self._fallback_exchange_url:
-            self.pairing.configure_exchange_url(
-                self._fallback_exchange_url,
-                missing_reason=self._fallback_exchange_reason,
-            )
-        else:
-            self.pairing.configure_exchange_url(
-                "",
-                missing_reason=str(
-                    listener_status.get("reason") or self._fallback_exchange_reason
-                ),
-            )
         if not self.pairing.bootstrap_ready:
             self._component_logger.warning(
                 "[embodiment-bridge] pairing bootstrap disabled: reason=%s",

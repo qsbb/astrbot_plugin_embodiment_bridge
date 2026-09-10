@@ -35,7 +35,7 @@ AstrBot Dashboard 对 `/api/v1/plugins/extensions/{plugin_path}` 的 GET/POST/PU
 - 服务端 `allow_private_http_pairing=true`。
 - Bridge 和 exchange URL 的主机是 RFC1918 IPv4 或 IPv6 ULA 字面量。
 
-快速绑定 Page 不读取或提交 HTTP 开关与客户端 IP。成功 configuration 才返回 `allow_insecure_http=true`；高熵 QR token 依靠短 TTL 和单次消费保护，6 位短码继续受每来源及全局限速。兼容创建请求仍可显式设置 `expected_remote_ip`，设置后 exchange 的直接来源必须精确匹配。任一条件不满足时失败关闭；公网地址和域名仍强制 HTTPS。
+快速绑定 Page 不读取或提交客户端本地 HTTP 开关与客户端 IP。成功 configuration 才返回对应的 `allow_insecure_http` / `allow_insecure_remote_http`；高熵 QR token 依靠短 TTL 和单次消费保护，6 位短码继续受每来源及全局限速。兼容创建请求仍可显式设置 `expected_remote_ip`，设置后 exchange 的直接来源必须精确匹配。任一条件不满足时失败关闭；裸地址默认 HTTPS，明文必须显式写 `http://` 并同时满足服务端与客户端对应 opt-in。
 
 ## 内置 listener 威胁边界
 
@@ -51,4 +51,4 @@ AstrBot Dashboard 对 `/api/v1/plugins/extensions/{plugin_path}` 的 GET/POST/PU
 - 端口占用、配置错误和上游不可达只产生脱敏 degraded/disabled 状态，不阻止插件其余官方路由加载。
 - 日志不记录 Authorization、Bridge Key、token、短码、请求体或完整 query。
 
-Docker `host 8520 -> container 8520` 映射本身不会启动服务。只有 `pairing_listener_enabled=true` 且插件初始化绑定成功后，容器内才真实监听。内置 listener 不提供公网 TLS；公网仍必须在外层部署客户端信任的 HTTPS。
+Docker `host 8520 -> container 8520` 映射本身不会启动服务。只有 `pairing_listener_enabled=true` 且插件初始化绑定成功后，容器内才真实监听。内置 listener 可选 TLS 1.2+ 与 PEM 证书/私钥，在高端口直接提供 HTTPS；TLS 配置无效时不启动，也不会静默回落为 HTTP。

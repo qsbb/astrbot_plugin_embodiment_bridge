@@ -9,8 +9,9 @@
 3. 选择聊天模型 Provider；如需受保护的关系上下文，由 AstrBot 管理员在服务端同时设置固定的 `trusted_client_id` 和真实原始 `trusted_platform_id`。配对页和 Unity 都不能替代这项可信配置。
 4. 私网优先启用内置 listener：配置 `pairing_listener_enabled`、监听 IP/端口、固定 loopback 上游和 `pairing_listener_public_url`。它直接复用同一个配对状态机，不要求新客户端预先持有 AstrBot API Key。
 5. 旧 `pairing_exchange_proxy_url` 仍可作为外部 Nginx 兼容 fallback；它不再是私网唯一入口。AstrBot 的 `register_web_api` 本身仍不支持匿名例外，详情见 [PAIRING_BOOTSTRAP_AUDIT_CN.md](PAIRING_BOOTSTRAP_AUDIT_CN.md)。
-6. 公网必须部署客户端信任的 HTTPS。受控私网可显式启用 `allow_private_http_pairing`，但只接受私网 IP 字面量；内置 listener 不终止公网 TLS。
-7. 在 AstrBot 已安装插件页面打开本插件的“具身服务控制台”Page（1.3.0 起快速绑定收编进控制台，独立配对 Page 已移除）。
+6. 私网明文 HTTP 必须同时显式启用服务端 `allow_private_http_pairing` 与客户端私网 HTTP opt-in，且只接受私网 IP 字面量；公网/非私网远程 HTTP 还必须同时显式启用服务端 `allow_insecure_remote_http` 与客户端 remote-HTTP 开关。
+7. 启用 `pairing_listener_tls_enabled` 并配置 PEM 证书与私钥后，内置 listener 可在高端口（例如 18443）直接提供 HTTPS；`pairing_listener_public_url`/`pairing_public_url` 应使用 `https://` URL。自签证书 pin 使用叶子证书 DER 的 SHA-256 摘要，可随 QR/兑换配置下发；TLS 证书、私钥、主机名或 pin 错误不会自动降级到 HTTP，也不会回退到外部代理。
+8. 在 AstrBot 已安装插件页面打开本插件的“具身服务控制台”Page（1.3.0 起快速绑定收编进控制台，独立配对 Page 已移除）。
 
 控制台内的快速绑定区不承担角色或连接设置。它不会读取、显示或让操作者填写客户端 IP、AstrBot API Key、平台身份、客户端 ID、用户/机器人/群组 ID、关系档案 ID 或有效期。
 

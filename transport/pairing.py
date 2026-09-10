@@ -586,20 +586,6 @@ class PairingHttpApi:
             ).strip()
             if public_url:
                 self.pairing_defaults["public_url"] = public_url
-            if self.listener.config.enabled:
-                if self.listener.ready and self.listener.public_exchange_url:
-                    self.manager.configure_exchange_url(
-                        self.listener.public_exchange_url,
-                        missing_reason="pairing_listener_public_url_missing",
-                    )
-                else:
-                    status = self.listener.status_snapshot()
-                    self.manager.configure_exchange_url(
-                        "",
-                        missing_reason=str(
-                            status.get("reason") or "listener_unavailable"
-                        ),
-                    )
             return _json_no_store({"success": True, "service": service})
         except Exception as exc:
             return self._error(exc, "save_listener_port")
@@ -1475,8 +1461,11 @@ class PairingHttpApi:
                     "pairing_protocol_version": PAIRING_PROTOCOL_VERSION,
                     "public_api_path": PUBLIC_API_PATH,
                     "bridge_key_configured": len(self.manager.bridge_api_key) >= 32,
-                    "requires_https": not self.manager.allow_private_http,
+                    "requires_https": not (
+                        self.manager.allow_private_http or self.manager.allow_remote_http
+                    ),
                     "allow_private_http": self.manager.allow_private_http,
+                    "allow_remote_http": self.manager.allow_remote_http,
                     "bootstrap_ready": self.manager.bootstrap_ready,
                     "bootstrap_reason": self.manager.bootstrap_reason,
                     "exchange_url": self.manager.exchange_url,
@@ -1600,6 +1589,15 @@ class PairingHttpApi:
             "expected_remote_ip": "",
             "allow_insecure_http": bool(
                 self.pairing_defaults.get("allow_insecure_http", False)
+            ),
+            "allow_insecure_remote_http": bool(
+                self.pairing_defaults.get("allow_insecure_remote_http", False)
+            ),
+            # Quick pairing must use the server-derived pin, never a client
+            # supplied value.  PairingManager still validates any explicit
+            # management request against the same effective pin.
+            "certificate_pin_sha256": getattr(
+                self.manager, "certificate_pin_sha256", ""
             ),
             "ttl_seconds": self.pairing_defaults.get("ttl_seconds", 120),
         }

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import ipaddress
 import re
+import ssl
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
@@ -16,6 +20,7 @@ from ..core.pairing import (
     PairingError,
     PairingExchangeRequest,
     PairingExchangeService,
+    normalize_certificate_pin,
     normalize_pairing_exchange_url,
 )
 from ..core.plugin_identity import (
@@ -66,6 +71,42 @@ _FORWARDED_RESPONSE_HEADERS = {
 }
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 _UNSAFE_RAW_PATH_RE = re.compile(r"(?i)(?:%2f|%5c|%2e|\\|://|\.\.)")
+_CERTIFICATE_PEM_RE = re.compile(
+    rb"-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----",
+    re.DOTALL,
+)
+_MAX_CERTIFICATE_FILE_BYTES = 4 * 1024 * 1024
+
+
+def certificate_pin_from_pem(path: str) -> str:
+    """Return the SHA-256 digest of the first leaf certificate in a PEM file.
+
+    Only regular files within the configured size bound are accepted. This
+    avoids following device/FIFO paths and keeps the advertised fingerprint
+    deterministic for the file that is later loaded by OpenSSL.
+    """
+
+    certificate_path = Path(path)
+    try:
+        stat = certificate_path.stat()
+    except OSError as exc:
+        raise ValueError("TLS certificate file is unavailable") from exc
+    if not certificate_path.is_file() or stat.st_size <= 0 or stat.st_size > _MAX_CERTIFICATE_FILE_BYTES:
+        raise ValueError("TLS certificate file size is invalid")
+    raw = certificate_path.read_bytes()
+    if not raw or len(raw) > _MAX_CERTIFICATE_FILE_BYTES:
+        raise ValueError("TLS certificate file size is invalid")
+    match = _CERTIFICATE_PEM_RE.search(raw)
+    if match is None:
+        raise ValueError("TLS certificate PEM is missing")
+    encoded = re.sub(rb"\s+", b"", match.group(1))
+    try:
+        der = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("TLS certificate PEM is invalid") from None
+    if not der:
+        raise ValueError("TLS certificate DER is empty")
+    return hashlib.sha256(der).hexdigest()
 
 
 class ListenerHttpError(RuntimeError):
@@ -83,6 +124,8 @@ class BuiltinListenerConfig:
     port: int
     upstream_base_url: str
     public_exchange_url: str
+    # Keep the pre-TLS fields above in their original order for callers that
+    # still construct this dataclass positionally.
     validation_reason: str = ""
     public_url_reason: str = ""
     max_json_body_bytes: int = 65_536
@@ -92,6 +135,16 @@ class BuiltinListenerConfig:
     body_timeout_seconds: float = 10.0
     upstream_connect_timeout_seconds: float = 5.0
     upstream_response_timeout_seconds: float = 10.0
+    tls_enabled: bool = False
+    tls_cert_path: str = ""
+    tls_key_path: str = ""
+    # Effective leaf-certificate DER SHA-256. Never include the raw value in
+    # logs or status responses; it is intentionally public only in pairing data.
+    certificate_pin_sha256: str = ""
+    certificate_pin_error: str = ""
+    # A malformed/explicit TLS setting blocks external pairing fallback even
+    # though the optional listener itself remains allowed to degrade.
+    tls_configuration_invalid: bool = False
 
     @classmethod
     def from_mapping(
@@ -99,9 +152,9 @@ class BuiltinListenerConfig:
         values: Mapping[str, Any],
         *,
         allow_private_http: bool,
-        allow_remote_http: bool = False,
         max_json_body_bytes: int,
         max_audio_request_bytes: int,
+        allow_remote_http: bool = False,
     ) -> BuiltinListenerConfig:
         enabled_raw = values.get("pairing_listener_enabled", False)
         enabled = enabled_raw if isinstance(enabled_raw, bool) else False
@@ -143,18 +196,62 @@ class BuiltinListenerConfig:
             upstream = ""
             reason = reason or "invalid_upstream_url"
 
+        tls_raw = values.get("pairing_listener_tls_enabled", False)
+        tls_enabled = tls_raw if isinstance(tls_raw, bool) else False
+        if not isinstance(tls_raw, bool):
+            reason = reason or "invalid_tls_enabled"
+        tls_cert_path = str(values.get("pairing_listener_tls_cert_path", "") or "").strip()
+        tls_key_path = str(values.get("pairing_listener_tls_key_path", "") or "").strip()
+        configured_pin = ""
+        pin_error = ""
+        try:
+            configured_pin = normalize_certificate_pin(
+                values.get("pairing_certificate_pin_sha256", "")
+            )
+        except ValueError:
+            pin_error = "invalid_certificate_pin_sha256"
+            reason = reason or pin_error
+
+        effective_pin = "" if pin_error else configured_pin
+        if tls_enabled:
+            if not tls_cert_path or not tls_key_path:
+                reason = reason or "tls_certificate_paths_missing"
+            else:
+                try:
+                    actual_pin = certificate_pin_from_pem(tls_cert_path)
+                except (OSError, ValueError):
+                    actual_pin = ""
+                    reason = reason or "tls_certificate_invalid"
+                if actual_pin and not pin_error:
+                    if configured_pin and configured_pin != actual_pin:
+                        reason = reason or "tls_certificate_pin_mismatch"
+                        pin_error = "tls_certificate_pin_mismatch"
+                        effective_pin = ""
+                    else:
+                        # Derive the advertised pin from the certificate itself;
+                        # operators do not have to copy it manually.
+                        effective_pin = actual_pin
+
         public_raw = str(values.get("pairing_listener_public_url", "") or "").strip()
         public_url = ""
         public_reason = ""
         if public_raw:
             try:
-                public_url = normalize_listener_public_url(
-                    public_raw,
-                    allow_private_http=allow_private_http,
-                    allow_remote_http=allow_remote_http,
-                )
-            except PairingError as exc:
-                public_reason = exc.code
+                raw_scheme = urlsplit(public_raw).scheme.lower()
+            except ValueError:
+                raw_scheme = ""
+            if tls_enabled and raw_scheme != "https":
+                # Never leave an HTTP URL usable when TLS termination is enabled.
+                public_reason = "tls_public_url_must_be_https"
+            else:
+                try:
+                    public_url = normalize_listener_public_url(
+                        public_raw,
+                        allow_private_http=allow_private_http,
+                        allow_remote_http=allow_remote_http,
+                    )
+                except PairingError as exc:
+                    public_reason = exc.code
         else:
             public_reason = "pairing_listener_public_url_missing"
 
@@ -164,8 +261,23 @@ class BuiltinListenerConfig:
             port=port,
             upstream_base_url=upstream,
             public_exchange_url=public_url,
+            certificate_pin_sha256=effective_pin,
+            certificate_pin_error=pin_error,
+            tls_enabled=tls_enabled,
+            tls_cert_path=tls_cert_path,
+            tls_key_path=tls_key_path,
             validation_reason=reason,
             public_url_reason=public_reason,
+            tls_configuration_invalid=(
+                tls_enabled
+                and (
+                    bool(reason)
+                    or bool(pin_error)
+                    or not tls_cert_path
+                    or not tls_key_path
+                    or not effective_pin
+                )
+            ) or (reason == "invalid_tls_enabled"),
             max_json_body_bytes=max(4_096, min(262_144, max_json_body_bytes)),
             max_audio_request_bytes=max(
                 8_192,
@@ -299,6 +411,7 @@ class BuiltinQuestListener:
         self._closed = False
         self._bound_port = config.port
         self._reason = "disabled" if not config.enabled else "not_started"
+        self._ssl_context: ssl.SSLContext | None = None
 
     @property
     def ready(self) -> bool:
@@ -315,6 +428,17 @@ class BuiltinQuestListener:
             "bind_host": self.config.bind_host,
             "port": self._bound_port,
             "upstream_kind": "loopback_http",
+            "tls_enabled": self.config.tls_enabled,
+            # Report only the transport that is currently serving traffic;
+            # configured-but-invalid/stopped TLS must not advertise usable HTTPS.
+            "public_scheme": (
+                "https"
+                if self._ready and self.config.tls_enabled and self._ssl_context is not None
+                else "http"
+                if self._ready and not self.config.tls_enabled
+                else "unavailable"
+            ),
+            "certificate_pin_configured": bool(self.config.certificate_pin_sha256),
             "reason": self._reason,
         }
 
@@ -359,6 +483,21 @@ class BuiltinQuestListener:
             if self.config.validation_reason:
                 self._reason = self.config.validation_reason
                 return
+            self._ssl_context = None
+            if self.config.tls_enabled:
+                try:
+                    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                    context.minimum_version = ssl.TLSVersion.TLSv1_2
+                    # An empty password prevents OpenSSL from prompting on stdin.
+                    context.load_cert_chain(
+                        self.config.tls_cert_path,
+                        self.config.tls_key_path,
+                        password="",
+                    )
+                    self._ssl_context = context
+                except (OSError, ValueError):
+                    self._reason = "tls_certificate_invalid"
+                    return
             try:
                 timeout = aiohttp.ClientTimeout(
                     total=None,
@@ -393,6 +532,7 @@ class BuiltinQuestListener:
                     self._runner,
                     self.config.bind_host,
                     self.config.port,
+                    ssl_context=self._ssl_context,
                 )
                 await self._site.start()
                 server = self._site._server

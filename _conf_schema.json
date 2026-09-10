@@ -23,6 +23,29 @@
     "hint": "只允许 IP 字面量，禁止域名。容器部署通常填写 0.0.0.0。",
     "default": "0.0.0.0"
   },
+  "pairing_listener_tls_enabled": {
+    "description": "启用内置监听器 HTTPS",
+    "type": "bool",
+    "hint": "开启后必须同时填写证书和私钥 PEM 路径；关闭时保持 HTTP 兼容。",
+    "default": false
+  },
+  "pairing_listener_tls_cert_path": {
+    "description": "HTTPS 证书 PEM 路径",
+    "type": "string",
+    "default": ""
+  },
+  "pairing_listener_tls_key_path": {
+    "description": "HTTPS 私钥 PEM 路径",
+    "type": "string",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "pairing_certificate_pin_sha256": {
+    "description": "具身客户端 HTTPS 证书指纹（可选）",
+    "type": "string",
+    "hint": "严格填写叶子证书 DER 的 SHA-256 十六进制摘要（64 个字符）。内置 listener 开启 TLS 时会从证书自动计算并校验；不要填写 sha256: 前缀或冒号。HTTP 配置会忽略该字段。",
+    "default": ""
+  },
   "pairing_listener_port": {
     "description": "内置监听器端口",
     "type": "int",
@@ -70,9 +93,9 @@
     "default": false
   },
   "allow_insecure_remote_http": {
-    "description": "允许任意主机（含公网/内网穿透）使用明文 HTTP 配对和连接",
+    "description": "允许公网或远程地址使用明文 HTTP 配对和连接",
     "type": "bool",
-    "hint": "为没有 HTTPS 证书的家庭公网 IP、内网穿透（frp 等）准备的逃生门。开启后配对与对话将明文传输（含密钥与音频），请仅在自己的服务器上使用；能上 HTTPS 时务必关闭。",
+    "hint": "高风险逃生门。必须与客户端本次公网 HTTP 开关同时显式开启；只授权非私网地址，私网仍需 allow_private_http_pairing。开启后密钥和音频均为明文，仅限自有服务器且无法部署 HTTPS 时使用。",
     "default": false
   },
   "pairing_public_url": {

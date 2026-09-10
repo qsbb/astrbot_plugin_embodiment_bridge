@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -94,6 +95,8 @@ class BridgeServiceControl:
         orchestrator: Any,
         logger: Any,
         diagnostic_log: Any | None = None,
+        pairing_manager: Any | None = None,
+        pairing_sync: Any | None = None,
         enabled: bool = True,
         config_save_lock: asyncio.Lock | None = None,
     ) -> None:
@@ -103,22 +106,62 @@ class BridgeServiceControl:
         self.orchestrator = orchestrator
         self.logger = logger
         self.diagnostic_log = diagnostic_log
+        self.pairing_manager = pairing_manager
+        self.pairing_sync = pairing_sync
         self.enabled = bool(enabled)
         self._lock = asyncio.Lock()
         self._config_save_lock = config_save_lock or asyncio.Lock()
 
     async def initialize(self) -> None:
-        await self.sessions.set_accepting(self.enabled)
-        if self.enabled:
+        # The standalone listener owns the public session surface when enabled;
+        # keep the gate closed until it is ready. If the built-in listener is
+        # disabled, AstrBot's own authenticated route remains the serving path.
+        await self.sessions.set_accepting(False)
+        if not self.enabled:
+            await self.listener.stop(reason="service_disabled")
+            await self._sync_pairing_transport()
+            return
+        listener_status = self.listener.status_snapshot()
+        listener_configured = listener_status.get("enabled") is True
+        if listener_configured:
             try:
                 await self.listener.start()
             except Exception:
-                # A configured-but-unreachable listener must never leave the
-                # in-process session API accepting work that cannot be served.
                 await self.sessions.set_accepting(False)
                 raise
+            if not bool(getattr(self.listener, "ready", False)):
+                # The built-in listener is optional. Keep AstrBot's own
+                # authenticated routes usable while the public standalone
+                # surface reports its concrete degraded reason.
+                await self.sessions.set_accepting(True)
+                await self._sync_pairing_transport()
+                return
         else:
-            await self.listener.stop(reason="service_disabled")
+            await self.listener.stop(reason="listener_disabled")
+        await self.sessions.set_accepting(True)
+        await self._sync_pairing_transport()
+
+    async def _sync_pairing_transport(
+        self,
+        *,
+        persist_derived_public_url: bool = False,
+    ) -> None:
+        callback = self.pairing_sync
+        if callback is None:
+            return
+        try:
+            result = callback(
+                persist_derived_public_url=persist_derived_public_url,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            # Pairing bootstrap is allowed to degrade, but a failed sync must
+            # never prevent authenticated AstrBot routes from starting.
+            self.logger.warning(
+                "[embodiment-bridge] pairing transport sync failed: error_type=%s",
+                type(exc).__name__,
+            )
 
     def require_enabled(self) -> None:
         if not self.enabled:
@@ -203,32 +246,65 @@ class BridgeServiceControl:
                 await self.sessions.set_accepting(False)
                 try:
                     await self.listener.start()
+                    listener_configured = (
+                        self.listener.status_snapshot().get("enabled") is True
+                    )
+                    if listener_configured and not bool(
+                        getattr(self.listener, "ready", False)
+                    ):
+                        raise RuntimeError("listener_start_failed")
                 except Exception as exc:
                     await self.sessions.set_accepting(False)
+                    listener_config = getattr(self.listener, "config", None)
+                    active_tls = bool(
+                        getattr(listener_config, "enabled", False)
+                        and (
+                            getattr(listener_config, "tls_enabled", False)
+                            or getattr(listener_config, "tls_configuration_invalid", False)
+                        )
+                    )
                     try:
                         await self.listener.stop(reason="service_start_failed")
                     except Exception:
                         pass
-                    try:
-                        await self._persist(previous)
-                    except Exception:
-                        self.logger.warning(
-                            "[embodiment-bridge] failed to roll back service setting after listener start failure"
-                        )
-                    self.enabled = previous
-                    raise BridgeServiceControlError(
-                        "service_start_failed",
-                        503,
-                        "具身桥接服务启动失败，已恢复为关闭状态",
-                    ) from exc
-                self.enabled = True
-                await self.sessions.set_accepting(True)
-                event = "service.started"
+                    if active_tls:
+                        try:
+                            await self._persist(previous)
+                        except Exception:
+                            self.logger.warning(
+                                "[embodiment-bridge] failed to roll back service setting after listener start failure"
+                            )
+                        self.enabled = previous
+                        raise BridgeServiceControlError(
+                            "service_start_failed",
+                            503,
+                            "具身桥接服务启动失败，已恢复为关闭状态",
+                        ) from exc
+                    # A non-TLS built-in listener is an optional standalone
+                    # surface. Keep the authenticated service enabled so an
+                    # external HTTPS fallback can remain usable.
+                    self.enabled = True
+                    await self._sync_pairing_transport()
+                    await self.sessions.set_accepting(True)
+                    self.logger.warning(
+                        "[embodiment-bridge] optional listener unavailable; service running in degraded mode"
+                    )
+                    event = "service.started_degraded"
+                else:
+                    self.enabled = True
+                    await self._sync_pairing_transport()
+                    await self.sessions.set_accepting(True)
+                    event = "service.started"
             else:
                 self.enabled = False
                 await self.sessions.set_accepting(False)
                 await self.sessions.close_all_sessions()
+                if self.pairing_manager is not None:
+                    revoke_waiting = getattr(self.pairing_manager, "revoke_waiting", None)
+                    if callable(revoke_waiting):
+                        revoke_waiting()
                 await self.listener.stop(reason="service_disabled")
+                await self._sync_pairing_transport()
                 event = "service.stopped"
             snapshot = await self.status_snapshot()
             self._diagnostic(
@@ -271,8 +347,10 @@ class BridgeServiceControl:
                     await self.sessions.close_all_sessions()
                 await self.listener.stop(reason="port_reconfiguring")
                 self.listener.configure_port(port)
-                if self.enabled:
+                if self.enabled and self.listener.status_snapshot().get("enabled") is True:
                     await self.listener.start()
+                    if not bool(getattr(self.listener, "ready", False)):
+                        raise RuntimeError("listener_start_failed")
             except Exception as exc:
                 rollback_ready = False
                 try:
@@ -280,7 +358,7 @@ class BridgeServiceControl:
                     self.listener.configure_port(current_port)
                     if self.enabled:
                         await self.listener.start()
-                        rollback_ready = True
+                        rollback_ready = bool(getattr(self.listener, "ready", False))
                 except Exception:
                     self.logger.warning(
                         "[embodiment-bridge] failed to restart previous listener after port update failure"
@@ -292,11 +370,13 @@ class BridgeServiceControl:
                         "[embodiment-bridge] failed to roll back listener port configuration"
                     )
                 await self.sessions.set_accepting(self.enabled and rollback_ready)
+                await self._sync_pairing_transport()
                 raise BridgeServiceControlError(
                     "listener_port_update_failed",
                     503,
                     "监听端口切换失败，已尝试恢复原端口",
                 ) from exc
+            await self._sync_pairing_transport(persist_derived_public_url=True)
             await self.sessions.set_accepting(self.enabled)
             snapshot = await self.status_snapshot()
             self._diagnostic(

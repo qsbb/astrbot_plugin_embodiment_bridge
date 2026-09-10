@@ -80,9 +80,9 @@ Content-Type: application/json
 - 创建会话和后续访问必须使用同一个 AstrBot API Key 身份。
 - 内置 listener 上只有新插件 ID 下的精确 `POST .../pairing/exchange` 不要求 `Authorization` 或 `X-Embodiment-Bridge-Key`；它只接受一次性 token/6 位短码，成功后下发两把长期密钥。旧 Header 仅作已绑定客户端兼容。
 - 8520 上的 health/session/events/turn/audio/interaction/interrupt/close 不属于匿名能力，listener 不自动添加或替换任何认证头。
-- 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing`、Page 本次 `allow_insecure_http`，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
-- 无 HTTPS 证书的远程部署（家庭公网 IP、frp 等内网穿透）可启用服务端 `allow_insecure_remote_http` 作为逃生门：开启后任意主机的明文 HTTP 均被放行，配对与对话（含密钥、音频）将明文传输，仅限自有服务器使用；能上 HTTPS 时务必关闭。
-- 公网必须使用客户端信任的 HTTPS；内置 listener 不提供公网 TLS 终止。不要把 Dashboard 暴露到公网。
+- 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing`、Page/客户端本次 `allow_insecure_http`，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
+- 启用 `pairing_listener_tls_enabled` 并配置 PEM 证书与私钥后，内置 listener 可在高端口（例如 18443）直接提供 HTTPS；自签证书 pin 是叶子证书 DER 的 SHA-256 十六进制摘要，可随 QR/兑换配置下发。TLS 证书、私钥、主机名或 pin 校验失败时 fail-closed，绝不回退明文 HTTP 或外部代理。
+- 非私网远程 HTTP 必须由服务端 `allow_insecure_remote_http` 与客户端 remote-HTTP 开关共同显式开启；配对与对话（含密钥、音频）将明文传输，仅限自有服务器使用，能上 HTTPS 时务必关闭。公网默认使用客户端信任的 HTTPS；不要把 Dashboard 暴露到公网。
 - `pairing_listener_public_url` 可填写主机 base URL、插件 base URL 或精确 exchange URL，服务端会规范化到精确路径；不会猜测宿主机 IP。
 - 内置 listener 不读取 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 或 `X-Quest-Pairing-Source`，exchange 来源只使用直接 TCP peer IP。
 
