@@ -333,9 +333,40 @@ def test_listener_port_persists_rewrites_urls_and_restarts() -> None:
     asyncio.run(scenario())
 
 
-def test_service_start_failure_rolls_back_switch_and_keeps_gate_closed() -> None:
+def test_optional_listener_start_failure_keeps_service_enabled_in_degraded_mode() -> None:
     async def scenario() -> None:
         control, config, listener, sessions = build_control()
+        control.enabled = False
+        await control.initialize()
+        listener.fail_start_ports.add(8520)
+
+        degraded = await control.set_enabled(True)
+
+        assert degraded["status"] == "degraded"
+        assert degraded["ready"] is False
+        assert control.enabled is True
+        assert listener.ready is False
+        assert config.saves == [{"bridge_service_enabled": True}]
+        session = await sessions.start_session(
+            SessionStartRequest(
+                session_id="fallback-session",
+                client_id="quest",
+                user_id="user",
+                bot_id="bot",
+            ),
+            "owner",
+        )
+        assert session.session_id == "fallback-session"
+
+    asyncio.run(scenario())
+
+
+def test_active_tls_listener_start_failure_rolls_back_switch() -> None:
+    async def scenario() -> None:
+        control, config, listener, sessions = build_control()
+        listener.config.enabled = True
+        listener.config.tls_enabled = True
+        listener.config.tls_configuration_invalid = False
         control.enabled = False
         await control.initialize()
         listener.fail_start_ports.add(8520)
@@ -353,7 +384,7 @@ def test_service_start_failure_rolls_back_switch_and_keeps_gate_closed() -> None
         with pytest.raises(Exception, match="not accepting new sessions"):
             await sessions.start_session(
                 SessionStartRequest(
-                    session_id="must-not-start",
+                    session_id="must-not-start-tls",
                     client_id="quest",
                     user_id="user",
                     bot_id="bot",

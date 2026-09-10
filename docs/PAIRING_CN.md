@@ -9,7 +9,7 @@
 3. 选择聊天模型 Provider；如需受保护的关系上下文，由 AstrBot 管理员在服务端同时设置固定的 `trusted_client_id` 和真实原始 `trusted_platform_id`。配对页和 Unity 都不能替代这项可信配置。
 4. 私网优先启用内置 listener：配置 `pairing_listener_enabled`、监听 IP/端口、固定 loopback 上游和 `pairing_listener_public_url`。它直接复用同一个配对状态机，不要求新客户端预先持有 AstrBot API Key。
 5. 旧 `pairing_exchange_proxy_url` 仍可作为外部 Nginx 兼容 fallback；它不再是私网唯一入口。AstrBot 的 `register_web_api` 本身仍不支持匿名例外，详情见 [PAIRING_BOOTSTRAP_AUDIT_CN.md](PAIRING_BOOTSTRAP_AUDIT_CN.md)。
-6. 公网必须部署客户端信任的 HTTPS。受控私网可显式启用 `allow_private_http_pairing`，但只接受私网 IP 字面量；内置 listener 不终止公网 TLS。
+6. 传输协议由用户选择：HTTP 仅适用于明确启用 `allow_private_http_pairing` 的受控私网；也可开启 `pairing_listener_tls_enabled`，填写 PEM 证书与私钥路径，在高端口（例如 18443）直接提供 HTTPS。公网 HTTP 不推荐，公网 HTTPS 需要客户端信任证书或配置 pin。
 7. 在 AstrBot 已安装插件页面打开本插件的“具身客户端快速绑定”Page。
 
 快速绑定 Page 不再承担角色或连接设置。它不会读取、显示或让操作者填写客户端 IP、AstrBot API Key、平台身份、客户端 ID、用户/机器人/群组 ID、关系档案 ID 或有效期。

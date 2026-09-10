@@ -23,6 +23,29 @@
     "hint": "只允许 IP 字面量，禁止域名。容器部署通常填写 0.0.0.0。",
     "default": "0.0.0.0"
   },
+  "pairing_listener_tls_enabled": {
+    "description": "启用内置监听器 HTTPS",
+    "type": "bool",
+    "hint": "开启后必须同时填写证书和私钥 PEM 路径；关闭时保持 HTTP 兼容。",
+    "default": false
+  },
+  "pairing_listener_tls_cert_path": {
+    "description": "HTTPS 证书 PEM 路径",
+    "type": "string",
+    "default": ""
+  },
+  "pairing_listener_tls_key_path": {
+    "description": "HTTPS 私钥 PEM 路径",
+    "type": "string",
+    "obvious_hint": true,
+    "default": ""
+  },
+  "pairing_certificate_pin_sha256": {
+    "description": "具身客户端 HTTPS 证书指纹（可选）",
+    "type": "string",
+    "hint": "严格填写叶子证书 DER 的 SHA-256 十六进制摘要（64 个字符）。内置 listener 开启 TLS 时会从证书自动计算并校验；不要填写 sha256: 前缀或冒号。HTTP 配置会忽略该字段。",
+    "default": ""
+  },
   "pairing_listener_port": {
     "description": "内置监听器端口",
     "type": "int",
@@ -67,6 +90,12 @@
     "description": "允许私网 IP 使用明文 HTTP 配对和连接",
     "type": "bool",
     "hint": "仅用于受控局域网，由 Bridge 服务端固定配置，不在快速绑定页显示。URL 主机必须是 RFC1918 IPv4 或 IPv6 ULA 字面量；公网、域名和其他地址仍强制 HTTPS。",
+    "default": false
+  },
+  "allow_remote_http_pairing": {
+    "description": "允许公网或远程地址使用明文 HTTP 配对和连接",
+    "type": "bool",
+    "hint": "高风险兼容开关，仅在你明确接受密钥和音频明文传输时启用。必须与客户端的公网 HTTP 开关同时打开；私网开关不会隐式授权公网。",
     "default": false
   },
   "pairing_public_url": {

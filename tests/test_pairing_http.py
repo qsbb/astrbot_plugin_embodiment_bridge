@@ -141,6 +141,8 @@ def test_quick_pairing_page_request_uses_server_only_defaults(
                 "trusted_client_id": "quest-living-room",
                 "pairing_group_id": "",
                 "pairing_relationship_profile_id": "",
+                "pairing_certificate_pin_sha256": "AB" * 32,
+                "pairing_public_url": "https://pair.example.com",
                 "pairing_ttl_seconds": 120,
             },
         )
@@ -181,6 +183,7 @@ def test_quick_pairing_page_request_uses_server_only_defaults(
                 assert configuration["client_id"] == "quest-living-room"
                 assert configuration["user_id"] == "server-managed-user"
                 assert configuration["bot_id"] == "server-managed-bot"
+                assert configuration["certificate_pin_sha256"] == "ab" * 32
 
     asyncio.run(scenario())
 

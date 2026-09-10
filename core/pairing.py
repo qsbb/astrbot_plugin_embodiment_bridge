@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import re
 import secrets
 import threading
 import time
@@ -12,10 +13,31 @@ from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, StrictBool, field_validator, model_validator
 
 from .models import OptionalScope, StrictModel
 from .plugin_identity import PLUGIN_ID, PUBLIC_API_PREFIX
+
+
+_CERTIFICATE_PIN_RE = re.compile(r"^[0-9a-fA-F]{64}$", re.ASCII)
+
+
+def normalize_certificate_pin(value: object) -> str:
+    """Normalize one optional SHA-256 certificate fingerprint.
+
+    The wire/client contract is deliberately the bare 32-byte digest in hex:
+    no ``sha256:`` prefix, colons, or alternate encodings.  Empty remains
+    empty so older protocol-v1 clients and HTTP pairings do not gain a field.
+    """
+
+    if not isinstance(value, str):
+        raise ValueError("certificate_pin_sha256 must be 64 hexadecimal characters")
+    raw = value.strip()
+    if not raw:
+        return ""
+    if _CERTIFICATE_PIN_RE.fullmatch(raw) is None:
+        raise ValueError("certificate_pin_sha256 must be 64 hexadecimal characters")
+    return raw.lower()
 
 
 PAIRING_PROTOCOL_VERSION = "1.0"
@@ -44,12 +66,19 @@ class PairingCreateRequest(StrictModel):
     group_id: OptionalScope = ""
     relationship_profile_id: OptionalScope = ""
     expected_remote_ip: str = Field(default="", max_length=64)
-    allow_insecure_http: bool = False
+    allow_insecure_http: StrictBool = False
+    allow_insecure_remote_http: StrictBool = False
+    certificate_pin_sha256: str = Field(default="", max_length=64)
     ttl_seconds: int = Field(
         default=DEFAULT_TTL_SECONDS,
         ge=MIN_TTL_SECONDS,
         le=MAX_TTL_SECONDS,
     )
+
+    @field_validator("certificate_pin_sha256", mode="before")
+    @classmethod
+    def validate_certificate_pin_sha256(cls, value: object) -> str:
+        return normalize_certificate_pin(value)
 
     @field_validator("expected_remote_ip")
     @classmethod
@@ -116,9 +145,19 @@ class PairingConfiguration:
     group_id: str = ""
     relationship_profile_id: str = ""
     allow_insecure_http: bool = False
+    allow_insecure_remote_http: bool = False
+    certificate_pin_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        # Keep direct model construction subject to the same strict wire
+        # contract as PairingCreateRequest.  The value is not a secret, but a
+        # malformed pin must never be emitted as if it were trustworthy.
+        self.certificate_pin_sha256 = normalize_certificate_pin(
+            self.certificate_pin_sha256
+        )
 
     def exchange_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "base_url": self.base_url,
             "astrbot_api_key": self.astrbot_api_key,
             "bridge_api_key": self.bridge_api_key,
@@ -129,6 +168,13 @@ class PairingConfiguration:
             "relationship_profile_id": self.relationship_profile_id,
             "allow_insecure_http": self.allow_insecure_http,
         }
+        # Keep the v1 response shape unchanged unless the new public-HTTP
+        # profile was explicitly selected.
+        if self.allow_insecure_remote_http:
+            payload["allow_insecure_remote_http"] = True
+        if urlsplit(self.base_url).scheme.lower() == "https" and self.certificate_pin_sha256:
+            payload["certificate_pin_sha256"] = self.certificate_pin_sha256
+        return payload
 
     def wipe(self) -> None:
         self.astrbot_api_key = ""
@@ -216,23 +262,63 @@ class PairingManager:
         bridge_api_key: str,
         exchange_url: str = "",
         allow_private_http: bool = False,
+        allow_remote_http: bool = False,
         clock: Callable[[], float] = time.time,
         max_active_sessions: int = 32,
         max_owner_sessions: int = 5,
         exchange_attempts_per_minute: int = 12,
         global_exchange_attempts_per_minute: int = 120,
+        certificate_pin_sha256: str = "",
+        certificate_pin_authority: str = "",
+        certificate_pin_error: str = "",
     ) -> None:
         self.bridge_api_key = str(bridge_api_key or "")
-        self.allow_private_http = bool(allow_private_http)
+        self.allow_private_http = allow_private_http is True
+        self.allow_remote_http = allow_remote_http is True
+        self.certificate_pin_sha256 = ""
+        self._certificate_pin_error = ""
+        self._certificate_pin_authority: tuple[str, str, int] | None = None
+        self._certificate_pin_authority_explicit = bool(
+            str(certificate_pin_authority or "").strip()
+        )
+        try:
+            self.certificate_pin_sha256 = normalize_certificate_pin(
+                certificate_pin_sha256
+            )
+        except ValueError:
+            self._certificate_pin_error = "invalid_certificate_pin_sha256"
+        if certificate_pin_error:
+            self._certificate_pin_error = str(certificate_pin_error)[:128]
+
+        if self.certificate_pin_sha256 and certificate_pin_authority:
+            self._certificate_pin_authority = _authority_key(
+                certificate_pin_authority,
+                require_https=True,
+            )
+            if self._certificate_pin_authority is None:
+                self._certificate_pin_error = "invalid_certificate_pin_authority"
+
         self.exchange_url = ""
-        self.bootstrap_reason = "pairing_exchange_proxy_url_missing"
-        if str(exchange_url or "").strip():
+        self.bootstrap_reason = (
+            self._certificate_pin_error or "pairing_exchange_proxy_url_missing"
+        )
+        if str(exchange_url or "").strip() and not self._certificate_pin_error:
             try:
-                self.exchange_url = normalize_pairing_exchange_url(
+                normalized_exchange = normalize_pairing_exchange_url(
                     exchange_url,
                     allow_private_http=self.allow_private_http,
+                    allow_remote_http=self.allow_remote_http,
                 )
-                self.bootstrap_reason = "ready"
+                if self._pin_exchange_authority_allowed(normalized_exchange):
+                    self.exchange_url = normalized_exchange
+                    self._bind_pin_authority_if_needed(normalized_exchange)
+                    self.bootstrap_reason = "ready"
+                else:
+                    self.bootstrap_reason = (
+                        "certificate_pin_requires_https"
+                        if urlsplit(normalized_exchange).scheme.lower() == "http"
+                        else "certificate_pin_authority_mismatch"
+                    )
             except PairingError as exc:
                 self.bootstrap_reason = exc.code
         self.clock = clock
@@ -249,25 +335,103 @@ class PairingManager:
         self._global_attempts: deque[float] = deque()
         self._lock = threading.Lock()
 
+    def _pin_exchange_authority_allowed(self, exchange_url: str) -> bool:
+        """Check whether the exchange URL may carry the configured HTTPS pin.
+
+        A configured certificate pin is an HTTPS trust policy, not an alternate
+        HTTP authentication mode.  Once present, every exchange URL must be
+        HTTPS and must use the exact authority bound to that certificate.
+        """
+        if not self.certificate_pin_sha256:
+            return True
+        try:
+            scheme = urlsplit(exchange_url).scheme.lower()
+        except ValueError:
+            return False
+        if scheme != "https":
+            return False
+        authority = _authority_key(exchange_url, require_https=True)
+        if authority is None:
+            return False
+        return (
+            self._certificate_pin_authority is None
+            or self._certificate_pin_authority == authority
+        )
+
+    def _bind_pin_authority_if_needed(self, exchange_url: str) -> None:
+        if not self.certificate_pin_sha256 or self._certificate_pin_authority is not None:
+            return
+        authority = _authority_key(exchange_url, require_https=True)
+        if authority is not None:
+            self._certificate_pin_authority = authority
+
     @property
     def bootstrap_ready(self) -> bool:
         return bool(self.exchange_url)
 
-    def configure_exchange_url(self, value: str, *, missing_reason: str) -> None:
-        """Atomically replace the URL embedded in newly-created credentials."""
+    def configure_exchange_url(
+        self,
+        value: str,
+        *,
+        missing_reason: str,
+        trusted_listener: bool = False,
+    ) -> None:
+        """Atomically replace the URL embedded in newly-created credentials.
+
+        An implicit certificate-pin authority may follow a server-selected
+        built-in HTTPS listener, but an ordinary external fallback must never
+        overwrite an authority that was established by that listener.
+        """
 
         normalized = ""
         reason = str(missing_reason or "pairing_exchange_url_missing")[:128]
-        if str(value or "").strip():
+        if self._certificate_pin_error:
+            reason = self._certificate_pin_error
+        elif str(value or "").strip():
             try:
                 normalized = normalize_pairing_exchange_url(
                     value,
                     allow_private_http=self.allow_private_http,
+                    allow_remote_http=self.allow_remote_http,
                 )
-                reason = "ready"
+                with self._lock:
+                    if (
+                        trusted_listener
+                        and self.certificate_pin_sha256
+                    ):
+                        authority = _authority_key(normalized, require_https=True)
+                        if authority is not None:
+                            # A live built-in listener is the authenticated
+                            # certificate source. It may rotate ports, even
+                            # when the operator supplied the initial authority;
+                            # ordinary external fallback never gets this path.
+                            self._certificate_pin_authority = authority
+                    if self._pin_exchange_authority_allowed(normalized):
+                        self._bind_pin_authority_if_needed(normalized)
+                        reason = "ready"
+                    else:
+                        normalized = ""
+                        reason = (
+                            "certificate_pin_requires_https"
+                            if urlsplit(normalized or value).scheme.lower() == "http"
+                            else "certificate_pin_authority_mismatch"
+                        )
+                    if self.exchange_url != normalized:
+                        now = self.clock()
+                        for session in self._sessions.values():
+                            if session.state == "waiting":
+                                self._deactivate_locked(session, "revoked", now)
+                    self.exchange_url = normalized
+                    self.bootstrap_reason = reason
+                    return
             except PairingError as exc:
                 reason = exc.code
         with self._lock:
+            if self.exchange_url != normalized:
+                now = self.clock()
+                for session in self._sessions.values():
+                    if session.state == "waiting":
+                        self._deactivate_locked(session, "revoked", now)
             self.exchange_url = normalized
             self.bootstrap_reason = reason
 
@@ -313,6 +477,9 @@ class PairingManager:
             allow_private_http=(
                 self.allow_private_http and payload.allow_insecure_http
             ),
+            allow_remote_http=(
+                self.allow_remote_http and payload.allow_insecure_remote_http
+            ),
         )
         now = self.clock()
         token = secrets.token_urlsafe(32)
@@ -320,6 +487,39 @@ class PairingManager:
         pairing_id = secrets.token_hex(16)
         expires_at = now + payload.ttl_seconds
         exchange_url = self.exchange_url
+        exchange_scheme = urlsplit(exchange_url).scheme.lower()
+        base_scheme = urlsplit(base_url).scheme.lower()
+        if exchange_scheme != base_scheme:
+            raise PairingError(
+                "pairing_transport_mismatch",
+                422,
+                "Pairing exchange and client endpoint must use the same transport",
+            )
+        configured_pin = self.certificate_pin_sha256
+        requested_pin = payload.certificate_pin_sha256
+        if requested_pin and (
+            not configured_pin
+            or not secrets.compare_digest(configured_pin, requested_pin)
+        ):
+            raise PairingError(
+                "certificate_pin_mismatch",
+                422,
+                "Certificate pin does not match the server-configured fingerprint",
+            )
+        # HTTP is a separate, explicitly opted-in profile. It never carries
+        # an HTTPS pin and therefore must not be rejected because its target
+        # authority differs from an HTTPS exchange proxy.
+        is_https_base = urlsplit(base_url).scheme.lower() == "https"
+        certificate_pin = configured_pin if is_https_base else ""
+        if certificate_pin:
+            pin_authority = self._certificate_pin_authority
+            base_authority = _authority_key(base_url, require_https=True)
+            if pin_authority is None or base_authority is None or pin_authority != base_authority:
+                raise PairingError(
+                    "certificate_pin_authority_mismatch",
+                    422,
+                    "Configured certificate pin does not match the pairing authority",
+                )
         configuration = PairingConfiguration(
             base_url=base_url,
             astrbot_api_key=payload.astrbot_api_key.get_secret_value(),
@@ -329,7 +529,15 @@ class PairingManager:
             bot_id=payload.bot_id,
             group_id=payload.group_id,
             relationship_profile_id=payload.relationship_profile_id,
-            allow_insecure_http=urlsplit(base_url).scheme == "http",
+            allow_insecure_http=(
+                urlsplit(base_url).scheme == "http"
+                and _is_private_lan_ip(urlsplit(base_url).hostname or "")
+            ),
+            allow_insecure_remote_http=(
+                urlsplit(base_url).scheme == "http"
+                and not _is_private_lan_ip(urlsplit(base_url).hostname or "")
+            ),
+            certificate_pin_sha256=certificate_pin,
         )
 
         with self._lock:
@@ -368,13 +576,16 @@ class PairingManager:
             self._token_index[token_hash] = pairing_id
             self._code_index[short_code] = pairing_id
 
+        qr_fields: dict[str, object] = {
+            "type": PAIRING_PAYLOAD_TYPE,
+            "version": PAIRING_PROTOCOL_VERSION,
+            "exchange_url": exchange_url,
+            "token": token,
+        }
+        if certificate_pin and urlsplit(base_url).scheme.lower() == "https":
+            qr_fields["certificate_pin_sha256"] = certificate_pin
         qr_payload = json.dumps(
-            {
-                "type": PAIRING_PAYLOAD_TYPE,
-                "version": PAIRING_PROTOCOL_VERSION,
-                "exchange_url": exchange_url,
-                "token": token,
-            },
+            qr_fields,
             ensure_ascii=True,
             separators=(",", ":"),
         )
@@ -446,6 +657,17 @@ class PairingManager:
                 pairing_id=session.pairing_id,
                 configuration=configuration,
             )
+
+    def revoke_waiting(self) -> int:
+        """Invalidate all outstanding pairing credentials for a service stop."""
+        now = self.clock()
+        revoked = 0
+        with self._lock:
+            for session in self._sessions.values():
+                if session.state == "waiting":
+                    self._deactivate_locked(session, "revoked", now)
+                    revoked += 1
+        return revoked
 
     def close(self) -> None:
         with self._lock:
@@ -555,6 +777,7 @@ def normalize_public_base_url(
     port: int | None = None,
     *,
     allow_private_http: bool = False,
+    allow_remote_http: bool = False,
 ) -> str:
     raw = str(value or "").strip()
     try:
@@ -563,6 +786,8 @@ def normalize_public_base_url(
     except ValueError as exc:
         raise PairingError("invalid_public_url", 422, "Public URL is invalid") from exc
 
+    if parsed_port is not None and not 1 <= parsed_port <= 65_535:
+        raise PairingError("invalid_public_port", 422, "Public URL port is invalid")
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
         raise PairingError(
@@ -588,15 +813,25 @@ def normalize_public_base_url(
         )
 
     host = parsed.hostname
-    if scheme == "http" and (not allow_private_http or not _is_private_lan_ip(host)):
-        raise PairingError(
-            "https_required",
-            422,
-            "Plain HTTP is allowed only for an explicitly enabled private IP",
-        )
+    if scheme == "http":
+        is_private = _is_private_lan_ip(host)
+        if is_private:
+            allowed = allow_private_http
+        else:
+            allowed = allow_remote_http
+        if not allowed:
+            raise PairingError(
+                "https_required",
+                422,
+                "Plain HTTP requires the matching explicit private or remote opt-in",
+            )
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     selected_port = port if port is not None else parsed_port
+    if selected_port is not None and not isinstance(selected_port, int):
+        raise PairingError("invalid_public_port", 422, "Public URL port is invalid")
+    if selected_port is not None and not 1 <= selected_port <= 65_535:
+        raise PairingError("invalid_public_port", 422, "Public URL port is invalid")
     netloc = host if selected_port is None else f"{host}:{selected_port}"
     return urlunsplit((scheme, netloc, PUBLIC_API_PATH, "", ""))
 
@@ -605,6 +840,7 @@ def normalize_pairing_exchange_url(
     value: str,
     *,
     allow_private_http: bool = False,
+    allow_remote_http: bool = False,
 ) -> str:
     raw = str(value or "").strip()
     if not raw or len(raw) > 2048:
@@ -615,13 +851,19 @@ def normalize_pairing_exchange_url(
         )
     try:
         parsed = urlsplit(raw)
-        parsed.port
+        parsed_port = parsed.port
     except ValueError as exc:
         raise PairingError(
             "invalid_pairing_exchange_url",
             422,
             "Pairing exchange proxy URL is invalid",
         ) from exc
+    if parsed_port is not None and not 1 <= parsed_port <= 65_535:
+        raise PairingError(
+            "invalid_pairing_exchange_url",
+            422,
+            "Pairing exchange proxy URL is invalid",
+        )
     scheme = parsed.scheme.lower()
     if (
         scheme not in {"http", "https"}
@@ -632,21 +874,75 @@ def normalize_pairing_exchange_url(
         or parsed.fragment
         or not parsed.path
         or parsed.path.endswith("/")
+        or "\\" in parsed.path
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
+        or "%" in parsed.path
     ):
         raise PairingError(
             "invalid_pairing_exchange_url",
             422,
             "Pairing exchange proxy URL is invalid",
         )
-    if scheme == "http" and (
-        not allow_private_http or not _is_private_lan_ip(parsed.hostname)
-    ):
+    exchange_path = parsed.path.rstrip("/")
+    if exchange_path not in {
+        f"{PUBLIC_API_PATH}/pairing/exchange",
+        "/quest/pairing/exchange",
+        f"/api/v1/plugins/extensions/astrbot_plugin_quest_avatar_bridge/pairing/exchange",
+    }:
         raise PairingError(
-            "https_required",
+            "invalid_pairing_exchange_path",
             422,
-            "Pairing exchange proxy must use HTTPS unless private HTTP is enabled",
+            "Pairing exchange proxy path is not an Embodiment Bridge endpoint",
         )
-    return urlunsplit((scheme, parsed.netloc, parsed.path, "", ""))
+    if scheme == "http":
+        if _is_private_lan_ip(parsed.hostname):
+            allowed = allow_private_http
+        else:
+            allowed = allow_remote_http
+        if not allowed:
+            raise PairingError(
+                "https_required",
+                422,
+                "Pairing exchange proxy requires the matching explicit HTTP opt-in",
+            )
+    return urlunsplit((scheme, parsed.netloc, exchange_path, "", ""))
+
+
+def _authority_key(
+    value: str,
+    *,
+    require_https: bool = False,
+) -> tuple[str, str, int] | None:
+    """Return a strict scheme/host/effective-port key, or ``None``."""
+    try:
+        parsed = urlsplit(str(value or ""))
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"} or (require_https and scheme != "https"):
+            return None
+        if (
+            not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        explicit_port = parsed.port
+        # ``urlsplit`` raises for non-numeric/out-of-range ports.  Treat an
+        # explicit zero as invalid rather than allowing it to mean the default.
+        if explicit_port is not None and not 1 <= explicit_port <= 65_535:
+            return None
+        port = explicit_port if explicit_port is not None else (443 if scheme == "https" else 80)
+        return scheme, parsed.hostname.lower(), port
+    except (TypeError, ValueError):
+        return None
+
+
+def _same_effective_authority(first: str, second: str) -> bool:
+    """Compare HTTP(S) scheme, host and effective port without path data."""
+    left = _authority_key(first)
+    right = _authority_key(second)
+    return left is not None and left == right
 
 
 def _is_private_lan_ip(value: str) -> bool:

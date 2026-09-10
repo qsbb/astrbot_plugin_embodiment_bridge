@@ -5,19 +5,23 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from astrbot_plugin_embodiment_bridge.core.pairing import (
     PUBLIC_API_PATH,
+    PairingConfiguration,
     PairingCreateRequest,
     PairingError,
     PairingExchangeRequest,
     PairingManager,
+    normalize_certificate_pin,
     normalize_public_base_url,
 )
 
 
 BRIDGE_KEY = "bridge-pairing-test-key-000000000000000000"
 EXCHANGE_URL = "https://pair.example.com/quest/pairing/exchange"
+CERT_PIN = "ab" * 32
 
 
 def pairing_manager(**changes: Any) -> PairingManager:
@@ -48,6 +52,143 @@ def create_payload(**changes: Any) -> PairingCreateRequest:
 
 def qr_fields(result: Any) -> dict[str, str]:
     return json.loads(result.qr_payload)
+
+
+def test_certificate_pin_validation_is_strict_and_normalized() -> None:
+    assert normalize_certificate_pin(" " + CERT_PIN.upper() + " ") == CERT_PIN
+    for invalid in (
+        "a" * 63,
+        "a" * 65,
+        "g" * 64,
+        "sha256:" + CERT_PIN,
+        ":".join(CERT_PIN[index : index + 2] for index in range(0, 64, 2)),
+        123,
+        None,
+    ):
+        with pytest.raises(ValueError, match="64 hexadecimal"):
+            normalize_certificate_pin(invalid)
+
+    with pytest.raises(ValidationError):
+        PairingCreateRequest.model_validate(
+            {
+                "public_url": "https://bot.example.com",
+                "astrbot_api_key": "api",
+                "client_id": "client",
+                "user_id": "user",
+                "bot_id": "bot",
+                "certificate_pin_sha256": "bad",
+            }
+        )
+
+
+def test_invalid_server_pin_fails_closed() -> None:
+    manager = pairing_manager(certificate_pin_sha256="not-a-pin")
+    assert manager.bootstrap_ready is False
+    assert manager.bootstrap_reason == "invalid_certificate_pin_sha256"
+    with pytest.raises(PairingError) as unavailable:
+        manager.create("owner", create_payload())
+    assert unavailable.value.code == "pairing_bootstrap_unavailable"
+
+
+def test_https_pin_propagates_to_qr_and_exchange_configuration() -> None:
+    manager = pairing_manager(certificate_pin_sha256=CERT_PIN)
+    created = manager.create(
+        "owner",
+        create_payload(public_url="https://pair.example.com", port=None),
+    )
+    fields = qr_fields(created)
+    assert fields["certificate_pin_sha256"] == CERT_PIN
+
+    exchanged = manager.exchange(
+        PairingExchangeRequest(token=fields["token"]),
+        remote="192.0.2.10",
+    )
+    assert exchanged.configuration["certificate_pin_sha256"] == CERT_PIN
+
+
+def test_configured_https_pin_rejects_plain_http_bootstrap() -> None:
+    manager = pairing_manager(
+        exchange_url="http://192.168.50.10:8520/quest/pairing/exchange",
+        allow_private_http=True,
+        certificate_pin_sha256=CERT_PIN,
+    )
+    assert manager.bootstrap_ready is False
+    assert manager.bootstrap_reason == "certificate_pin_requires_https"
+    with pytest.raises(PairingError) as unavailable:
+        manager.create(
+            "owner",
+            create_payload(
+                public_url="http://192.168.50.10",
+                port=8520,
+                allow_insecure_http=True,
+            ),
+        )
+    assert unavailable.value.code == "pairing_bootstrap_unavailable"
+
+
+def test_exchange_and_configuration_schemes_must_match() -> None:
+    manager = pairing_manager(exchange_url="http://192.168.50.10:8520/quest/pairing/exchange", allow_private_http=True)
+    with pytest.raises(PairingError) as mixed:
+        manager.create("owner", create_payload(public_url="https://secure.example.com", port=443))
+    assert mixed.value.code == "pairing_transport_mismatch"
+
+
+def test_reconfiguring_exchange_url_revokes_old_waiting_credentials() -> None:
+    manager = pairing_manager()
+    created = manager.create("owner", create_payload())
+    token = qr_fields(created)["token"]
+    manager.configure_exchange_url(
+        "https://new.example.com:9443/quest/pairing/exchange",
+        missing_reason="pairing_listener_public_url_missing",
+    )
+    with pytest.raises(PairingError) as stale:
+        manager.exchange(PairingExchangeRequest(token=token), remote="192.0.2.10")
+    assert stale.value.code == "pairing_not_available"
+
+
+def test_requested_pin_requires_matching_server_configuration() -> None:
+    with pytest.raises(PairingError) as unconfigured:
+        pairing_manager().create("owner", create_payload(certificate_pin_sha256=CERT_PIN))
+    assert unconfigured.value.code == "certificate_pin_mismatch"
+
+    manager = pairing_manager(certificate_pin_sha256=CERT_PIN)
+    with pytest.raises(PairingError) as mismatched:
+        manager.create("owner", create_payload(certificate_pin_sha256="cd" * 32))
+    assert mismatched.value.code == "certificate_pin_mismatch"
+
+    matched = manager.create(
+        "owner",
+        create_payload(
+            public_url="https://pair.example.com",
+            port=None,
+            certificate_pin_sha256=CERT_PIN,
+        ),
+    )
+    assert qr_fields(matched)["certificate_pin_sha256"] == CERT_PIN
+
+
+def test_pairing_configuration_omits_pin_for_http_and_preserves_v1_shape() -> None:
+    http = PairingConfiguration(
+        base_url="http://192.168.50.10:8520" + PUBLIC_API_PATH,
+        astrbot_api_key="api",
+        bridge_api_key=BRIDGE_KEY,
+        client_id="client",
+        user_id="user",
+        bot_id="bot",
+        allow_insecure_http=True,
+        certificate_pin_sha256=CERT_PIN,
+    )
+    assert "certificate_pin_sha256" not in http.exchange_payload()
+
+    https_without_pin = PairingConfiguration(
+        base_url="https://bot.example.com" + PUBLIC_API_PATH,
+        astrbot_api_key="api",
+        bridge_api_key=BRIDGE_KEY,
+        client_id="client",
+        user_id="user",
+        bot_id="bot",
+    )
+    assert "certificate_pin_sha256" not in https_without_pin.exchange_payload()
 
 
 def test_public_url_normalization_is_https_and_path_strict() -> None:

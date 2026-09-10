@@ -80,8 +80,8 @@ Content-Type: application/json
 - 创建会话和后续访问必须使用同一个 AstrBot API Key 身份。
 - 内置 listener 上只有新插件 ID 下的精确 `POST .../pairing/exchange` 不要求 `Authorization` 或 `X-Embodiment-Bridge-Key`；它只接受一次性 token/6 位短码，成功后下发两把长期密钥。旧 Header 仅作已绑定客户端兼容。
 - 8520 上的 health/session/events/turn/audio/interaction/interrupt/close 不属于匿名能力，listener 不自动添加或替换任何认证头。
-- 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing`、Page 本次 `allow_insecure_http`，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
-- 公网必须使用客户端信任的 HTTPS；内置 listener 不提供公网 TLS 终止。不要把 Dashboard 暴露到公网。
+- 私网明文 HTTP 必须同时启用服务端 `allow_private_http_pairing` 与客户端本地私网 HTTP opt-in，且 URL 主机是私网 IP 字面量；成功 configuration 才会给 Unity `allow_insecure_http=true`。
+- 公网默认使用客户端信任的 HTTPS。内置 listener 可通过 `pairing_listener_tls_enabled`、PEM 证书与私钥在高端口直接终止 TLS；自签证书可把叶子 DER SHA-256 pin 随 QR/兑换配置下发。公网明文 HTTP 只有服务端 `allow_remote_http_pairing` 与客户端 remote-HTTP 开关同时显式开启才允许。不要把 Dashboard 暴露到公网。
 - `pairing_listener_public_url` 可填写主机 base URL、插件 base URL 或精确 exchange URL，服务端会规范化到精确路径；不会猜测宿主机 IP。
 - 内置 listener 不读取 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 或 `X-Quest-Pairing-Source`，exchange 来源只使用直接 TCP peer IP。
 

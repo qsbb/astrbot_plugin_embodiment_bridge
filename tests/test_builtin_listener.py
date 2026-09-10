@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
+import ssl
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable
+from unittest.mock import patch
 
 import aiohttp
+import pytest
 from aiohttp import web
 from yarl import URL
 
+import astrbot_plugin_embodiment_bridge.transport.builtin_listener as builtin_listener_module
 from astrbot_plugin_embodiment_bridge.core.pairing import (
     PUBLIC_API_PATH,
     PairingCreateRequest,
@@ -25,6 +32,7 @@ from astrbot_plugin_embodiment_bridge.transport.builtin_listener import (
     _LEGACY_FIXED_PROXY_ROUTES,
     BuiltinListenerConfig,
     BuiltinQuestListener,
+    certificate_pin_from_pem,
     normalize_listener_public_url,
     normalize_loopback_upstream,
 )
@@ -55,6 +63,309 @@ def make_manager(**changes: Any) -> PairingManager:
     }
     options.update(changes)
     return PairingManager(**options)
+
+
+def test_tls_load_failure_never_starts_plaintext_listener(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        listener = BuiltinQuestListener(
+            config=BuiltinListenerConfig(
+                enabled=True,
+                bind_host="127.0.0.1",
+                port=0,
+                upstream_base_url="http://127.0.0.1:9",
+                public_exchange_url=EXTERNAL_EXCHANGE_URL,
+                tls_enabled=True,
+                tls_cert_path=str(tmp_path / "missing.crt"),
+                tls_key_path=str(tmp_path / "missing.key"),
+            ),
+            exchange_service=PairingExchangeService(make_manager()),
+            logger=LogCapture(),
+        )
+        try:
+            # Retry must remain fail-closed, not reuse a plaintext context.
+            for _ in range(2):
+                await listener.start()
+                assert not listener.ready
+                assert listener.status_snapshot()["reason"] == "tls_certificate_invalid"
+                assert listener._site is None
+                assert listener._runner is None
+                assert listener._client is None
+        finally:
+            await listener.close()
+
+    asyncio.run(scenario())
+
+
+def _pem_block(der: bytes, *, line_width: int = 64) -> bytes:
+    encoded = base64.b64encode(der).decode("ascii")
+    lines = [encoded[index : index + line_width] for index in range(0, len(encoded), line_width)]
+    return (
+        b"-----BEGIN CERTIFICATE-----\n"
+        + "\n".join(lines).encode("ascii")
+        + b"\n-----END CERTIFICATE-----\n"
+    )
+
+
+def test_certificate_pin_hashes_first_pem_certificate_der_and_normalizes_pin(
+    tmp_path: Path,
+) -> None:
+    first_der = b"first-leaf-der"
+    second_der = b"second-chain-der"
+    certificate_path = tmp_path / "chain.pem"
+    certificate_path.write_bytes(
+        b"  preamble\n"
+        + _pem_block(first_der)
+        + b"\n"
+        + _pem_block(second_der)
+    )
+
+    expected = hashlib.sha256(first_der).hexdigest()
+    assert certificate_pin_from_pem(str(certificate_path)) == expected
+    assert certificate_pin_from_pem(str(certificate_path)).islower()
+
+    config = BuiltinListenerConfig.from_mapping(
+        {
+            "pairing_listener_enabled": True,
+            "pairing_listener_host": "127.0.0.1",
+            "pairing_listener_port": 18443,
+            "pairing_listener_upstream_url": "http://127.0.0.1:6185",
+            "pairing_listener_tls_enabled": True,
+            "pairing_listener_tls_cert_path": str(certificate_path),
+            "pairing_listener_tls_key_path": str(tmp_path / "bridge.key"),
+            "pairing_certificate_pin_sha256": f"  {expected.upper()}  ",
+            "pairing_listener_public_url": "https://bot.example.test:18443",
+        },
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert config.certificate_pin_sha256 == expected
+    assert config.validation_reason == ""
+    assert config.public_exchange_url == f"https://bot.example.test:18443{EXCHANGE_PATH}"
+
+
+def test_invalid_configured_pin_and_explicit_mismatch_fail_closed(tmp_path: Path) -> None:
+    certificate_path = tmp_path / "bridge.crt"
+    certificate_path.write_bytes(_pem_block(b"leaf-der"))
+    base = {
+        "pairing_listener_enabled": True,
+        "pairing_listener_host": "127.0.0.1",
+        "pairing_listener_port": 18443,
+        "pairing_listener_upstream_url": "http://127.0.0.1:6185",
+        "pairing_listener_tls_enabled": True,
+        "pairing_listener_tls_cert_path": str(certificate_path),
+        "pairing_listener_tls_key_path": str(tmp_path / "bridge.key"),
+        "pairing_listener_public_url": "https://bot.example.test:18443",
+    }
+    invalid = BuiltinListenerConfig.from_mapping(
+        {**base, "pairing_certificate_pin_sha256": "not-a-sha256-pin"},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert invalid.validation_reason == "invalid_certificate_pin_sha256"
+    assert invalid.certificate_pin_sha256 == ""
+
+    actual = hashlib.sha256(b"leaf-der").hexdigest()
+    mismatch = BuiltinListenerConfig.from_mapping(
+        {**base, "pairing_certificate_pin_sha256": "cd" * 32},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert mismatch.validation_reason == "tls_certificate_pin_mismatch"
+    assert mismatch.certificate_pin_sha256 == ""
+
+    matching = BuiltinListenerConfig.from_mapping(
+        {**base, "pairing_certificate_pin_sha256": actual.upper()},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert matching.validation_reason == ""
+    assert matching.certificate_pin_sha256 == actual
+
+
+def test_missing_or_invalid_tls_certificate_paths_fail_closed(tmp_path: Path) -> None:
+    common = {
+        "pairing_listener_enabled": True,
+        "pairing_listener_host": "127.0.0.1",
+        "pairing_listener_port": 18443,
+        "pairing_listener_upstream_url": "http://127.0.0.1:6185",
+        "pairing_listener_tls_enabled": True,
+        "pairing_listener_tls_key_path": str(tmp_path / "bridge.key"),
+        "pairing_listener_public_url": "https://bot.example.test:18443",
+    }
+    missing = BuiltinListenerConfig.from_mapping(
+        {**common, "pairing_listener_tls_cert_path": str(tmp_path / "missing.crt")},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert missing.validation_reason == "tls_certificate_invalid"
+    assert missing.certificate_pin_sha256 == ""
+
+    malformed_path = tmp_path / "malformed.crt"
+    malformed_path.write_text("this is not PEM", encoding="ascii")
+    malformed = BuiltinListenerConfig.from_mapping(
+        {**common, "pairing_listener_tls_cert_path": str(malformed_path)},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert malformed.validation_reason == "tls_certificate_invalid"
+    assert malformed.certificate_pin_sha256 == ""
+
+    missing_paths = BuiltinListenerConfig.from_mapping(
+        {**common, "pairing_listener_tls_cert_path": ""},
+        allow_private_http=False,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert missing_paths.validation_reason == "tls_certificate_paths_missing"
+
+
+def test_tls_public_url_must_be_https_and_never_retains_http(tmp_path: Path) -> None:
+    certificate_path = tmp_path / "bridge.crt"
+    certificate_path.write_bytes(_pem_block(b"leaf-der"))
+    values = {
+        "pairing_listener_enabled": True,
+        "pairing_listener_host": "127.0.0.1",
+        "pairing_listener_port": 18443,
+        "pairing_listener_upstream_url": "http://127.0.0.1:6185",
+        "pairing_listener_tls_enabled": True,
+        "pairing_listener_tls_cert_path": str(certificate_path),
+        "pairing_listener_tls_key_path": str(tmp_path / "bridge.key"),
+        "pairing_listener_public_url": "http://192.168.50.10:18443",
+    }
+    config = BuiltinListenerConfig.from_mapping(
+        values,
+        allow_private_http=True,
+        max_json_body_bytes=65_536,
+        max_audio_request_bytes=32_768,
+    )
+    assert config.public_exchange_url == ""
+    assert config.public_url_reason == "tls_public_url_must_be_https"
+    assert "http://" not in config.public_exchange_url
+
+
+def test_tls_status_is_redacted_and_start_passes_tls12_context_to_site(
+    tmp_path: Path,
+) -> None:
+    pin = hashlib.sha256(b"leaf-der").hexdigest()
+    config = BuiltinListenerConfig(
+        enabled=True,
+        bind_host="127.0.0.1",
+        port=18443,
+        upstream_base_url="http://127.0.0.1:6185",
+        public_exchange_url=f"https://bot.example.test:18443{EXCHANGE_PATH}",
+        certificate_pin_sha256=pin,
+        tls_enabled=True,
+        tls_cert_path=str(tmp_path / "bridge.crt"),
+        tls_key_path=str(tmp_path / "bridge.key"),
+    )
+    observed: dict[str, Any] = {}
+
+    class FakeContext:
+        def __init__(self, protocol: object) -> None:
+            observed["protocol"] = protocol
+            self.minimum_version: object = None
+
+        def load_cert_chain(self, certfile: str, keyfile: str, password: str) -> None:
+            observed["certfile"] = certfile
+            observed["keyfile"] = keyfile
+            observed["password"] = password
+
+    class FakeRunner:
+        async def setup(self) -> None:
+            return None
+
+        async def cleanup(self) -> None:
+            return None
+
+    class FakeServer:
+        sockets = [SimpleNamespace(getsockname=lambda: ("127.0.0.1", 18443))]
+
+    class FakeSite:
+        def __init__(self, runner: object, host: str, port: int, *, ssl_context: object) -> None:
+            del runner
+            observed["host"] = host
+            observed["port"] = port
+            observed["ssl_context"] = ssl_context
+            self._server = FakeServer()
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    class FakeClient:
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class FakeRouter:
+        def add_route(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+    class FakeApplication:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+            self.router = FakeRouter()
+
+    def fake_client_session(*, timeout: object, connector: object) -> FakeClient:
+        del timeout, connector
+        return FakeClient()
+
+    listener = BuiltinQuestListener(
+        config=config,
+        exchange_service=PairingExchangeService(make_manager()),
+        logger=LogCapture(),
+    )
+    with (
+        patch.object(builtin_listener_module.ssl, "SSLContext", FakeContext),
+        patch.object(builtin_listener_module.aiohttp, "ClientSession", fake_client_session),
+        patch.object(builtin_listener_module.web, "Application", FakeApplication),
+        patch.object(builtin_listener_module.web, "AppRunner", lambda *args, **kwargs: FakeRunner()),
+        patch.object(builtin_listener_module.web, "TCPSite", FakeSite),
+    ):
+        asyncio.run(listener.start())
+
+    assert listener.ready is True
+    assert observed["protocol"] is ssl.PROTOCOL_TLS_SERVER
+    assert observed["certfile"] == config.tls_cert_path
+    assert observed["keyfile"] == config.tls_key_path
+    assert observed["password"] == ""
+    assert observed["ssl_context"].minimum_version is ssl.TLSVersion.TLSv1_2
+    snapshot = listener.status_snapshot()
+    assert snapshot["tls_enabled"] is True
+    assert snapshot["public_scheme"] == "https"
+    assert snapshot["certificate_pin_configured"] is True
+    assert pin not in snapshot.values()
+    assert config.tls_cert_path not in snapshot.values()
+    asyncio.run(listener.close())
+
+
+def test_http_listener_remains_compatible_on_explicit_high_port() -> None:
+    async def scenario() -> None:
+        listener = await start_listener(make_manager(), bind_port=18444)
+        try:
+            assert listener.ready is True
+            snapshot = listener.status_snapshot()
+            assert snapshot["port"] == 18444
+            assert snapshot["tls_enabled"] is False
+            assert snapshot["public_scheme"] == "http"
+            assert listener.public_exchange_url == EXTERNAL_EXCHANGE_URL
+            async with aiohttp.ClientSession() as client:
+                response = await client.get(listener_base(listener) + f"{PUBLIC_API_PATH}/health")
+                assert response.status == 503
+                await response.read()
+        finally:
+            await listener.close()
+
+    asyncio.run(scenario())
 
 
 def create_pair(
@@ -244,6 +555,9 @@ def test_listener_lifecycle_bind_degrades_and_port_is_reusable() -> None:
             "bind_host": "127.0.0.1",
             "port": 0,
             "upstream_kind": "loopback_http",
+            "tls_enabled": False,
+            "public_scheme": "unavailable",
+            "certificate_pin_configured": False,
             "reason": "disabled",
         }
         await disabled.close()
