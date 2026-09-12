@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.4.1 - 2026-09-12
+
+### 新增
+
+- 新增只读 `series.webui@1.0` 服务状态面板：核独立 WebUI 可查看配对监听、Bootstrap 与人格模式；现有 operator Page、配对与客户端协议继续保留。
+
 ## 1.4.0 - 2026-09-07
 
 ### Fixed
