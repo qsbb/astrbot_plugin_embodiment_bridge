@@ -1,6 +1,6 @@
-# Changelog
-
 ## Unreleased
+
+- 开发中（未发版）：`series.module@1.0` 模块清单。
 
 ## 1.4.1 - 2026-09-12
 

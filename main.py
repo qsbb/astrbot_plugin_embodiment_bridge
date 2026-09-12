@@ -1139,6 +1139,24 @@ class EmbodimentBridgePlugin(Star):
         )
         return result
 
+    def series_module_contract(self) -> dict[str, object]:
+        """series.module@1.0：声明模块身份、独立入口与统一接管能力。"""
+        return {
+            "name": "series.module@1.0",
+            "version": "1.0",
+            "series_id": "ningxin_suxi",
+            "plugin_id": "astrbot_plugin_embodiment_bridge",
+            "display_name": "临",
+            "role": "embodiment",
+            "standalone": {
+                "available": true,
+                "entry": "/pages/operator",
+                "pages": ["operator"],
+            },
+            "capabilities": ["control", "webui", "diagnostics"],
+            "panels": ["service_status"],
+        }
+
     def diagnostic_log_contract(self) -> dict[str, object]:
         """Declare the series diagnostics provider without transferring log ownership."""
         return {
