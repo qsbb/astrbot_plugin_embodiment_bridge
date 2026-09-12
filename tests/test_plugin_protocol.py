@@ -593,7 +593,7 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
     asyncio.run(scenario())
 
 
-def test_webui_contract_declares_readonly_bounded_sse(
+def test_webui_contract_declares_actions_and_bounded_sse(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -601,23 +601,39 @@ def test_webui_contract_declares_readonly_bounded_sse(
     module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
     plugin = object.__new__(module.EmbodimentBridgePlugin)
 
-    assert plugin.series_module_contract()["standalone"]["available"] is True
+    module_contract = plugin.series_module_contract()
+    assert module_contract["standalone"]["available"] is True
+    assert module_contract["panels"] == ["service_status", "operator"]
 
     contract = plugin.webui_panels_contract()
 
     assert contract["name"] == "series.webui@2.0"
     assert contract["version"] == "2.0"
     assert contract["state_owner"] == "plugin"
-    assert contract["managed"] == {"supported": True, "level": "read"}
-    assert {"generic_table", "sse"} <= set(contract["capabilities"])
-    assert contract["panels"] == [
-        {
-            "id": "service_status",
-            "title": "临服务状态",
-            "description": "只读查看配对监听、Bootstrap 与具身运行状态",
-            "read_only": True,
-        }
-    ]
+    assert contract["managed"] == {
+        "supported": True,
+        "level": "actions",
+        "preferred_surface": "kernel",
+    }
+    assert {"generic_table", "generic_actions", "sse", "idempotency"} <= set(
+        contract["capabilities"]
+    )
+    assert contract["panels"][0] == {
+        "id": "service_status",
+        "title": "临服务状态",
+        "description": "只读查看配对监听、Bootstrap 与具身运行状态",
+        "read_only": True,
+        "actions": [],
+    }
+    assert contract["panels"][1]["id"] == "operator"
+    actions = {
+        item["id"]: item for item in contract["panels"][1]["actions"]
+    }
+    assert actions["create_pairing_session"]["min_role"] == "admin"
+    assert actions["create_pairing_session"]["effect"] == "non_idempotent"
+    assert actions["create_pairing_session"]["idempotency_required"] is True
+    assert actions["set_persona_source_mode"]["min_role"] == "owner"
+    assert actions["activate_persona_profile"]["min_role"] == "owner"
     assert module.WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS == 1.0
     assert 5 <= module.WEBUI_SERVICE_STATUS_STREAM_MAX_EVENTS <= 10
 

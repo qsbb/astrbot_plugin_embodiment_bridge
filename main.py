@@ -74,6 +74,7 @@ from .core.plugin_identity import (
 from .core.session_manager import SessionManager
 from .core.service_control import BridgeServiceControl
 from .series_control import SeriesControlAdapter
+from .series_webui import SeriesWebUIPanels
 from .core.server_identity import ServerIdentityStore
 from .core.turn_orchestrator import TurnOrchestrator
 from .transport.builtin_listener import (
@@ -1160,7 +1161,7 @@ class EmbodimentBridgePlugin(Star):
                 "pages": ["operator"],
             },
             "capabilities": ["control", "webui", "diagnostics"],
-            "panels": ["service_status"],
+            "panels": ["service_status", "operator"],
         }
 
     def diagnostic_log_contract(self) -> dict[str, object]:
@@ -1248,66 +1249,20 @@ class EmbodimentBridgePlugin(Star):
             "error": error,
         }
 
+    def _series_webui_panels(self) -> SeriesWebUIPanels:
+        """惰性获取 managed 管理面适配层，兼容测试与热重载路径。"""
+        adapter = getattr(self, "_series_webui", None)
+        if adapter is None:
+            adapter = SeriesWebUIPanels(self)
+            self._series_webui = adapter
+        return adapter
+
     def webui_panels_contract(self) -> dict[str, Any]:
-        """series.webui@2.0：核统一接管时提供只读服务状态与短时 SSE。"""
-        return {
-            "name": "series.webui@2.0",
-            "version": "2.0",
-            "plugin_id": PLUGIN_ID,
-            "series_id": "ningxin_suxi",
-            "state_owner": "plugin",
-            "standalone": {
-                "available": True,
-                "entry": "/pages/operator",
-                "pages": ["operator"],
-            },
-            "managed": {"supported": True, "level": "read"},
-            "preferred_surface": "dual",
-            "capabilities": ["generic_table", "sse"],
-            "panels": [
-                {
-                    "id": "service_status",
-                    "title": "临服务状态",
-                    "description": "只读查看配对监听、Bootstrap 与具身运行状态",
-                    "read_only": True,
-                }
-            ],
-        }
+        """series.webui@2.0：只读状态、SSE 与受控日常管理动作。"""
+        return self._series_webui_panels().contract()
 
     def webui_panel_data(self, panel: str) -> dict[str, Any]:
-        if panel != "service_status":
-            return {"success": False, "error": "UNKNOWN_PANEL"}
-        try:
-            service_status = self._webui_service_status_snapshot()
-        except Exception:  # noqa: BLE001 - managed panels must fail closed
-            return {
-                "success": False,
-                "error": "SERVICE_STATUS_UNAVAILABLE",
-            }
-        rows = [
-            {
-                "item": "配对监听",
-                "value": service_status["status"],
-            },
-            {
-                "item": "Bootstrap",
-                "value": "就绪"
-                if service_status["bootstrap_ready"]
-                else "未就绪",
-            },
-            {
-                "item": "人格模式",
-                "value": service_status["persona_mode"] or "未配置",
-            },
-        ]
-        return {
-            "success": True,
-            "title": "临服务状态",
-            "description": "只读服务状态；配对、人格转换与启停仍在独立 operator Page",
-            "columns": [{"key": "item", "label": "项目"}, {"key": "value", "label": "状态"}],
-            "rows": rows,
-            "actions": [],
-        }
+        return self._series_webui_panels().panel_data(panel)
 
     async def webui_panel_stream(
         self, panel: str, context: dict[str, Any] | None = None
@@ -1327,8 +1282,16 @@ class EmbodimentBridgePlugin(Star):
                 yield self._webui_stream_error("SERVICE_STATUS_UNAVAILABLE")
                 return
 
-    def webui_panel_action(self, panel: str, action: str, payload: dict) -> dict[str, Any]:
-        return {"success": False, "error": "UNKNOWN_ACTION"}
+    async def webui_panel_action(
+        self,
+        panel: str,
+        action: str,
+        payload: dict,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._series_webui_panels().panel_action(
+            panel, action, payload, context
+        )
 
     def series_control_contract(self) -> dict[str, Any]:
         return self.series_control.series_control_contract()

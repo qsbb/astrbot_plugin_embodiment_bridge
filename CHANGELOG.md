@@ -1,5 +1,11 @@
 ## Unreleased
 
+### 开发中（未发版）
+
+- 保留只读 `service_status` 与有界 SSE，新增 managed `operator` 日常管理面板：配对会话创建/刷新/撤销与全量撤销、桥接启停、具身会话断开、直连回退、人格来源模式和临专用人格切换。
+- 所有动作复用现有 `PairingManager`、`BridgeServiceControl`、`SessionManager`、`OperatorSettings` 与 `QuestPersonaService`；结果按白名单投影，不返回 token、短码、设备密钥、绑定地址或底层路径。
+- EventBus 主消息链路已退役，管理面只展示固定关闭状态，不提供无效开关。
+
 
 ## 1.5.0 - 2026-09-12
 
