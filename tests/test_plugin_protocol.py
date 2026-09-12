@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import json
 import sys
 import types
@@ -588,5 +589,169 @@ def test_plugin_listener_binds_only_during_initialize_and_terminate_releases_por
         rebound = await asyncio.start_server(lambda _r, _w: None, "127.0.0.1", port)
         rebound.close()
         await rebound.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_webui_contract_declares_readonly_bounded_sse(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    install_astrbot_stubs(monkeypatch, tmp_path)
+    module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
+    plugin = object.__new__(module.EmbodimentBridgePlugin)
+
+    assert plugin.series_module_contract()["standalone"]["available"] is True
+
+    contract = plugin.webui_panels_contract()
+
+    assert contract["name"] == "series.webui@2.0"
+    assert contract["version"] == "2.0"
+    assert contract["state_owner"] == "plugin"
+    assert contract["managed"] == {"supported": True, "level": "read"}
+    assert {"generic_table", "sse"} <= set(contract["capabilities"])
+    assert contract["panels"] == [
+        {
+            "id": "service_status",
+            "title": "临服务状态",
+            "description": "只读查看配对监听、Bootstrap 与具身运行状态",
+            "read_only": True,
+        }
+    ]
+    assert module.WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS == 1.0
+    assert 5 <= module.WEBUI_SERVICE_STATUS_STREAM_MAX_EVENTS <= 10
+
+
+def test_webui_service_status_stream_is_bounded_and_redacted(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    install_astrbot_stubs(monkeypatch, tmp_path)
+    module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
+
+    class ListenerStub:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def status_snapshot(self) -> dict[str, Any]:
+            self.calls += 1
+            return {
+                "status": "running",
+                "ready": True,
+                "reason": "ready",
+                "bind_host": "10.20.30.40",
+                "port": 8520,
+                "device_secret": "device-secret-must-not-leak",
+            }
+
+    listener = ListenerStub()
+    plugin = object.__new__(module.EmbodimentBridgePlugin)
+    plugin.pairing_listener = listener
+    plugin.pairing = types.SimpleNamespace(
+        bootstrap_ready=True,
+        pairing_code="pairing-code-must-not-leak",
+    )
+    plugin.config = {
+        "persona_mode": "astrbot",
+        "bridge_api_key": "api-key-must-not-leak",
+        "pairing_listener_tls_key_path": "/private/key.pem",
+    }
+
+    async def scenario() -> None:
+        snapshot = plugin.webui_panel_data("service_status")
+        assert snapshot["success"] is True
+        assert snapshot["rows"] == [
+            {"item": "配对监听", "value": "running"},
+            {"item": "Bootstrap", "value": "就绪"},
+            {"item": "人格模式", "value": "astrbot"},
+        ]
+        serialized_snapshot = json.dumps(snapshot, ensure_ascii=False)
+        for secret in (
+            "10.20.30.40",
+            "device-secret-must-not-leak",
+            "pairing-code-must-not-leak",
+            "api-key-must-not-leak",
+            "/private/key.pem",
+        ):
+            assert secret not in serialized_snapshot
+
+        monkeypatch.setattr(
+            module, "WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS", 0.0
+        )
+        stream = plugin.webui_panel_stream("service_status")
+        assert inspect.isasyncgen(stream)
+        events = [event async for event in stream]
+
+        assert len(events) == module.WEBUI_SERVICE_STATUS_STREAM_MAX_EVENTS == 5
+        assert listener.calls == 6
+        assert all(
+            event["timestamp"]
+            and event["success"] is True
+            and event["status"] == "running"
+            and event["bootstrap_ready"] is True
+            and event["persona_mode"] == "astrbot"
+            for event in events
+        )
+        serialized_events = json.dumps(events, ensure_ascii=False)
+        for secret in (
+            "10.20.30.40",
+            "device-secret-must-not-leak",
+            "pairing-code-must-not-leak",
+            "api-key-must-not-leak",
+            "/private/key.pem",
+        ):
+            assert secret not in serialized_events
+
+        cancellable = plugin.webui_panel_stream("service_status")
+        await anext(cancellable)
+        await cancellable.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_webui_panel_failures_use_stable_error_codes(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    install_astrbot_stubs(monkeypatch, tmp_path)
+    module = importlib.import_module("astrbot_plugin_embodiment_bridge.main")
+
+    class BrokenListener:
+        def status_snapshot(self) -> dict[str, Any]:
+            raise OSError("private listener path /tmp/device.key")
+
+    plugin = object.__new__(module.EmbodimentBridgePlugin)
+    plugin.pairing_listener = BrokenListener()
+    plugin.pairing = types.SimpleNamespace(bootstrap_ready=True)
+    plugin.config = {"persona_mode": "astrbot"}
+
+    assert plugin.webui_panel_data("unknown") == {
+        "success": False,
+        "error": "UNKNOWN_PANEL",
+    }
+    assert plugin.webui_panel_data("service_status") == {
+        "success": False,
+        "error": "SERVICE_STATUS_UNAVAILABLE",
+    }
+
+    async def scenario() -> None:
+        unknown_stream = plugin.webui_panel_stream("unknown")
+        assert inspect.isasyncgen(unknown_stream)
+        unknown_event = await anext(unknown_stream)
+        assert unknown_event["success"] is False
+        assert unknown_event["status"] == "error"
+        assert unknown_event["error"] == "UNKNOWN_PANEL"
+        assert "/tmp/device.key" not in json.dumps(unknown_event)
+        with pytest.raises(StopAsyncIteration):
+            await anext(unknown_stream)
+
+        failed_stream = plugin.webui_panel_stream("service_status")
+        failed_event = await anext(failed_stream)
+        assert failed_event["success"] is False
+        assert failed_event["status"] == "error"
+        assert failed_event["error"] == "SERVICE_STATUS_UNAVAILABLE"
+        assert "/tmp/device.key" not in json.dumps(failed_event)
+        with pytest.raises(StopAsyncIteration):
+            await anext(failed_stream)
 
     asyncio.run(scenario())

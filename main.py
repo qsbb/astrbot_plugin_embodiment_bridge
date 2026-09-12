@@ -4,6 +4,7 @@ import asyncio
 import json
 from copy import copy
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -84,6 +85,11 @@ from .transport.pairing import PairingHttpApi
 
 
 __version__ = "1.4.1"
+
+# SSE 面板流必须是短时、可取消的观测窗口，不能把浏览器长连接变成常驻任务。
+WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS = 1.0
+WEBUI_SERVICE_STATUS_STREAM_MAX_EVENTS = 5
+WEBUI_STATUS_TEXT_MAX_LENGTH = 64
 
 
 # Quest/伴夏具身会话需要隐藏的 QQ/直播/VTS 专属工具默认黑名单。
@@ -1149,7 +1155,7 @@ class EmbodimentBridgePlugin(Star):
             "display_name": "临",
             "role": "embodiment",
             "standalone": {
-                "available": true,
+                "available": True,
                 "entry": "/pages/operator",
                 "pages": ["operator"],
             },
@@ -1189,19 +1195,81 @@ class EmbodimentBridgePlugin(Star):
 
     # Public series.control@1.0 facade.  Keep the contract methods explicit so
     # the kernel never needs to inspect this plugin's private configuration.
-    def webui_panels_contract(self) -> dict[str, Any]:
-        """series.webui@1.0：核统一接管时提供只读服务状态。"""
+    def _webui_service_status_snapshot(self) -> dict[str, Any]:
+        """Build the only public projection used by the managed status panel."""
+
+        listener_source = getattr(self, "pairing_listener", None)
+        if listener_source is None:
+            raise RuntimeError("pairing_listener_unavailable")
+        listener = listener_source.status_snapshot()
+        if not isinstance(listener, dict):
+            listener = {}
+
+        raw_status = (
+            listener.get("status")
+            or listener.get("reason")
+            or ("running" if listener.get("ready") is True else "unknown")
+        )
+        status = str(raw_status or "unknown").strip()[
+            :WEBUI_STATUS_TEXT_MAX_LENGTH
+        ] or "unknown"
+        pairing = getattr(self, "pairing", None)
+        config = getattr(self, "config", None)
+        persona_mode = ""
+        if isinstance(config, dict):
+            persona_mode = str(config.get("persona_mode") or "").strip()[
+                :WEBUI_STATUS_TEXT_MAX_LENGTH
+            ]
         return {
-            "name": "series.webui@1.0",
-            "version": "1.0",
+            "status": status,
+            "bootstrap_ready": bool(
+                getattr(pairing, "bootstrap_ready", False)
+            ),
+            "persona_mode": persona_mode,
+        }
+
+    def _webui_service_status_event(self) -> dict[str, Any]:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
+            "success": True,
+            **self._webui_service_status_snapshot(),
+        }
+
+    @staticmethod
+    def _webui_stream_error(error: str) -> dict[str, Any]:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds"
+            ),
+            "success": False,
+            "status": "error",
+            "error": error,
+        }
+
+    def webui_panels_contract(self) -> dict[str, Any]:
+        """series.webui@2.0：核统一接管时提供只读服务状态与短时 SSE。"""
+        return {
+            "name": "series.webui@2.0",
+            "version": "2.0",
             "plugin_id": PLUGIN_ID,
             "series_id": "ningxin_suxi",
-            "standalone": {"available": True, "pages": ["operator"]},
+            "state_owner": "plugin",
+            "standalone": {
+                "available": True,
+                "entry": "/pages/operator",
+                "pages": ["operator"],
+            },
+            "managed": {"supported": True, "level": "read"},
+            "preferred_surface": "dual",
+            "capabilities": ["generic_table", "sse"],
             "panels": [
                 {
                     "id": "service_status",
                     "title": "临服务状态",
                     "description": "只读查看配对监听、Bootstrap 与具身运行状态",
+                    "read_only": True,
                 }
             ],
         }
@@ -1209,34 +1277,28 @@ class EmbodimentBridgePlugin(Star):
     def webui_panel_data(self, panel: str) -> dict[str, Any]:
         if panel != "service_status":
             return {"success": False, "error": "UNKNOWN_PANEL"}
-        listener: dict[str, Any] = {}
         try:
-            snapshot = self.pairing_listener.status_snapshot()
-            if isinstance(snapshot, dict):
-                listener = snapshot
-        except Exception:
-            listener = {}
-        pairing = getattr(self, "pairing", None)
-        config = getattr(self, "config", None)
-        persona_mode = ""
-        if isinstance(config, dict):
-            persona_mode = str(config.get("persona_mode") or "")
+            service_status = self._webui_service_status_snapshot()
+        except Exception:  # noqa: BLE001 - managed panels must fail closed
+            return {
+                "success": False,
+                "error": "SERVICE_STATUS_UNAVAILABLE",
+            }
         rows = [
             {
                 "item": "配对监听",
-                "value": str(
-                    listener.get("status")
-                    or listener.get("reason")
-                    or ("运行中" if listener else "未知")
-                ),
+                "value": service_status["status"],
             },
             {
                 "item": "Bootstrap",
                 "value": "就绪"
-                if bool(getattr(pairing, "bootstrap_ready", False))
+                if service_status["bootstrap_ready"]
                 else "未就绪",
             },
-            {"item": "人格模式", "value": persona_mode or "未配置"},
+            {
+                "item": "人格模式",
+                "value": service_status["persona_mode"] or "未配置",
+            },
         ]
         return {
             "success": True,
@@ -1246,6 +1308,24 @@ class EmbodimentBridgePlugin(Star):
             "rows": rows,
             "actions": [],
         }
+
+    async def webui_panel_stream(
+        self, panel: str, context: dict[str, Any] | None = None
+    ):
+        """Yield a bounded, cancellation-safe status window for ``sse``."""
+
+        del context
+        if panel != "service_status":
+            yield self._webui_stream_error("UNKNOWN_PANEL")
+            return
+        for index in range(WEBUI_SERVICE_STATUS_STREAM_MAX_EVENTS):
+            if index:
+                await asyncio.sleep(WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS)
+            try:
+                yield self._webui_service_status_event()
+            except Exception:  # noqa: BLE001 - stream errors stay fail closed
+                yield self._webui_stream_error("SERVICE_STATUS_UNAVAILABLE")
+                return
 
     def webui_panel_action(self, panel: str, action: str, payload: dict) -> dict[str, Any]:
         return {"success": False, "error": "UNKNOWN_ACTION"}
