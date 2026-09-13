@@ -109,6 +109,30 @@ function setRuntimeState(kind, label) {
   node.classList.toggle("error", kind === "error");
   node.classList.toggle("warning", kind === "warning");
   document.getElementById("runtime-label").textContent = label;
+  const chip = document.getElementById("runtime-state-button");
+  if (chip) chip.dataset.stateKind = kind;
+}
+
+/* 页头状态 chip 是能力明细的唯一入口：点击展开/收起运行摘要卡里的能力区。 */
+function syncCapabilityDisclosureState() {
+  const details = document.getElementById("capability-health");
+  const chip = document.getElementById("runtime-state-button");
+  if (!details || !chip) return;
+  chip.setAttribute("aria-expanded", String(details.open));
+  chip.classList.toggle("is-open", details.open);
+}
+
+function toggleCapabilityDisclosure() {
+  const details = document.getElementById("capability-health");
+  if (!details) return;
+  details.open = !details.open;
+  details.dataset.userCollapsed = details.open ? "false" : "true";
+  syncCapabilityDisclosureState();
+  if (details.open && typeof details.scrollIntoView === "function") {
+    const reduceMotion =
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    details.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+  }
 }
 
 
@@ -225,8 +249,10 @@ function refreshCapabilitySummary() {
     item.classList.contains("standby") ||
     item.classList.contains("available")
   )).length;
+  const chipLabel = document.getElementById("runtime-capability-label");
   if (known < items.length) {
     label.textContent = `读取中 · ${known}/${items.length}`;
+    if (chipLabel) chipLabel.textContent = "能力读取中";
     return;
   }
   label.textContent = unavailable
@@ -234,6 +260,14 @@ function refreshCapabilitySummary() {
     : standby
       ? `${standby} 项已配置未启用`
       : `${items.length} 项全部可用`;
+  if (chipLabel) {
+    chipLabel.textContent = unavailable
+      ? `${unavailable} 项异常`
+      : standby
+        ? `${standby} 项未启用`
+        : `${items.length} 项正常`;
+  }
+  syncCapabilityDisclosureState();
   details.classList.toggle("has-problem", unavailable > 0);
   details.classList.toggle("has-standby", unavailable === 0 && standby > 0);
   if (unavailable > 0 && details.dataset.userCollapsed !== "true") {
@@ -308,6 +342,15 @@ function renderPublicUrlSettings(urls) {
         ? "已配置。修改后立即生效，保存前请确认客户端可达。"
         : "未完整配置——这是快速绑定未就绪的最常见原因。")
     : "当前 AstrBot 配置对象不支持安全保存。";
+  const publicAddress = document.getElementById("service-public-address");
+  if (publicAddress) {
+    const address = String(
+      publicUrlSettings.pairing_public_url
+        || publicUrlSettings.pairing_listener_public_url
+        || "",
+    ).trim();
+    publicAddress.textContent = address || "未配置";
+  }
 }
 
 async function loadPublicUrlSettings() {
@@ -359,6 +402,12 @@ function renderServiceStatus(service) {
     if (listener.ready !== true) listenerText += "（当前未监听）";
   }
   document.getElementById("listener-address").textContent = listenerText;
+  const versionNode = document.getElementById("summary-version");
+  if (versionNode) {
+    const version = String(serviceState.version || "").trim();
+    versionNode.textContent = version ? `v${version}` : "未上报";
+    versionNode.title = version ? `插件版本 ${version}` : "服务未上报插件版本";
+  }
   const portInput = document.getElementById("listener-port");
   if (document.activeElement !== portInput && port > 0) {
     portInput.value = String(port);
@@ -949,6 +998,18 @@ function renderPlatformSettings(platform) {
   });
   button.disabled = select.disabled;
 
+  const summaryPlatform = document.getElementById("summary-platform");
+  if (summaryPlatform) {
+    const instance = platforms.find((item) => String(item?.id || "") === selected);
+    const displayName = instance
+      ? String(instance.display_name || instance.adapter_type || selected)
+      : selected;
+    summaryPlatform.textContent = selected
+      ? displayName
+      : "未选择平台实例";
+    summaryPlatform.title = selected ? `平台实例 ID：${selected}` : "";
+  }
+
   const messages = {
     ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u7528\u4e8e\u4e34\u4e13\u5c5e\u94fe\u8def\u7684\u5408\u6210\u4e8b\u4ef6\u4e0e\u8eab\u4efd\u4e0a\u4e0b\u6587\uff1b\u666e\u901a\u5bf9\u8bdd\u4e0d\u8fdb\u5165 AstrBot EventBus\u3002",
     trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528\u3002\u8bf7\u4fdd\u5b58\u5df2\u542f\u7528\u7684 AstrBot \u5e73\u53f0\u5b9e\u4f8b ID\u3002",
@@ -1231,7 +1292,8 @@ let runtimeTabPinnedByUser = false;
 let lastDiagnosticRootCause = "";
 
 const BINDING_STEP_TARGETS = {
-  service: { group: "runtime", runtime: "service", focus: "pairing-listener-public-url", label: "服务地址" },
+  service: { group: "dialogue", dialogue: "platform", focus: "pairing-listener-public-url", label: "服务地址" },
+  "service-port": { group: "runtime", runtime: "service", focus: "listener-port", label: "监听端口" },
   platform: { group: "dialogue", dialogue: "platform", focus: "trusted-platform-id", label: "平台实例" },
   identity: { group: "devices", focus: "quest-client-id", label: "基础身份" },
   pairing: { group: "devices", focus: "open-quick-pairing-button", label: "快速绑定" },
@@ -1290,14 +1352,24 @@ function refreshBindingSteps() {
     : "4 步都已完成，可以直接在具身客户端扫码绑定。";
 }
 
+/* 首屏「连接具身客户端」主按钮：缺项一键跳转，齐备时直接打开快速绑定。 */
+function openConnectionEntry() {
+  const states = bindingStepStates();
+  const missing = Object.keys(states).find((key) => !states[key].done);
+  if (missing && missing !== "pairing") {
+    notify(`先补齐「${BINDING_STEP_TARGETS[missing]?.label || missing}」，再生成配对码`);
+    goToBindingStep(missing);
+    return;
+  }
+  openQuickPairingDialog();
+}
+
 function goToBindingStep(key) {
   const target = BINDING_STEP_TARGETS[key];
   if (!target) return;
   setActiveSettingsGroup(target.group);
-  if (target.group === "dialogue" && target.dialogue) setActiveDialogueTab(target.dialogue);
-  if (target.group === "runtime" && target.runtime) {
-    setActiveRuntimeTab(target.runtime, { user: true });
-  }
+  if (target.dialogue) setActiveDialogueTab(target.dialogue);
+  if (target.runtime) setActiveRuntimeTab(target.runtime, { user: true });
   const field = document.getElementById(target.focus);
   if (!field) return;
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -2307,6 +2379,28 @@ function bindQuickPairingModal() {
     .addEventListener("click", openQuickPairingDialog);
 }
 
+function renderServiceConnectionInfo(overview) {
+  const data = overview && typeof overview === "object" ? overview : {};
+  const exchange = document.getElementById("service-exchange-url");
+  const transport = document.getElementById("service-transport-policy");
+  const hint = document.getElementById("service-connection-hint");
+  if (exchange) {
+    const url = String(data.exchange_url || "").trim();
+    exchange.textContent = url || "未配置";
+  }
+  if (transport) {
+    transport.textContent = data.requires_https === true
+      ? "强制 HTTPS（明文 HTTP 需显式放行）"
+      : "已允许明文 HTTP";
+  }
+  if (hint) {
+    hint.textContent = data.quick_pairing_ready === true
+      ? "快速绑定已就绪，可直接生成一次性配对码。"
+      : "快速绑定未就绪："
+        + (QUICK_PAIRING_REASONS[data.quick_pairing_reason] || "请检查公网地址与身份配置");
+  }
+}
+
 async function loadQuickPairingStatus() {
   const badge = document.getElementById("quick-pairing-badge");
   const status = document.getElementById("quick-pairing-status");
@@ -2334,6 +2428,7 @@ async function loadQuickPairingStatus() {
       button.disabled = true;
       qpButtonReady = false;
     }
+    renderServiceConnectionInfo(overview);
     refreshBindingSteps();
     return true;
   } catch (error) {
@@ -2343,6 +2438,7 @@ async function loadQuickPairingStatus() {
     status.textContent = `快速绑定状态读取失败：${error.message}`;
     button.disabled = true;
     qpButtonReady = false;
+    renderServiceConnectionInfo(null);
     return true;
   }
 }
@@ -3132,11 +3228,19 @@ function bindEvents() {
   const capabilityHealth = document.getElementById("capability-health");
   if (capabilityHealth) {
     refreshCapabilitySummary();
+    syncCapabilityDisclosureState();
     capabilityHealth.addEventListener("toggle", () => {
       if (capabilityHealth.open) capabilityHealth.dataset.userCollapsed = "false";
       else if (capabilityHealth.classList.contains("has-problem")) capabilityHealth.dataset.userCollapsed = "true";
+      syncCapabilityDisclosureState();
     });
   }
+  document
+    .getElementById("runtime-state-button")
+    ?.addEventListener("click", toggleCapabilityDisclosure);
+  document
+    .getElementById("summary-connect-button")
+    ?.addEventListener("click", openConnectionEntry);
   document.querySelectorAll("[data-runtime-tab]").forEach((tab) => {
     tab.addEventListener("click", () => setActiveRuntimeTab(tab.dataset.runtimeTab, { user: true }));
     tab.addEventListener("keydown", (event) => {

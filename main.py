@@ -85,7 +85,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.7.2"
+__version__ = "1.7.3"
 
 # SSE 面板流必须是短时、可取消的观测窗口，不能把浏览器长连接变成常驻任务。
 WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS = 1.0
@@ -613,6 +613,7 @@ class EmbodimentBridgePlugin(Star):
             pairing_sync=self._sync_pairing_transport,
             enabled=self._bool_config("bridge_service_enabled", True),
             config_save_lock=self._config_save_lock,
+            plugin_version=__version__,
         )
         self.transport = HttpSseTransport(
             context=context,

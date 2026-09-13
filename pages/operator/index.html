@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.7.2-1" />
-  <link rel="stylesheet" href="./series-ui.css?v=1.7.2-1" />
+  <link rel="stylesheet" href="./style.css?v=1.7.3-1" />
+  <link rel="stylesheet" href="./series-ui.css?v=1.7.3-1" />
   </head>
 <body data-series-ui="1">
   <main class="shell">
@@ -17,115 +17,20 @@
         <h1>具身服务控制台</h1>
         <p>管理具身客户端对话服务（临专属链路）与角色身份</p>
       </div>
-      <div class="runtime-state state-chip" role="status" aria-live="polite" aria-atomic="true">
+      <button id="runtime-state-button" class="runtime-state state-chip" type="button" aria-expanded="false" aria-controls="capability-health" aria-label="查看 Bridge 能力明细" title="点开查看 Bridge 能力明细">
         <span class="state-dot" aria-hidden="true"></span>
-        <span id="runtime-label">正在读取设置</span>
-      </div>
+        <span id="runtime-label" role="status" aria-live="polite" aria-atomic="true">正在读取设置</span>
+        <span id="runtime-capability-label" class="state-chip-extra">能力读取中</span>
+        <span class="state-chip-caret" aria-hidden="true"></span>
+      </button>
     </header>
 
-        <div id="settings-tabs" class="settings-tabs segmented-control" role="tablist" aria-label="设置分类">
+    <div id="settings-tabs" class="settings-tabs segmented-control" role="tablist" aria-label="设置分类">
       <button id="settings-tab-runtime" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="settings-group-runtime" data-settings-tab="runtime">运行</button>
       <button id="settings-tab-devices" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-devices" data-settings-tab="devices" tabindex="-1">设备与绑定</button>
       <button id="settings-tab-dialogue" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-dialogue" data-settings-tab="dialogue" tabindex="-1">对话与模型</button>
       <button id="settings-tab-persona" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-persona" data-settings-tab="persona" tabindex="-1">人格</button>
     </div>
-
-    <section class="service-console" aria-labelledby="service-title">
-      <div class="service-main">
-        <div>
-          <span class="section-label">服务</span>
-          <div class="service-title-row">
-            <h2 id="service-title">具身桥接服务</h2>
-            <span id="service-status-badge" class="status-badge loading">读取中</span>
-          </div>
-          <p id="service-summary">正在读取服务运行状态</p>
-          <p id="listener-address" class="listener-address">监听地址：读取中</p>
-        </div>
-        <div class="service-actions">
-          <div class="port-control">
-            <label for="listener-port">监听端口</label>
-            <input id="listener-port" type="number" min="1024" max="65535" step="1" value="8520" inputmode="numeric" />
-            <button id="save-listener-port-button" type="button" aria-busy="false">应用端口</button>
-          </div>
-          <button id="refresh-service-button" type="button" aria-busy="false">刷新状态</button>
-          <button id="service-control-button" class="danger" type="button" aria-busy="false" disabled>关闭服务</button>
-        </div>
-      </div>
-
-      <div class="service-metrics" aria-label="运行统计">
-        <div class="metric-item">
-          <span>活跃会话</span>
-          <strong id="active-session-count">0</strong>
-        </div>
-        <div class="metric-item">
-          <span>实时连接</span>
-          <strong id="attached-stream-count">0</strong>
-        </div>
-        <div class="metric-item">
-          <span>待发事件</span>
-          <strong id="queued-event-count">0</strong>
-        </div>
-      </div>
-    </section>
-
-    <details id="capability-health" class="capability-health si-disclosure">
-      <summary>
-        <span class="capability-summary-label">Bridge 能力状态</span>
-        <strong id="capability-summary-text">读取中</strong>
-      </summary>
-      <section class="capability-strip" aria-label="Bridge 能力状态">
-      <div class="capability-item" data-capability="dialogue">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>对话模型</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">用于具身对话与触碰/动作决策的模型服务。</small>
-      </div>
-      <div class="capability-item" data-capability="bridge">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>临专属链路</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">具身客户端直连的对话链路，普通文字与语音不经过 AstrBot 共享消息链路。</small>
-      </div>
-      <div class="capability-item" data-capability="identity_configured">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>身份配置</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">Quest 客户端身份与绑定材料是否齐全；未配置时只能先完成绑定。</small>
-      </div>
-      <div class="capability-item" data-capability="stt">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>语音识别</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">STT：把客户端语音转成文字。</small>
-      </div>
-      <div class="capability-item" data-capability="tts">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>语音合成</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">TTS：把回复文字合成为语音。</small>
-      </div>
-      <div class="capability-item" data-capability="avatar_actions">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>角色动作</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">只允许白名单动作（如「说话 / 待机」），不会执行任意脚本。</small>
-      </div>
-      <div class="capability-item" data-capability="interaction_decision">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>交互决策</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">触碰与动作的并行快速判断，不等待主回复。</small>
-      </div>
-      <div class="capability-item" data-capability="direct_provider_fallback">
-        <span class="capability-dot" aria-hidden="true"></span>
-        <span>直连回退</span>
-        <strong>读取中</strong>
-        <small class="capability-hint">链路不可用时直接调用已实例化模型服务的兜底路径。</small>
-      </div>
-      </section>
-    </details>
-
-
 
     <section class="settings-grid" aria-label="具身服务设置">
       <div id="settings-group-dialogue" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-dialogue" data-settings-group="dialogue" hidden>
@@ -225,6 +130,18 @@
         </select>
         <p id="platform-status" class="field-status" role="status">&#23578;&#26410;&#35835;&#21462;</p>
         <button id="save-platform-button" class="primary" type="button" aria-busy="false" disabled>&#20445;&#23384;&#24179;&#21488;</button>
+      </section>
+      <section class="setting-panel" aria-labelledby="public-url-title">
+        <span class="section-label">配对地址</span>
+        <h2 id="public-url-title">公网访问地址</h2>
+        <p>具身客户端访问本服务使用的地址。「快速绑定未就绪」最常见的原因就是这里没有配置。保存后立即生效，无需重启。</p>
+        <label for="pairing-listener-public-url">监听器公网地址</label>
+        <input id="pairing-listener-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520" />
+        <p class="field-help">客户端可达的监听器地址；私网 HTTP 需先在配置文件显式开启对应安全开关。</p>
+        <label for="pairing-public-url">临桥服务公网地址</label>
+        <input id="pairing-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520/…/astrbot_plugin_embodiment_bridge" />
+        <p id="public-url-status" class="field-status" role="status">尚未读取</p>
+        <button id="save-public-url-button" class="primary" type="button" aria-busy="false" disabled>保存配对地址</button>
       </section>
 
       <section class="setting-panel" aria-labelledby="quest-chain-title">
@@ -568,24 +485,140 @@
       </div>
 
       <div id="settings-group-runtime" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-runtime" data-settings-group="runtime">
+      <section id="run-summary" class="setting-panel run-summary" aria-labelledby="run-summary-title">
+        <div class="run-summary-main">
+          <div class="run-summary-head">
+            <div>
+              <span class="section-label">运行摘要</span>
+              <h2 id="run-summary-title">具身桥接服务</h2>
+            </div>
+            <div class="run-summary-head-actions">
+              <span id="service-status-badge" class="status-badge loading">读取中</span>
+              <button id="refresh-service-button" type="button" aria-busy="false">刷新状态</button>
+            </div>
+          </div>
+          <p id="service-summary" class="run-summary-status">正在读取服务运行状态</p>
+          <dl class="run-summary-facts">
+            <div class="run-summary-fact">
+              <dt>服务地址</dt>
+              <dd id="listener-address">监听地址：读取中</dd>
+            </div>
+            <div class="run-summary-fact">
+              <dt>平台实例</dt>
+              <dd id="summary-platform">读取中</dd>
+            </div>
+            <div class="run-summary-fact">
+              <dt>版本</dt>
+              <dd id="summary-version">读取中</dd>
+            </div>
+          </dl>
+          <div class="run-summary-actions">
+            <button id="summary-connect-button" class="primary" type="button">连接具身客户端</button>
+            <div class="port-control">
+              <label for="listener-port">监听端口</label>
+              <input id="listener-port" type="number" min="1024" max="65535" step="1" value="8520" inputmode="numeric" />
+              <button id="save-listener-port-button" type="button" aria-busy="false">应用端口</button>
+            </div>
+            <button id="service-control-button" class="danger" type="button" aria-busy="false" disabled>关闭服务</button>
+          </div>
+          <div class="service-metrics" aria-label="运行统计">
+            <div class="metric-item">
+              <span>活跃会话</span>
+              <strong id="active-session-count">0</strong>
+            </div>
+            <div class="metric-item">
+              <span>实时连接</span>
+              <strong id="attached-stream-count">0</strong>
+            </div>
+            <div class="metric-item">
+              <span>待发事件</span>
+              <strong id="queued-event-count">0</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="run-summary-capability">
+          <details id="capability-health" class="capability-health si-disclosure">
+            <summary>
+              <span class="capability-summary-label">Bridge 能力</span>
+              <strong id="capability-summary-text">读取中</strong>
+            </summary>
+            <section class="capability-strip" aria-label="Bridge 能力状态">
+              <div class="capability-item" data-capability="dialogue" title="用于具身对话与触碰/动作决策的模型服务。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>对话模型</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">用于具身对话与触碰/动作决策的模型服务。</small>
+              </div>
+              <div class="capability-item" data-capability="bridge" title="具身客户端直连的对话链路，普通文字与语音不经过 AstrBot 共享消息链路。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>临专属链路</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">具身客户端直连的对话链路，普通文字与语音不经过 AstrBot 共享消息链路。</small>
+              </div>
+              <div class="capability-item" data-capability="identity_configured" title="Quest 客户端身份与绑定材料是否齐全；未配置时只能先完成绑定。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>身份配置</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">Quest 客户端身份与绑定材料是否齐全；未配置时只能先完成绑定。</small>
+              </div>
+              <div class="capability-item" data-capability="stt" title="STT：把客户端语音转成文字。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>语音识别</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">STT：把客户端语音转成文字。</small>
+              </div>
+              <div class="capability-item" data-capability="tts" title="TTS：把回复文字合成为语音。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>语音合成</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">TTS：把回复文字合成为语音。</small>
+              </div>
+              <div class="capability-item" data-capability="avatar_actions" title="只允许白名单动作（如「说话 / 待机」），不会执行任意脚本。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>角色动作</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">只允许白名单动作（如「说话 / 待机」），不会执行任意脚本。</small>
+              </div>
+              <div class="capability-item" data-capability="interaction_decision" title="触碰与动作的并行快速判断，不等待主回复。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>交互决策</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">触碰与动作的并行快速判断，不等待主回复。</small>
+              </div>
+              <div class="capability-item" data-capability="direct_provider_fallback" title="链路不可用时直接调用已实例化模型服务的兜底路径。">
+                <span class="capability-dot" aria-hidden="true"></span>
+                <span>直连回退</span>
+                <strong>读取中</strong>
+                <small class="capability-hint">链路不可用时直接调用已实例化模型服务的兜底路径。</small>
+              </div>
+            </section>
+          </details>
+          <p class="field-help run-summary-hint">异常项默认红色高亮；悬停每项可查看含义，点页头状态 chip 可展开这份明细。</p>
+        </div>
+      </section>
+
       <div id="runtime-tabs" class="runtime-tabs segmented-control" role="tablist" aria-label="运行分区">
         <button id="runtime-tab-service" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="runtime-panel-service" data-runtime-tab="service" tabindex="0">服务</button>
         <button id="runtime-tab-integration" class="segment" type="button" role="tab" aria-selected="false" aria-controls="runtime-panel-integration" data-runtime-tab="integration" tabindex="-1">集成</button>
         <button id="runtime-tab-diagnostics" class="segment" type="button" role="tab" aria-selected="false" aria-controls="runtime-panel-diagnostics" data-runtime-tab="diagnostics" tabindex="-1">诊断</button>
       </div>
-      <section id="runtime-panel-service" class="setting-panel" data-runtime-panel="service" role="tabpanel" aria-labelledby="runtime-tab-service public-url-title">
-        <span class="section-label">配对地址</span>
-        <h2 id="public-url-title">公网访问地址</h2>
-        <p>具身客户端访问本服务使用的地址。「快速绑定未就绪」最常见的原因就是这里没有配置。保存后立即生效，无需重启。</p>
-        <label for="pairing-listener-public-url">监听器公网地址</label>
-        <input id="pairing-listener-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520" />
-        <p class="field-help">客户端可达的监听器地址；私网 HTTP 需先在配置文件显式开启对应安全开关。</p>
-        <label for="pairing-public-url">临桥服务公网地址</label>
-        <input id="pairing-public-url" type="url" maxlength="2048" autocomplete="off" placeholder="协议://你的域名:8520/…/astrbot_plugin_embodiment_bridge" />
-        <p id="public-url-status" class="field-status" role="status">尚未读取</p>
-        <button id="save-public-url-button" class="primary" type="button" aria-busy="false" disabled>保存配对地址</button>
-      </section>
 
+      <section id="runtime-panel-service" class="setting-panel connection-panel" data-runtime-panel="service" role="tabpanel" aria-labelledby="runtime-tab-service connection-title">
+        <span class="section-label">服务</span>
+        <h2 id="connection-title">具身客户端连接信息</h2>
+        <p>具身客户端先用一次性配对码换取双 API 钥，再用公网地址连接。地址与监听端口改动立即生效，已连接的客户端需要重新连接。</p>
+        <ul class="connection-facts">
+          <li><span>公网访问地址</span><strong id="service-public-address">读取中</strong></li>
+          <li><span>配对交换地址</span><strong id="service-exchange-url">读取中</strong></li>
+          <li><span>传输策略</span><strong id="service-transport-policy">读取中</strong></li>
+        </ul>
+        <div class="inline-actions">
+          <button type="button" data-binding-goto="service">去配置公网地址</button>
+          <button type="button" data-binding-goto="service-port">调整监听端口</button>
+        </div>
+        <p id="service-connection-hint" class="field-help">快速绑定未就绪时，优先补齐公网地址与平台实例；端口只影响内置监听。</p>
+      </section>
       <section id="runtime-panel-integration" class="setting-panel integrations-panel" data-runtime-panel="integration" role="tabpanel" aria-labelledby="runtime-tab-integration integrations-title">
         <span class="section-label">系列集成</span>
         <h2 id="integrations-title">系列插件集成状态</h2>
@@ -669,7 +702,7 @@
     </div>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./series-ui.js?v=1.7.2-1"></script>
-  <script type="module" src="./app.js?v=1.7.2-1"></script>
+  <script src="./series-ui.js?v=1.7.3-1"></script>
+  <script type="module" src="./app.js?v=1.7.3-1"></script>
 </body>
 </html>

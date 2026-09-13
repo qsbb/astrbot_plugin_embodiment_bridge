@@ -58,37 +58,6 @@ body[data-series-ui] .runtime-state.warning .state-dot {
   box-shadow: 0 0 0 5px var(--si-warning-soft);
 }
 
-body[data-series-ui] .service-console {
-  display: grid;
-  gap: 20px;
-  margin-bottom: 17px;
-}
-
-body[data-series-ui] .service-main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 22px;
-}
-
-body[data-series-ui] .service-title-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  margin: 4px 0 7px;
-}
-
-body[data-series-ui] .service-title-row h2 { margin: 0; }
-body[data-series-ui] .service-main p { margin: 0; color: var(--si-muted); line-height: 1.55; }
-body[data-series-ui] .listener-address { margin-top: 6px !important; font-size: 13px; }
-body[data-series-ui] .service-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 9px;
-  flex-wrap: wrap;
-}
-
 body[data-series-ui] .port-control {
   display: grid;
   grid-template-columns: auto 96px auto;
@@ -822,31 +791,8 @@ body[data-series-ui] .qp-code-block > strong {
 @media (max-width: 560px) {
   body[data-series-ui] .shell { width: min(100% - 20px, 1180px); }
   body[data-series-ui] .page-header { align-items: flex-start; flex-direction: column; }
-  body[data-series-ui] .service-main { align-items: stretch; flex-direction: column; }
-  body[data-series-ui] .service-actions { justify-content: stretch; }
-  body[data-series-ui] .service-actions button { flex: 1 1 0; }
-  body[data-series-ui] .port-control { grid-template-columns: 1fr 96px 1fr; width: 100%; }
-  body[data-series-ui] .integrations-list {
-  display: grid;
-  gap: 9px;
-  list-style: none;
-  margin: 12px 0 0;
-  padding: 0;
-}
-
-body[data-series-ui] .integration-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-}
-
-body[data-series-ui] .integration-name { color: var(--si-ink); font-weight: 680; }
-body[data-series-ui] .integration-reason,
-body[data-series-ui] .integrations-empty { color: var(--si-muted); font-size: 13px; }
-body[data-series-ui] button[aria-busy="true"] { cursor: wait; }
-
-body[data-series-ui] .service-metrics { grid-template-columns: 1fr; }
+  body[data-series-ui] .port-control { grid-template-columns: auto minmax(0, 1fr) auto; width: 100%; }
+  body[data-series-ui] .service-metrics { grid-template-columns: 1fr; }
   body[data-series-ui] .metric-item { padding: 12px; }
   body[data-series-ui] .metric-item + .metric-item { border-top: 1px solid var(--si-line-solid); border-left: 0; }
   body[data-series-ui] .capability-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1046,12 +992,302 @@ body[data-series-ui] .settings-group > .runtime-tabs {
   margin-bottom: 0;
 }
 
-/* 服务台卡片补齐内边距，与其它卡片一致 */
-body[data-series-ui] .service-console {
-  padding: clamp(15px, 1.8vw, 22px);
-}
-
 /* 人格编辑器：为底部 sticky 操作栏预留空间，避免保存按钮压住输入区 */
 body[data-series-ui] .persona-editor-main {
   padding-bottom: 76px;
+}
+
+/* ── 运行摘要卡（方案 B）：服务信息与 Bridge 能力合并到首屏一张卡 ─────── */
+body[data-series-ui] .run-summary {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+body[data-series-ui] .run-summary-main {
+  display: grid;
+  gap: 11px;
+  align-content: start;
+}
+
+body[data-series-ui] .run-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body[data-series-ui] .run-summary-head h2 { margin: 0; }
+body[data-series-ui] .run-summary-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+body[data-series-ui] .run-summary-status {
+  margin: 0;
+  color: var(--si-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body[data-series-ui] .run-summary-facts { display: grid; gap: 6px; margin: 0; }
+body[data-series-ui] .run-summary-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+body[data-series-ui] .run-summary-fact dt {
+  flex: 0 0 62px;
+  color: var(--si-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+body[data-series-ui] .run-summary-fact dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--si-ink);
+  font-size: 13px;
+  font-weight: 680;
+  overflow-wrap: anywhere;
+}
+
+body[data-series-ui] .run-summary-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+body[data-series-ui] .run-summary .port-control {
+  grid-template-columns: auto minmax(84px, 110px) auto;
+  padding: 3px 4px 3px 11px;
+  border: 1px solid var(--si-line);
+  border-radius: 999px;
+  background: var(--si-surface-soft);
+}
+
+body[data-series-ui] .run-summary .port-control input { min-height: 32px; }
+body[data-series-ui] .run-summary .port-control button { min-height: 32px; }
+
+/* 运行统计改为紧凑胶囊行（对齐效果图右下角的三枚小标签） */
+body[data-series-ui] .run-summary .service-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+body[data-series-ui] .run-summary .metric-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  border: 1px solid var(--si-line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: var(--si-surface-soft);
+}
+
+body[data-series-ui] .run-summary .metric-item + .metric-item {
+  border: 1px solid var(--si-line);
+}
+
+body[data-series-ui] .run-summary .metric-item strong { font-size: 15px; }
+body[data-series-ui] .run-summary-capability { display: grid; gap: 8px; align-content: start; }
+body[data-series-ui] .run-summary .capability-health { margin: 0; }
+body[data-series-ui] .run-summary-hint { margin: 0; }
+
+/* 卡内能力条改紧凑 pill：含义走 title，明细由页头 chip 或本区块展开 */
+body[data-series-ui] .run-summary .capability-strip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 11px 12px 12px;
+}
+
+body[data-series-ui] .run-summary .capability-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 0;
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: rgba(255, 255, 255, .62);
+}
+
+body[data-series-ui] .run-summary .capability-item .capability-dot {
+  grid-row: auto;
+  align-self: center;
+  margin-top: 0;
+}
+
+body[data-series-ui] .run-summary .capability-item span:not(.capability-dot) {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+}
+
+body[data-series-ui] .run-summary .capability-item strong { flex: 0 0 auto; font-size: 12px; }
+body[data-series-ui] .run-summary .capability-hint { display: none; }
+
+/* 「服务」二级面板：连接信息 + 缺项一键跳转 */
+body[data-series-ui] .connection-facts {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+body[data-series-ui] .connection-facts li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--si-line);
+  border-radius: var(--si-radius-xs);
+  padding: 9px 12px;
+  background: var(--si-surface-soft);
+}
+
+body[data-series-ui] .connection-facts span { color: var(--si-muted); font-size: 12px; font-weight: 650; }
+body[data-series-ui] .connection-facts strong {
+  min-width: 0;
+  color: var(--si-ink);
+  font-size: 13px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* 运行分区面板独占整行，不被父级双列网格拆开 */
+body[data-series-ui] .settings-group > [data-runtime-panel] { grid-column: 1 / -1; }
+
+/* ── sticky 导航：页面级 tab 与二级 tab 都吸顶 ─────────────────────────── */
+body[data-series-ui] {
+  --si-subnav-top: 62px;
+}
+
+body[data-series-ui] .settings-tabs {
+  background: rgba(255, 255, 255, .74);
+}
+
+body[data-series-ui] .runtime-tabs,
+body[data-series-ui] .dialogue-tabs {
+  position: sticky;
+  top: var(--si-subnav-top);
+  z-index: 15;
+  background: rgba(255, 255, 255, .74);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* 页头 chip：唯一入口，点开运行摘要卡里的能力明细 */
+body[data-series-ui] .runtime-state.state-chip {
+  gap: 8px;
+  cursor: pointer;
+}
+
+body[data-series-ui] .runtime-state.state-chip .state-chip-extra {
+  color: var(--si-muted);
+  font-weight: 620;
+}
+
+body[data-series-ui] .runtime-state.state-chip .state-chip-extra::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--si-line-solid);
+}
+
+body[data-series-ui] .runtime-state.state-chip .state-chip-caret {
+  width: 8px;
+  height: 8px;
+  margin-left: 2px;
+  border-right: 2px solid var(--si-muted);
+  border-bottom: 2px solid var(--si-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--si-transition);
+}
+
+body[data-series-ui] .runtime-state.state-chip.is-open .state-chip-caret {
+  transform: translateY(1px) rotate(225deg);
+}
+
+/* 桌面：摘要卡左右分栏，能力区独占右侧并与其保持分隔 */
+@media (min-width: 1024px) {
+  body[data-series-ui] .run-summary { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); }
+  body[data-series-ui] .run-summary-capability {
+    border-left: 1px solid var(--si-line-solid);
+    padding-left: 18px;
+  }
+  body[data-series-ui] .run-summary .capability-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* 移动端：压缩卡片高度，保证服务摘要卡与二级 tab 留在首屏 */
+@media (max-width: 760px) {
+  body[data-series-ui] { --si-subnav-top: 56px; }
+  body[data-series-ui] .run-summary { gap: 12px; }
+  body[data-series-ui] .run-summary-main { gap: 9px; }
+  body[data-series-ui] .run-summary-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  body[data-series-ui] .run-summary-actions .port-control {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    width: 100%;
+  }
+  body[data-series-ui] .run-summary-actions > #service-control-button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  body[data-series-ui] .run-summary .capability-hint,
+  body[data-series-ui] .run-summary-hint { display: none; }
+  body[data-series-ui] .run-summary .metric-item { padding: 4px 10px; }
+  body[data-series-ui] .run-summary .metric-item strong { font-size: 15px; }
+}
+
+/* 人格来源方式与其它二级 tab 一致：桌面三列分段，移动端纵向堆叠 */
+body[data-series-ui] #persona-workflow-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 560px) {
+  body[data-series-ui] #persona-workflow-tabs { grid-template-columns: 1fr; }
+  body[data-series-ui] { --si-subnav-top: 48px; }
+  body[data-series-ui] .settings-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    margin: 0 0 12px;
+  }
+  body[data-series-ui] .settings-tabs .segment {
+    min-height: 40px;
+    padding: 6px 4px;
+    font-size: 12px;
+  }
+  body[data-series-ui] .runtime-state.state-chip {
+    width: auto;
+    justify-content: flex-start;
+  }
+  body[data-series-ui] .run-summary-head { flex-wrap: wrap; }
+  body[data-series-ui] .run-summary-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 12px;
+  }
+  body[data-series-ui] .run-summary-fact:first-child { grid-column: 1 / -1; }
+  body[data-series-ui] .run-summary-fact { gap: 6px; }
+  body[data-series-ui] .run-summary-fact dt { flex: 0 0 auto; }
+  body[data-series-ui] .page-header { padding: 14px 14px 10px; }
+  body[data-series-ui] .run-summary .capability-strip {
+    margin: 8px 10px 10px;
+  }
 }

@@ -99,6 +99,7 @@ class BridgeServiceControl:
         pairing_sync: Any | None = None,
         enabled: bool = True,
         config_save_lock: asyncio.Lock | None = None,
+        plugin_version: str = "",
     ) -> None:
         self.config = config
         self.listener = listener
@@ -109,6 +110,8 @@ class BridgeServiceControl:
         self.pairing_manager = pairing_manager
         self.pairing_sync = pairing_sync
         self.enabled = bool(enabled)
+        # 加法字段：页面运行摘要只读展示插件版本，不参与任何判定。
+        self.plugin_version = str(plugin_version or "").strip()[:32]
         self._lock = asyncio.Lock()
         self._config_save_lock = config_save_lock or asyncio.Lock()
 
@@ -202,6 +205,8 @@ class BridgeServiceControl:
             # 加法 label 字段（向后兼容）：operator 页直接渲染，码值保留。
             "status_label": service_status_label(status),
             "reason_label": service_reason_label(reason),
+            # 加法字段（向后兼容）：operator 页「运行摘要」卡展示版本号。
+            "version": self.plugin_version,
             "listener": {
                 "configured": listener.get("enabled") is True,
                 "ready": listener.get("ready") is True,

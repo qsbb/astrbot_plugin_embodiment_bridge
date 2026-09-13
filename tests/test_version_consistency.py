@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.7.2"
+EXPECTED_VERSION = "1.7.3"
 
 
 def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
@@ -28,10 +28,16 @@ def test_metadata_entrypoint_and_changelog_share_release_version() -> None:
 
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## Unreleased\n" in changelog
-    assert f"## {EXPECTED_VERSION} - 2026-09-13\n" in changelog
-    assert changelog.index("## Unreleased") < changelog.index(
-        f"## {EXPECTED_VERSION} - 2026-09-13"
+    release_heading = f"## {EXPECTED_VERSION} - "
+    assert release_heading in changelog
+    release_line = next(
+        line for line in changelog.splitlines() if line.startswith(release_heading)
     )
+    assert re.fullmatch(
+        rf"## {re.escape(EXPECTED_VERSION)} - \d{{4}}-\d{{2}}-\d{{2}}",
+        release_line,
+    )
+    assert changelog.index("## Unreleased") < changelog.index(release_heading)
     assert "## 0.1.1 - 2026-08-03" in changelog
 
 

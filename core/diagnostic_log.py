@@ -483,15 +483,22 @@ class DiagnosticLog:
         after = max(0, int(after_seq or 0))
         size = min(_MAX_EVENTS, max(1, int(limit or 200)))
         with self._lock:
+            pending = [dict(event) for event in self._events if event["seq"] > after]
+            # 只返回最早窗口，消费者按 next_seq 继续追平；绝不能跳到全局
+            # 最新 seq，否则中间积压事件会被静默跳过。
+            events = pending[:size]
+            has_more = len(pending) > size
             first = self._events[0]["seq"] if self._events else self._sequence + 1
             base = {
                 "contract": DIAGNOSTIC_CONTRACT,
                 "plugin_id": PLUGIN_ID,
                 "plugin_name": PLUGIN_NAME,
                 "stream_id": self._stream_id,
-                "events": [],
-                "next_seq": self._sequence,
+                "events": events,
+                "next_seq": events[-1]["seq"] if events else self._sequence,
                 "dropped_before": max(0, first - 1),
+                "has_more": has_more,
+                "truncated": has_more,
             }
             if not self.enabled:
                 base.update(status="memory_only", reason="FILE_LOG_DISABLED")
@@ -500,9 +507,6 @@ class DiagnosticLog:
             else:
                 base["status"] = "ready"
                 base["reason"] = "READY"
-            base["events"] = [
-                dict(event) for event in self._events if event["seq"] > after
-            ][-size:]
             return base
 
     def diagnostic_clear(self) -> None:

@@ -455,3 +455,24 @@ def test_persona_diagnostics_only_write_boolean_configuration_state(
         await diagnostic.close()
 
     asyncio.run(scenario())
+
+
+def test_diagnostics_window_never_skips_backlog(tmp_path: Path) -> None:
+    """P0：积压超过 limit 时必须返回最早窗口，并用 next_seq 追平。"""
+    diagnostic = DiagnosticLog(tmp_path)
+    for _ in range(5):
+        diagnostic.record("window.event", component="test", status="ok")
+
+    first = diagnostic.diagnostic_events(after_seq=0, limit=2)
+    assert [event["seq"] for event in first["events"]] == [1, 2]
+    assert first["has_more"] is True
+    assert first["truncated"] is True
+    assert first["next_seq"] == first["events"][-1]["seq"]
+
+    second = diagnostic.diagnostic_events(after_seq=first["next_seq"], limit=2)
+    assert [event["seq"] for event in second["events"]] == [3, 4]
+    assert second["has_more"] is True
+
+    third = diagnostic.diagnostic_events(after_seq=second["next_seq"], limit=2)
+    assert [event["seq"] for event in third["events"]] == [5]
+    assert third["has_more"] is False

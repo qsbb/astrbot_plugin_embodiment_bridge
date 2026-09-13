@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.7.2-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.7.2-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.2-1")
+    assert '<script type="module" src="./app.js?v=1.7.3-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.7.3-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.3-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -785,3 +785,105 @@ def test_operator_page_binding_steps_are_actionable() -> None:
 
     assert "body[data-series-ui] .binding-step" in css
     assert ".binding-step.is-done" in css
+
+
+def test_operator_page_plan_b_run_summary_merges_service_and_capabilities() -> None:
+    """方案 B：服务地址/状态/平台/版本/能力健康合并为首屏「运行摘要」卡。"""
+
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    card_start = html.index('id="run-summary"')
+    card_end = html.index('id="runtime-tabs"')
+    card = html[card_start:card_end]
+    for element_id in (
+        "service-status-badge",
+        "listener-address",
+        "summary-platform",
+        "summary-version",
+        "capability-summary-text",
+        "summary-connect-button",
+    ):
+        assert f'id="{element_id}"' in card
+    assert 'id="capability-health"' in card
+    assert card_end < html.index('id="runtime-panel-service"')
+
+    # 次级 tab（服务 / 集成 / 诊断）紧贴摘要卡之后，并随页面吸顶。
+    assert html.index('id="settings-tabs"') < card_start
+    assert "body[data-series-ui] .runtime-tabs,\nbody[data-series-ui] .dialogue-tabs {" in css
+    assert "position: sticky;" in css
+    assert "body[data-series-ui] .settings-tabs {" in css
+
+    # 页头只剩一个状态 chip，点开即展开能力明细。
+    assert html.count('class="state-dot"') == 1
+    assert 'id="runtime-capability-label"' in html
+    assert "function toggleCapabilityDisclosure()" in js
+    assert 'id="runtime-state-button"' in html
+    assert "syncCapabilityDisclosureState();" in js
+    assert 'chip.setAttribute("aria-expanded", String(details.open));' in js
+    assert "if (chipLabel) chipLabel.textContent = \"能力读取中\";" in js
+    assert "`${items.length} 项正常`" in js
+    assert "`${unavailable} 项异常`" in js
+
+    # 首屏主按钮：缺项一键跳转，齐备时直接打开快速绑定弹层。
+    assert "function openConnectionEntry()" in js
+    assert "openQuickPairingDialog();" in js
+    assert 'getElementById("summary-connect-button")' in js
+
+    # 公网地址下沉到「平台与集成」，运行分区不再持有它。
+    platform_panel = html[
+        html.index('data-dialogue-panel="platform"') : html.index('id="settings-group-persona"')
+    ]
+    assert 'id="pairing-listener-public-url"' in platform_panel
+    assert 'id="public-url-title"' in platform_panel
+    runtime_group = html[html.index('data-settings-group="runtime"') :]
+    assert 'id="pairing-listener-public-url"' not in runtime_group
+
+    # 双列 grid 错位修复：对话与运行面板都强制占满整行。
+    assert (
+        "body[data-series-ui] .dialogue-tabs,\n"
+        "body[data-series-ui] .dialogue-panel {\n"
+        "  grid-column: 1 / -1;\n"
+        "}"
+    ) in css
+    assert (
+        "body[data-series-ui] .settings-group > [data-runtime-panel] { grid-column: 1 / -1; }"
+    ) in css
+    assert "body[data-series-ui] .run-summary {\n  grid-column: 1 / -1;" in css
+
+    # 390px 首屏：页面级 tab 保持单行，摘要卡指标压缩为一行。
+    mobile = css[css.index("@media (max-width: 560px)") :]
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in mobile
+    assert "body[data-series-ui] { --si-subnav-top: 48px; }" in mobile
+    assert "body[data-series-ui] .run-summary .metric-item { padding: 4px 10px; }" in mobile
+
+
+def test_operator_page_service_panel_and_version_field_stay_backward_compatible() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    service_control = (PLUGIN_ROOT / "core" / "service_control.py").read_text(
+        encoding="utf-8"
+    )
+    main_source = (PLUGIN_ROOT / "main.py").read_text(encoding="utf-8")
+
+    # 运行「服务」面板保留连接信息与缺项跳转，监听端口/开关仍在摘要卡内。
+    service_panel = html[
+        html.index('id="runtime-panel-service"') : html.index('id="runtime-panel-integration"')
+    ]
+    assert "connection-facts" in service_panel
+    assert 'data-binding-goto="service"' in service_panel
+    assert 'data-binding-goto="service-port"' in service_panel
+    assert 'id="listener-port"' not in service_panel
+    card = html[html.index('id="run-summary"') : html.index('id="runtime-tabs"')]
+    for element_id in ("listener-port", "save-listener-port-button", "service-control-button"):
+        assert f'id="{element_id}"' in card
+
+    # 版本号是服务状态的加法字段：路径/schema 不变，缺失时页面降级展示。
+    assert '"version": self.plugin_version,' in service_control
+    assert "plugin_version=__version__," in main_source
+    assert "plugin_version: str = \"\"," in service_control
+    assert 'const versionNode = document.getElementById("summary-version");' in js
+    assert 'versionNode.textContent = version ? `v${version}` : "未上报";' in js
+    assert 'const summaryPlatform = document.getElementById("summary-platform");' in js
+    assert 'summaryPlatform.textContent = selected' in js
