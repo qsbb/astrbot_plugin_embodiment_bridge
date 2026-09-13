@@ -192,14 +192,17 @@ def test_plugin_registers_public_http_sse_and_pairing_routes_and_terminates(
         assert "DIALOGUE_PATH_AVAILABLE" in health["reasons"]
         assert plugin.diagnostic_log_contract() == {
             "name": "series.diagnostics",
-            "version": "1.0",
+            "version": "1.1",
             "series_id": "ningxin_suxi",
             "plugin_id": "astrbot_plugin_embodiment_bridge",
             "plugin_name": "临",
-            "capabilities": ("read", "clear", "read_events", "clear_events"),
+            "capabilities": ("read", "clear", "read_state", "read_events", "clear_events"),
             "storage": "memory_only",
             "astrbot_log_propagation": False,
         }
+        state = plugin.diagnostic_state()
+        assert state["contract"] == "series.diagnostics@1.1"
+        assert isinstance(state["links"], dict)
         series_diagnostics = plugin.diagnostic_events()
         assert series_diagnostics["contract"] == "series.diagnostics@1.0"
         assert series_diagnostics["status"] == "ready"

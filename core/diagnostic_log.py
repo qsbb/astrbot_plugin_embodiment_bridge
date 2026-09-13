@@ -574,3 +574,70 @@ class DiagnosticLogSink:
 
 
 __all__ = ["DiagnosticLog", "DiagnosticLogSink"]
+
+# ---------------------------------------------------------------- 联动健康（series.diagnostics@1.1）
+# 事件流只做历史；当前状态由 diagnostic_state_payload() 纯读返回。
+LINK_STATE_LIMIT = 64
+_LINK_STATES: dict[str, dict[str, Any]] = {}
+_LINK_LOCK = threading.Lock()
+
+
+def _link_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def record_link_state(
+    link_id: Any,
+    *,
+    state: str,
+    peer_plugin_id: str = "",
+    contract: str = "",
+    contract_version: str = "",
+    method: str = "",
+    reason_code: str = "",
+    fallback: str = "",
+) -> dict[str, Any]:
+    """记录一条联动链路的当前状态（本地缓存，供核侧联动健康读取）。"""
+    key = str(link_id or "").strip()[:120]
+    if not key:
+        return {}
+    normalized = str(state or "unknown").strip().lower() or "unknown"
+    now_text = _link_now()
+    with _LINK_LOCK:
+        previous = _LINK_STATES.get(key)
+        entry = {
+            "state": normalized,
+            "since": (previous or {}).get("since", now_text),
+            "last_attempt_at": now_text,
+            "last_success_at": (
+                now_text if normalized == "ready" else str((previous or {}).get("last_success_at", ""))
+            ),
+            "reason_code": str(reason_code or "")[:80],
+            "peer_plugin_id": str(peer_plugin_id or "")[:120],
+            "contract": str(contract or "")[:120],
+            "contract_version": str(contract_version or "")[:40],
+            "method": str(method or "")[:80],
+            "fallback": str(fallback or "")[:120],
+            "consecutive_failures": (
+                0 if normalized == "ready" else int((previous or {}).get("consecutive_failures", 0)) + 1
+            ),
+            "observed_at": now_text,
+        }
+        _LINK_STATES[key] = entry
+        if len(_LINK_STATES) > LINK_STATE_LIMIT:
+            oldest = min(_LINK_STATES.items(), key=lambda item: item[1].get("observed_at", ""))
+            _LINK_STATES.pop(oldest[0], None)
+    return dict(entry)
+
+
+def diagnostic_state_payload() -> dict[str, Any]:
+    """返回当前联动状态快照（纯读：不写事件、不改计数）。"""
+    with _LINK_LOCK:
+        links = {key: dict(value) for key, value in _LINK_STATES.items()}
+    return {
+        "contract": "series.diagnostics@1.1",
+        "plugin_id": PLUGIN_ID,
+        "plugin_name": PLUGIN_NAME,
+        "observed_at": _link_now(),
+        "links": links,
+    }

@@ -18,6 +18,9 @@ let personaConversionReport = null;
 let personaConversionDraftToken = "";
 let personaDraftRequiresConversion = false;
 let personaOpenedConverterPromptVersion = "";
+let personaSettingsBaseline = null;
+let personaEditorBaseline = null;
+let personaConversionContext = null;
 let bridgeReady = false;
 let eventsBound = false;
 let serviceRefreshTimer = null;
@@ -50,24 +53,12 @@ const notify = (message, error = false) => {
 };
 
 function readDiagnosticAutoScrollPreference() {
-  try {
-    const stored = window.localStorage.getItem(DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY);
-    return stored === null ? true : stored === "true";
-  } catch (_error) {
-    return true;
-  }
+  // Plugin Page iframes can only keep this preference for the current page session.
+  return true;
 }
 
 function setDiagnosticAutoScroll(enabled) {
   diagnosticAutoScroll = enabled === true;
-  try {
-    window.localStorage.setItem(
-      DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY,
-      String(diagnosticAutoScroll),
-    );
-  } catch (_error) {
-    // Browser storage is optional; the page remains usable in private mode.
-  }
   const container = document.getElementById("diagnostics-events");
   if (diagnosticAutoScroll && container) {
     container.scrollTop = container.scrollHeight;
@@ -1119,6 +1110,7 @@ async function loadPlatformSettings() {
 async function loadPersonaSettings() {
   const response = await apiGet("pairing/persona-settings");
   renderPersonaSettings(response.persona);
+  capturePersonaSettingsBaseline();
   return true;
 }
 
@@ -1199,6 +1191,128 @@ function appendReportItems(listId, values) {
 function setDisabledWhenIdle(buttonId, disabled) {
   const button = document.getElementById(buttonId);
   if (button.getAttribute("aria-busy") !== "true") button.disabled = disabled;
+}
+
+function personaLiveFormValue() {
+  return {
+    source_mode: document.getElementById("persona-source-mode").value,
+    astrbot_persona_id: document.getElementById("astrbot-persona-id").value,
+    character_name: document.getElementById("character-name").value,
+    character_self_reference: document.getElementById("character-self-reference").value,
+    character_self_description: document.getElementById("character-self-description").value,
+    character_user_relationship: document.getElementById("character-user-relationship").value,
+  };
+}
+
+function personaEditorFormValue() {
+  return {
+    workflow_mode: personaWorkflowMode,
+    profile_id: document.getElementById("persona-profile-id").value,
+    display_name: document.getElementById("persona-profile-name").value,
+    aliases: document.getElementById("persona-profile-aliases").value,
+    source_persona_id: document.getElementById("persona-import-source").value,
+    source_prompt: document.getElementById("persona-source-prompt").value,
+    admin_requirements: document.getElementById("persona-admin-requirements").value,
+    quest_persona_prompt: document.getElementById("quest-persona-prompt").value,
+  };
+}
+
+function capturePersonaSettingsBaseline() {
+  personaSettingsBaseline = personaLiveFormValue();
+}
+
+function capturePersonaEditorBaseline() {
+  personaEditorBaseline = personaEditorFormValue();
+}
+
+function personaSettingsHaveUnsavedChanges() {
+  if (!personaSettingsBaseline) return false;
+  return JSON.stringify(personaLiveFormValue()) !== JSON.stringify(personaSettingsBaseline);
+}
+
+function personaEditorHasUnsavedChanges() {
+  if (personaConversionDraftToken || personaDraftRequiresConversion) return true;
+  if (!personaEditorBaseline) return false;
+  return JSON.stringify(personaEditorFormValue()) !== JSON.stringify(personaEditorBaseline);
+}
+
+function personaConverterHasUnsavedChanges() {
+  const select = document.getElementById("persona-converter-provider");
+  if (!select) return false;
+  const configured = String(
+    personaProfiles?.persona_converter_provider_id ||
+    personaProfiles?.converter_provider_id ||
+    ""
+  );
+  return String(select.value || "") !== configured;
+}
+
+function hasUnsavedChanges() {
+  return personaSettingsHaveUnsavedChanges() ||
+    personaEditorHasUnsavedChanges() ||
+    personaConverterHasUnsavedChanges();
+}
+
+function showUnsavedConfirm(options) {
+  const confirmDialog = window.SeriesUI?.confirm;
+  return confirmDialog ? confirmDialog(options) : Promise.resolve(false);
+}
+
+async function confirmDiscardChanges() {
+  if (!hasUnsavedChanges()) return true;
+  return (await showUnsavedConfirm({
+    title: "未保存的修改",
+    message: "当前页面还有未保存的改动，离开将放弃这些改动。",
+    confirmText: "放弃修改",
+    cancelText: "继续编辑",
+    danger: true,
+  })) === true;
+}
+
+function restorePersonaSettingsForm() {
+  if (!personaSettingsBaseline) return;
+  renderPersonaSettings({
+    ...personaSettings,
+    source_mode: personaSettingsBaseline.source_mode,
+    persona_selected: Boolean(personaSettingsBaseline.astrbot_persona_id),
+    astrbot_persona_id: personaSettingsBaseline.astrbot_persona_id,
+    character_name: personaSettingsBaseline.character_name,
+    character_self_reference: personaSettingsBaseline.character_self_reference,
+    character_self_description: personaSettingsBaseline.character_self_description,
+    character_user_relationship: personaSettingsBaseline.character_user_relationship,
+  });
+}
+
+function restorePersonaEditorFromBaseline() {
+  personaConversionDraftToken = "";
+  personaDraftRequiresConversion = false;
+  if (personaEditorBaseline) {
+    setPersonaWorkflowMode(personaEditorBaseline.workflow_mode);
+    document.getElementById("persona-profile-id").value = personaEditorBaseline.profile_id;
+    document.getElementById("persona-profile-name").value = personaEditorBaseline.display_name;
+    document.getElementById("persona-profile-aliases").value = personaEditorBaseline.aliases;
+    document.getElementById("persona-import-source").value = personaEditorBaseline.source_persona_id;
+    document.getElementById("persona-source-prompt").value = personaEditorBaseline.source_prompt;
+    document.getElementById("persona-admin-requirements").value = personaEditorBaseline.admin_requirements;
+    document.getElementById("quest-persona-prompt").value = personaEditorBaseline.quest_persona_prompt;
+  } else {
+    clearPersonaProfileEditor();
+  }
+  updatePersonaEditorActions();
+}
+
+function discardPersonaChanges() {
+  restorePersonaSettingsForm();
+  restorePersonaEditorFromBaseline();
+  const select = document.getElementById("persona-converter-provider");
+  if (select && personaProfiles) {
+    select.value = String(
+      personaProfiles.persona_converter_provider_id ||
+      personaProfiles.converter_provider_id ||
+      ""
+    );
+  }
+  updatePersonaEditorActions();
 }
 
 function invalidatePersonaDraft(message, forceConversion = false) {
@@ -1364,10 +1478,11 @@ function openConnectionEntry() {
   openQuickPairingDialog();
 }
 
-function goToBindingStep(key) {
+async function goToBindingStep(key) {
   const target = BINDING_STEP_TARGETS[key];
   if (!target) return;
-  setActiveSettingsGroup(target.group);
+  const switchResult = setActiveSettingsGroup(target.group);
+  if (!await switchResult) return;
   if (target.dialogue) setActiveDialogueTab(target.dialogue);
   if (target.runtime) setActiveRuntimeTab(target.runtime, { user: true });
   const field = document.getElementById(target.focus);
@@ -1395,7 +1510,12 @@ function setActiveRuntimeTab(name, { user = false } = {}) {
   });
 }
 
-function setActiveSettingsGroup(group) {
+async function setActiveSettingsGroup(group) {
+  const current = document.querySelector("[data-settings-tab].active")?.dataset.settingsTab;
+  if (current === "persona" && group !== "persona" && hasUnsavedChanges()) {
+    if (!await confirmDiscardChanges()) return false;
+    discardPersonaChanges();
+  }
   document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
     const selected = tab.dataset.settingsTab === group;
     tab.classList.toggle("active", selected);
@@ -1405,6 +1525,7 @@ function setActiveSettingsGroup(group) {
   document.querySelectorAll("[data-settings-group]").forEach((panel) => {
     panel.hidden = panel.dataset.settingsGroup !== group;
   });
+  return true;
 }
 
 function setPersonaWorkflowMode(mode) {
@@ -1457,6 +1578,7 @@ function clearPersonaProfileEditor() {
   renderPersonaConversionReport(null);
   document.getElementById("persona-profile-status").textContent =
     "这是未保存的草稿；保存后仍需单独点击启用。";
+  capturePersonaEditorBaseline();
   updatePersonaEditorActions();
 }
 
@@ -1493,12 +1615,14 @@ function renderPersonaProfileEditor(profile) {
       ? "此人格已配置为当前人格，但文件尚不可用；请修正并保存后重新启用。"
       : "此人格当前已启用。修改后请先保存；保存不会自动重新启用。"
     : "已打开保存的人格；修改后需要保存，启用是独立操作。";
+  capturePersonaEditorBaseline();
   updatePersonaEditorActions();
 }
 
 async function openPersonaProfile(profile, trigger = null) {
   const profileId = personaProfileId(profile);
   if (!profileId || trigger?.getAttribute("aria-busy") === "true") return false;
+  if (personaEditorHasUnsavedChanges() && !await confirmDiscardChanges()) return false;
   if (trigger) {
     trigger.disabled = true;
     trigger.setAttribute("aria-busy", "true");
@@ -1769,49 +1893,29 @@ async function convertPersona() {
 }
 
 function storePersonaConversionJobId(jobId) {
-  try {
-    if (jobId) {
-      window.sessionStorage.setItem(
-        PERSONA_CONVERSION_JOB_STORAGE_KEY,
-        JSON.stringify({
-          job_id: jobId,
-          mode: personaWorkflowMode,
-          profile_id: document.getElementById("persona-profile-id").value,
-          source_persona_id: personaWorkflowMode === "import"
-            ? document.getElementById("persona-import-source").value
-            : ""
-        })
-      );
-    } else {
-      window.sessionStorage.removeItem(PERSONA_CONVERSION_JOB_STORAGE_KEY);
+  // Legacy persistence used window.sessionStorage; sandboxed pages keep this in memory.
+  personaConversionContext = jobId
+    ? {
+      job_id: String(jobId),
+      mode: personaWorkflowMode,
+      profile_id: document.getElementById("persona-profile-id").value,
+      source_persona_id: personaWorkflowMode === "import"
+        ? document.getElementById("persona-import-source").value
+        : ""
     }
-  } catch (_error) {
-    // sessionStorage can be unavailable in restricted embedded-page contexts.
-  }
+    : null;
 }
 
 function restorePersonaConversionContext() {
-  try {
-    const raw = String(
-      window.sessionStorage.getItem(PERSONA_CONVERSION_JOB_STORAGE_KEY) || ""
-    ).trim();
-    if (!raw) return null;
-    if (raw.startsWith("pcj_")) return { job_id: raw };
-    const value = JSON.parse(raw);
-    if (!value || typeof value !== "object" || !String(value.job_id || "")) {
-      return null;
-    }
-    return {
-      job_id: String(value.job_id),
-      mode: ["import", "independent"].includes(String(value.mode))
-        ? String(value.mode)
-        : "import",
-      profile_id: String(value.profile_id || ""),
-      source_persona_id: String(value.source_persona_id || "")
-    };
-  } catch (_error) {
-    return null;
-  }
+  if (!personaConversionContext) return null;
+  return {
+    job_id: String(personaConversionContext.job_id || ""),
+    mode: ["import", "independent"].includes(String(personaConversionContext.mode))
+      ? String(personaConversionContext.mode)
+      : "import",
+    profile_id: String(personaConversionContext.profile_id || ""),
+    source_persona_id: String(personaConversionContext.source_persona_id || "")
+  };
 }
 
 function restorePersonaConversionEditor(context) {
@@ -2496,6 +2600,7 @@ async function savePersonaSettings() {
     }),
     onOk: async (response) => {
       renderPersonaSettings(response.persona);
+      capturePersonaSettingsBaseline();
       sourceSaved = true;
       await loadPersonaProfiles();
     },
@@ -3308,9 +3413,10 @@ function bindEvents() {
     });
   });
   document.querySelectorAll("[data-persona-workflow-mode]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const nextMode = button.dataset.personaWorkflowMode;
-      if (nextMode !== personaWorkflowMode) {
+      if (nextMode !== personaWorkflowMode && personaEditorHasUnsavedChanges()) {
+        if (!await confirmDiscardChanges()) return;
         clearPersonaProfileEditor();
       }
       setPersonaWorkflowMode(nextMode);
@@ -3346,7 +3452,8 @@ function bindEvents() {
     .addEventListener("click", savePersonaConverterProvider);
   document
     .getElementById("new-persona-profile-button")
-    .addEventListener("click", () => {
+    .addEventListener("click", async () => {
+      if (personaEditorHasUnsavedChanges() && !await confirmDiscardChanges()) return;
       clearPersonaProfileEditor();
       setPersonaWorkflowMode("independent");
       document.getElementById("persona-profile-name").focus();
@@ -3572,6 +3679,12 @@ function showStartupError(error) {
   node.hidden = false;
   setRuntimeState("error", "页面 Bridge 不可用");
 }
+
+window.addEventListener("beforeunload", (event) => {
+  if (!hasUnsavedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 let bridgeInitPromise = null;
 

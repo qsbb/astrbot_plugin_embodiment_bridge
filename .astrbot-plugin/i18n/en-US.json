@@ -1,0 +1,44 @@
+{
+  "config": {
+    "general": {
+      "pairing_identity_sync_state": {
+        "labels": [
+          "Ready",
+          "Pending"
+        ]
+      },
+      "pairing_identity_source": {
+        "labels": [
+          "None",
+          "Manual",
+          "Relationship identity",
+          "Preserved"
+        ]
+      },
+      "quest_tool_filter_mode": {
+        "labels": [
+          "Observe only",
+          "Enforce"
+        ]
+      },
+      "persona_source_mode": {
+        "labels": [
+          "AstrBot persona",
+          "Manual override"
+        ]
+      },
+      "streaming_stt_provider": {
+        "labels": [
+          "Disabled",
+          "Fun-ASR Realtime"
+        ]
+      }
+    }
+  },
+  "pages": {
+    "operator": {
+      "title": "Embodiment Operator Console",
+      "description": "Control pairing, platform bridges, persona, chat model, and relationship identity"
+    }
+  }
+}

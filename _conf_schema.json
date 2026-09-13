@@ -125,6 +125,7 @@
       "ready",
       "pending"
     ],
+    "labels": ["就绪", "待同步"],
     "hint": "由临自动维护。pending 时拒绝新具身会话，避免身份控制面与本地事件身份不一致。"
   },
   "pairing_identity_source": {
@@ -137,6 +138,7 @@
       "relationship",
       "preserved"
     ],
+    "labels": ["无", "手动", "关系自然人", "保留"],
     "hint": "由临自动维护；原始 Bot/User 只在临的专属管理页写入且不回显。"
   },
   "pairing_user_id": {
@@ -286,6 +288,7 @@
       "observe",
       "enforce"
     ],
+    "labels": ["仅观察", "强制执行"],
     "hint": "observe=只记录诊断事件 quest.tool_filter.observe（会删哪些工具、本轮是否命中）不真删，建议先观测数日确认零误伤；enforce=真裁剪。",
     "default": "observe"
   },
@@ -308,6 +311,7 @@
       "astrbot",
       "manual_override"
     ],
+    "labels": ["AstrBot 人格", "手动覆盖"],
     "hint": "默认继承 AstrBot 正式人格。只有明确选择 manual_override 时，下方四个兼容字段才会覆盖 AstrBot 人格。",
     "default": "astrbot"
   },
@@ -440,6 +444,7 @@
       "",
       "funasr_realtime"
     ],
+    "labels": ["关闭", "Fun-ASR 实时"],
     "hint": "留空关闭实时流式识别，仅保留整段 PCM 文件式 STT 回退。funasr_realtime 使用阿里云 DashScope 的 Fun-ASR-Realtime（Bearer 鉴权 + 二进制 PCM16 帧）。",
     "default": ""
   },

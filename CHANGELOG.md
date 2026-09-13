@@ -1,5 +1,12 @@
 ## Unreleased
 
+## 1.7.4 - 2026-09-14
+
+### 变更
+
+- 诊断契约升级到 series.diagnostics@1.1（core/diagnostic_log 提供 diagnostic_state 与 record_link_state）。
+- 字段级 i18n（选项 labels + en-US）与页面未保存守卫。
+
 ## 1.7.3 - 2026-09-14
 
 ### 变更
