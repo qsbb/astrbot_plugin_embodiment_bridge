@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.7.0-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.7.0-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.0-1")
+    assert '<script type="module" src="./app.js?v=1.7.1-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.7.1-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.1-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -187,9 +187,9 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "settings?.timeout_migrated === true" in js
     assert "load: loadFastActionSettings" in js
     assert "异步快速动作" in html
-    assert "不等待主回复链路" in html
+    assert "不等待临专属链路主回复" in html
     assert "快速通道已经接管本轮后若超时、失败或没有选出动作" in html
-    assert "启动前发现模型缺失时由原有 AstrBot 主回复链路处理" in html
+    assert "启动前发现模型缺失时由临专属链路主回复处理" in html
     assert "fast_action_timeout" in labels
     assert '"fast_action.completed": "快速动作判断完成"' in labels
     assert 'apiGet("pairing/stt-settings")' in js
@@ -255,8 +255,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "provider?.provider_type" in js
     assert "可切换为空值并关闭关系上下文" in js
     assert "临直连 / 交互决策模型" in html
-    assert "仍使用 AstrBot 平台或会话的默认聊天模型" in html
-    assert "EventBus 基础对话仍可使用 AstrBot 默认模型" in js
+    assert "普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus" in html
+    assert "临专属链路的普通对话仍可使用桥接默认模型" in js
     assert "实时对话不可用" not in js
     assert "candidate.display_name" in js
     assert "candidate.person_id" in js
@@ -445,7 +445,7 @@ def test_operator_page_settings_panels_grouped_into_category_tabs() -> None:
     # 页面级分类标签栏：运行 / 设备与绑定 / 对话与模型 / 人格。
     assert 'id="settings-tabs"' in html
     assert 'aria-label="设置分类"' in html
-    assert html.count('role="tablist"') == 2  # 页面级 + 人格工作区子 tab
+    assert html.count('role="tablist"') == 3  # 页面级 + 人格工作区子 tab + 对话二级 tab
     for tab_id, group in (
         ("settings-tab-runtime", "runtime"),
         ("settings-tab-devices", "devices"),
@@ -639,3 +639,59 @@ def test_operator_diagnostics_refreshes_live_without_concurrent_requests() -> No
     ):
         assert f'"{event_name}"' in labels
     assert "event.eventbus_tool_called" in js
+
+def test_operator_pairing_uses_series_dialog_outside_shell() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    main_close = html.index("</main>")
+    source = html.index('id="quick-pairing-source"')
+    bridge_script = html.index("bridge-sdk.js")
+
+    assert main_close < source < bridge_script
+    assert 'id="quick-pairing-modal"' not in html
+    assert 'id="toast"' not in html
+    assert 'class="qp-overlay"' not in html
+    assert "function openQuickPairingDialog(" in js
+    assert "window.SeriesUI.dialog({" in js
+    assert "qpDialogController" in js
+
+
+def test_operator_interactions_use_shared_series_ui() -> None:
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    assert "window.confirm" not in js
+    assert "window.prompt" not in js
+    assert "window.SeriesUI.confirm" in js
+    assert "window.SeriesUI.prompt" in js
+    assert "window.SeriesUI.copy" in js
+    assert "window.SeriesUI.toast" in js
+    assert "window.SeriesUI.dialog" in js
+
+
+def test_dialogue_has_real_nested_tabs() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    assert 'class="dialogue-tabs segmented-control"' in html
+    for tab in ("models", "voice", "platform"):
+        assert f'data-dialogue-tab="{tab}"' in html
+        assert f'data-dialogue-panel="{tab}"' in html
+        assert f'id="dialogue-panel-{tab}"' in html
+    assert "function setActiveDialogueTab(" in js
+    assert 'setActiveDialogueTab("models")' in js
+    assert "body[data-series-ui] .dialogue-tabs" in css
+
+
+def test_pairing_dialog_preserves_actions_and_focus_contract() -> None:
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    for action in ("copy", "revoke", "regenerate", "close"):
+        assert f'id: "{action}"' in js
+    assert 'qpDialogController?.setDisabled("copy"' in js
+    assert 'qpDialogController?.setDisabled("revoke"' in js
+    assert "closeOnBackdrop: true" in js
+    assert "closeOnEscape: true" in js
+    assert "while (body.firstChild) source.appendChild(body.firstChild);" in js
+    assert "let qpCreateToken = 0;" in js
+    assert "const token = ++qpCreateToken;" in js
+    assert "token !== qpCreateToken" in js
+    assert "qpDialogController?.isOpen()" in js

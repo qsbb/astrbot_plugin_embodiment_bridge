@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.7.0-1" />
+  <link rel="stylesheet" href="./style.css?v=1.7.1-1" />
   <link rel="stylesheet" href="./series-ui.css" />
   </head>
 <body data-series-ui="1">
@@ -22,6 +22,13 @@
         <span id="runtime-label">正在读取设置</span>
       </div>
     </header>
+
+        <div id="settings-tabs" class="settings-tabs segmented-control" role="tablist" aria-label="设置分类">
+      <button id="settings-tab-runtime" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="settings-group-runtime" data-settings-tab="runtime">运行</button>
+      <button id="settings-tab-devices" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-devices" data-settings-tab="devices" tabindex="-1">设备与绑定</button>
+      <button id="settings-tab-dialogue" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-dialogue" data-settings-tab="dialogue" tabindex="-1">对话与模型</button>
+      <button id="settings-tab-persona" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-persona" data-settings-tab="persona" tabindex="-1">人格</button>
+    </div>
 
     <section class="service-console" aria-labelledby="service-title">
       <div class="service-main">
@@ -104,19 +111,20 @@
       </div>
     </section>
 
-    <div id="settings-tabs" class="settings-tabs segmented-control" role="tablist" aria-label="设置分类">
-      <button id="settings-tab-runtime" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="settings-group-runtime" data-settings-tab="runtime">运行</button>
-      <button id="settings-tab-devices" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-devices" data-settings-tab="devices" tabindex="-1">设备与绑定</button>
-      <button id="settings-tab-dialogue" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-dialogue" data-settings-tab="dialogue" tabindex="-1">对话与模型</button>
-      <button id="settings-tab-persona" class="segment" type="button" role="tab" aria-selected="false" aria-controls="settings-group-persona" data-settings-tab="persona" tabindex="-1">人格</button>
-    </div>
+
 
     <section class="settings-grid" aria-label="具身服务设置">
       <div id="settings-group-dialogue" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-dialogue" data-settings-group="dialogue" hidden>
+        <div class="dialogue-tabs segmented-control" role="tablist" aria-label="对话与模型分区">
+          <button id="dialogue-tab-models" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="dialogue-panel-models" data-dialogue-tab="models" tabindex="0">模型与决策</button>
+          <button id="dialogue-tab-voice" class="segment" type="button" role="tab" aria-selected="false" aria-controls="dialogue-panel-voice" data-dialogue-tab="voice" tabindex="-1">语音</button>
+          <button id="dialogue-tab-platform" class="segment" type="button" role="tab" aria-selected="false" aria-controls="dialogue-panel-platform" data-dialogue-tab="platform" tabindex="-1">平台与集成</button>
+        </div>
+      <div id="dialogue-panel-models" class="dialogue-panel" role="tabpanel" aria-labelledby="dialogue-tab-models" data-dialogue-panel="models">
       <section class="setting-panel" aria-labelledby="model-title">
         <span class="section-label">决策与回退</span>
         <h2 id="model-title">临直连 / 交互决策模型</h2>
-        <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音进入 AstrBot EventBus 时，仍使用 AstrBot 平台或会话的默认聊天模型。这里只显示已实例化 Provider 的安全摘要，不读取密钥或原始配置。</p>
+        <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus。这里只显示已实例化 Provider 的安全摘要，不读取密钥或原始配置。</p>
         <label for="chat-provider-id">Provider</label>
         <select id="chat-provider-id" disabled>
           <option value="">正在读取可用模型</option>
@@ -128,7 +136,7 @@
       <section class="setting-panel" aria-labelledby="fast-action-title">
         <span class="section-label">异步动作</span>
         <h2 id="fast-action-title">快速动作决策</h2>
-        <p>使用独立的快速 Provider 并行判断角色动作，不等待主回复链路。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由原有 AstrBot 主回复链路处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地 talk/idle，避免两个模型重复决策。</p>
+        <p>使用独立的快速 Provider 并行判断角色动作，不等待临专属链路主回复。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由临专属链路主回复处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地 talk/idle，避免两个模型重复决策。</p>
         <label class="mode-switch" for="fast-action-enabled">
           <input id="fast-action-enabled" type="checkbox" checked />
           <span>启用异步快速动作</span>
@@ -144,6 +152,9 @@
         <button id="save-fast-action-button" class="primary" type="button" aria-busy="false" disabled>保存快速动作设置</button>
       </section>
 
+      </div>
+
+      <div id="dialogue-panel-voice" class="dialogue-panel" role="tabpanel" aria-labelledby="dialogue-tab-voice" data-dialogue-panel="voice" hidden>
       <section class="setting-panel" aria-labelledby="stt-provider-title">
         <span class="section-label">语音输入</span>
         <h2 id="stt-provider-title">语音识别 Provider</h2>
@@ -187,6 +198,9 @@
         <button id="save-tts-button" class="primary" type="button" aria-busy="false" disabled>保存语音合成</button>
       </section>
 
+      </div>
+
+      <div id="dialogue-panel-platform" class="dialogue-panel" role="tabpanel" aria-labelledby="dialogue-tab-platform" data-dialogue-panel="platform" hidden>
       <section class="setting-panel" aria-labelledby="platform-title">
         <span class="section-label">AstrBot</span>
         <h2 id="platform-title">桥接平台实例</h2>
@@ -272,6 +286,8 @@
         <p id="knowledge-environment-status" class="field-status" role="status">尚未读取</p>
         <button id="save-knowledge-environment-button" class="primary" type="button" aria-busy="false" disabled>保存知识与环境</button>
       </section>
+      </div>
+
       </div>
 
       <div id="settings-group-persona" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-persona" data-settings-group="persona" hidden>
@@ -571,40 +587,29 @@
       <span>自然人只提供已验证账号映射；具身会话仍须通过 principal 与服务端白名单授权，且不会决定角色人格。</span>
     </section>
 
-    <div id="quick-pairing-modal" class="qp-overlay" hidden>
-      <div class="qp-dialog" role="dialog" aria-modal="true" aria-labelledby="qp-title">
-        <div class="qp-header">
-          <h3 id="qp-title">快速绑定</h3>
-          <button id="qp-close" type="button">关闭</button>
+    <div id="startup-error" class="startup-error" role="alert" hidden></div>
+  </main>
+
+    <div id="quick-pairing-source" hidden>
+      <div id="qp-empty" class="qp-empty">
+        <p id="qp-empty-text" class="field-note">正在生成一次性配对码…</p>
+      </div>
+      <div id="qp-result" hidden>
+        <div class="qp-status-row">
+          <span id="qp-status" role="status" aria-live="polite">等待客户端兑换</span>
+          <span class="qp-countdown">剩余 <strong id="qp-countdown">02:00</strong></span>
         </div>
-        <div id="qp-empty" class="qp-empty">
-          <p id="qp-empty-text" class="field-note">正在生成一次性配对码…</p>
-        </div>
-        <div id="qp-result" hidden>
-          <div class="qp-status-row">
-            <span id="qp-status" role="status" aria-live="polite">等待客户端兑换</span>
-            <span class="qp-countdown">剩余 <strong id="qp-countdown">02:00</strong></span>
-          </div>
-          <div class="qp-qr-frame"><img id="qp-qr" alt="一次性配对二维码" /></div>
-          <div class="qp-code-block">
-            <span>6 位配对码</span>
-            <strong id="qp-short-code">—</strong>
-            <p class="field-note">在具身客户端输入服务器地址和此配对码即可完成绑定；二维码只携带一次性凭证，不含长期密钥。</p>
-          </div>
-          <div class="qp-actions">
-            <button id="qp-copy" type="button">复制配对码</button>
-            <button id="qp-revoke" class="danger" type="button">撤销</button>
-            <button id="qp-regenerate" type="button">重新生成</button>
-          </div>
+        <div class="qp-qr-frame"><img id="qp-qr" alt="一次性配对二维码" /></div>
+        <div class="qp-code-block">
+          <span>6 位配对码</span>
+          <strong id="qp-short-code">—</strong>
+          <p class="field-note">在具身客户端输入服务器地址和此配对码即可完成绑定；二维码只携带一次性凭证，不含长期密钥。</p>
         </div>
       </div>
     </div>
-    <div id="startup-error" class="startup-error" role="alert" hidden></div>
-    <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-  </main>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
   <script src="./series-ui.js"></script>
-  <script type="module" src="./app.js?v=1.7.0-1"></script>
+  <script type="module" src="./app.js?v=1.7.1-1"></script>
 </body>
 </html>

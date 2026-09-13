@@ -35,6 +35,20 @@ const PERSONA_CONVERSION_JOB_STORAGE_KEY = "quest-avatar-bridge.persona-conversi
 const DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY = "quest-avatar-bridge.diagnostic-auto-scroll";
 let diagnosticAutoScroll = readDiagnosticAutoScrollPreference();
 
+const notify = (message, error = false) => {
+  if (window.SeriesUI?.toast) {
+    window.SeriesUI.toast(message, error ? "error" : "info");
+    return;
+  }
+  const fallback = document.querySelector("[data-toast-fallback], #bridge-error, #startup-error, #page-error");
+  if (fallback) {
+    fallback.textContent = String(message || "");
+    fallback.hidden = false;
+  } else {
+    console.error(message);
+  }
+};
+
 function readDiagnosticAutoScrollPreference() {
   try {
     const stored = window.localStorage.getItem(DIAGNOSTIC_AUTO_SCROLL_STORAGE_KEY);
@@ -97,13 +111,20 @@ function setRuntimeState(kind, label) {
   document.getElementById("runtime-label").textContent = label;
 }
 
-function toast(message, error = false) {
-  const node = document.getElementById("toast");
-  node.textContent = message;
-  node.classList.toggle("error", error);
-  node.classList.add("visible");
-  window.clearTimeout(toast.timer);
-  toast.timer = window.setTimeout(() => node.classList.remove("visible"), 2800);
+
+
+async function confirmAction(message, options = {}) {
+  if (!window.SeriesUI?.confirm) {
+    notify("确认组件未加载，操作已取消", true);
+    return false;
+  }
+  return window.SeriesUI.confirm({
+    title: options.title || "确认操作",
+    message,
+    confirmText: options.confirmText || "确认",
+    cancelText: "取消",
+    danger: options.danger !== false,
+  });
 }
 
 function setButtonBusy(button, busy, busyText) {
@@ -139,7 +160,7 @@ async function saveSection({
     const response = await apiPost(endpoint, payload());
     if (onOk) await onOk(response);
     const message = typeof okToast === "function" ? okToast(response) : okToast;
-    if (message) toast(message);
+    if (message) notify(message);
   } catch (error) {
     if (onError) {
       onError(error);
@@ -147,7 +168,7 @@ async function saveSection({
       const prefix = typeof errorToast === "function"
         ? errorToast(error)
         : errorToast ?? "保存失败：";
-      toast(prefix + error.message, true);
+      notify(prefix + error.message, true);
     }
   } finally {
     setButtonBusy(button, false);
@@ -354,7 +375,7 @@ async function loadServiceStatus({ silent = false } = {}) {
       return true;
     } catch (error) {
       setRuntimeState("error", "服务状态读取失败");
-      if (!silent) toast("读取服务状态失败：" + error.message, true);
+      if (!silent) notify("读取服务状态失败：" + error.message, true);
       return false;
     } finally {
       if (!silent) setButtonBusy(button, false);
@@ -370,16 +391,16 @@ async function loadServiceStatus({ silent = false } = {}) {
 async function toggleService() {
   const button = document.getElementById("service-control-button");
   const enabled = button.dataset.nextEnabled === "true";
-  if (!enabled && !window.confirm("关闭服务会断开当前具身会话，确定继续吗？")) {
+  if (!enabled && !(await confirmAction("关闭服务会断开当前具身会话，确定继续吗？"))) {
     return;
   }
   if (!setButtonBusy(button, true, enabled ? "启动中…" : "关闭中…")) return;
   try {
     const response = await apiPost("pairing/service-control", { enabled });
     renderServiceStatus(response.service);
-    toast(enabled ? "具身桥接服务已启动" : "具身桥接服务已关闭");
+    notify(enabled ? "具身桥接服务已启动" : "具身桥接服务已关闭");
   } catch (error) {
-    toast((enabled ? "启动" : "关闭") + "服务失败：" + error.message, true);
+    notify((enabled ? "启动" : "关闭") + "服务失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     if (serviceState) renderServiceStatus(serviceState);
@@ -391,22 +412,22 @@ async function saveListenerPort() {
   const input = document.getElementById("listener-port");
   const port = Number(input.value);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-    toast("监听端口必须在 1024 到 65535 之间", true);
+    notify("监听端口必须在 1024 到 65535 之间", true);
     return;
   }
   const active = Number(serviceState?.sessions?.active_sessions || 0);
-  if (active > 0 && !window.confirm("修改端口会断开当前具身会话，确定继续吗？")) {
+  if (active > 0 && !(await confirmAction("修改端口会断开当前具身会话，确定继续吗？"))) {
     return;
   }
   if (!setButtonBusy(button, true, "应用中…")) return;
   try {
     const response = await apiPost("pairing/listener-port", { port });
     renderServiceStatus(response.service);
-    toast(response.service?.status === "running"
+    notify(response.service?.status === "running"
       ? `监听端口已切换为 ${port}；Docker 部署请确认宿主机映射相同端口`
       : `端口已保存为 ${port}，请检查监听状态和 Docker 端口映射`);
   } catch (error) {
-    toast("监听端口保存失败：" + error.message, true);
+    notify("监听端口保存失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     if (serviceState) renderServiceStatus(serviceState);
@@ -447,7 +468,7 @@ function renderOperatorSettings(settings) {
   } else if (operatorSettings.selected_available) {
     status.textContent = "当前模型：" + operatorSettings.selected_id;
   } else {
-    status.textContent = "尚未选择决策 / 回退模型；EventBus 基础对话仍可使用 AstrBot 默认模型。";
+    status.textContent = "尚未选择决策 / 回退模型；临专属链路的普通对话仍可使用桥接默认模型。";
   }
   document.getElementById("save-model-button").disabled =
     select.disabled || !select.value;
@@ -533,7 +554,7 @@ async function saveQuestChainSettings() {
     },
     okToast: "已保存：临专属链路参数",
     onOk: (response) => renderQuestChainSettings(response.quest_chain),
-    onError: (error) => toast(error.message || "保存链路模式失败", true),
+    onError: (error) => notify(error.message || "保存链路模式失败", true),
     onFinally: () => {
       button.disabled = questChainSettings?.config_writable !== true;
     },
@@ -725,9 +746,9 @@ function renderFastActionSettings(settings) {
 
   const messages = {
     ready: "快速动作模型已就绪，动作与主回复会并行处理。",
-    disabled: "快速动作已关闭；动作继续由 AstrBot 主回复链路处理。",
+    disabled: "快速动作已关闭；动作继续由临专属链路主回复处理。",
     provider_not_configured: "功能默认开启，请选择一个响应较快的 Provider。",
-    selected_missing: "已选快速模型当前不可用；动作会回退主回复链路，不会自动换模型。",
+    selected_missing: "已选快速模型当前不可用；动作会回退临专属链路主回复，不会自动换模型。",
     llm_api_unavailable: "当前 AstrBot 版本未提供快速模型调用接口。"
   };
   const reason = String(
@@ -769,7 +790,7 @@ async function saveFastActionSettings() {
     },
     okToast: () => enabled
       ? "异步快速动作已启用"
-      : "异步快速动作已关闭，动作将走主回复链路",
+      : "异步快速动作已关闭，动作将走临专属链路主回复",
     errorToast: "快速动作设置保存失败：",
     onOk: (response) => renderFastActionSettings(response.fast_action),
     onFinally: () => renderFastActionSettings(fastActionSettings || {}),
@@ -898,7 +919,7 @@ function renderPlatformSettings(platform) {
   button.disabled = select.disabled;
 
   const messages = {
-    ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u53ef\u8fdb\u5165 AstrBot EventBus\u3002",
+    ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u7528\u4e8e\u4e34\u4e13\u5c5e\u94fe\u8def\u7684\u5408\u6210\u4e8b\u4ef6\u4e0e\u8eab\u4efd\u4e0a\u4e0b\u6587\uff1b\u666e\u901a\u5bf9\u8bdd\u4e0d\u8fdb\u5165 AstrBot EventBus\u3002",
     trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528\u3002\u8bf7\u4fdd\u5b58\u5df2\u542f\u7528\u7684 AstrBot \u5e73\u53f0\u5b9e\u4f8b ID\u3002",
     astrbot_event_api_unavailable: "\u5f53\u524d AstrBot \u7248\u672c\u4e0d\u63d0\u4f9b EventBus \u5e73\u53f0\u63a5\u53e3\u3002",
     trusted_platform_unavailable: "\u5df2\u914d\u7f6e\u7684\u5e73\u53f0\u5f53\u524d\u4e0d\u5b58\u5728\u6216\u672a\u542f\u7528\u3002",
@@ -1163,6 +1184,18 @@ function updatePersonaEditorActions() {
   );
 }
 
+function setActiveDialogueTab(group) {
+  document.querySelectorAll("[data-dialogue-tab]").forEach((tab) => {
+    const selected = tab.dataset.dialogueTab === group;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  document.querySelectorAll("[data-dialogue-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.dialoguePanel !== group;
+  });
+}
+
 function setActiveSettingsGroup(group) {
   document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
     const selected = tab.dataset.settingsTab === group;
@@ -1282,7 +1315,7 @@ async function openPersonaProfile(profile, trigger = null) {
     renderPersonaProfileEditor({ ...profile, ...fullProfile });
     return true;
   } catch (error) {
-    toast("读取人格文件失败：" + error.message, true);
+    notify("读取人格文件失败：" + error.message, true);
     return false;
   } finally {
     if (trigger?.isConnected) {
@@ -1394,7 +1427,7 @@ async function loadPersonaProfiles() {
     document.getElementById("active-persona-name").textContent = "独立人格不可用";
     document.getElementById("persona-profile-status").textContent =
       "读取临人格失败：" + error.message;
-    toast("读取临人格失败：" + error.message, true);
+    notify("读取临人格失败：" + error.message, true);
     return false;
   }
 }
@@ -1530,7 +1563,7 @@ async function convertPersona() {
     progress.textContent = `转换任务创建失败：${error.message}`;
     document.getElementById("persona-profile-status").textContent =
       "转换任务创建失败：" + error.message;
-    toast("转换任务创建失败：" + error.message, true);
+    notify("转换任务创建失败：" + error.message, true);
     setButtonBusy(button, false);
     updatePersonaEditorActions();
   }
@@ -1680,11 +1713,11 @@ function renderPersonaConversionJob(job) {
       progress.dataset.status = "failed";
       progress.textContent = `转换任务完成，但结果响应不完整；后台任务用时 ${elapsedSeconds} 秒。`;
       personaDraftRequiresConversion = true;
-      toast("人格转换结果响应不完整", true);
+      notify("人格转换结果响应不完整", true);
     } else {
       applyPersonaConversionResult(job.result);
       progress.textContent = `转换预览完成，后台任务用时 ${elapsedSeconds} 秒；尚未保存或启用。`;
-      toast("人格转换完成，请确认后保存");
+      notify("人格转换完成，请确认后保存");
     }
   } else if (status === "cancelled") {
     progress.textContent = `转换已取消，后台任务用时 ${elapsedSeconds} 秒。`;
@@ -1694,7 +1727,7 @@ function renderPersonaConversionJob(job) {
     progress.textContent = `转换失败，后台任务用时 ${elapsedSeconds} 秒：${message}`;
     document.getElementById("persona-profile-status").textContent =
       "转换失败：" + message;
-    toast("人格转换失败：" + message, true);
+    notify("人格转换失败：" + message, true);
   }
   updatePersonaEditorActions();
   loadDiagnostics({ silent: true });
@@ -1764,7 +1797,7 @@ async function cancelPersonaConversion() {
     if (response.job) renderPersonaConversionJob(response.job);
     else schedulePersonaConversionPoll(0);
   } catch (error) {
-    toast("取消转换失败：" + error.message, true);
+    notify("取消转换失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     button.hidden = !personaConversionJobId;
@@ -1811,9 +1844,9 @@ async function savePersonaProfile() {
     document.getElementById("persona-profile-status").textContent = wasActive
       ? "人格已保存，并已立即更新当前启用的人格。"
       : "人格已保存，但没有自动启用。确认无误后可单独启用。";
-    toast(wasActive ? "人格已保存并立即更新" : "人格已保存，尚未启用");
+    notify(wasActive ? "人格已保存并立即更新" : "人格已保存，尚未启用");
   } catch (error) {
-    toast("人格保存失败：" + error.message, true);
+    notify("人格保存失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     updatePersonaEditorActions();
@@ -1836,9 +1869,9 @@ async function activatePersonaProfile() {
       ...(current || {}),
       profile_id: profileId
     });
-    toast("临人格已启用，只影响经过“临”的对话");
+    notify("临人格已启用，只影响经过“临”的对话");
   } catch (error) {
-    toast("人格启用失败：" + error.message, true);
+    notify("人格启用失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     updatePersonaEditorActions();
@@ -1847,7 +1880,7 @@ async function activatePersonaProfile() {
 
 async function deletePersonaProfile(profile, button) {
   const id = personaProfileId(profile);
-  if (!id || !window.confirm(`确定删除“${personaProfileName(profile)}”吗？此操作不可撤销。`)) {
+  if (!id || !(await confirmAction(`确定删除“${personaProfileName(profile)}”吗？此操作不可撤销。`, { danger: true }))) {
     return;
   }
   if (!setButtonBusy(button, true, "删除中")) return;
@@ -1857,9 +1890,9 @@ async function deletePersonaProfile(profile, button) {
       clearPersonaProfileEditor();
     }
     await loadPersonaProfiles();
-    toast("人格已删除");
+    notify("人格已删除");
   } catch (error) {
-    toast("人格删除失败：" + error.message, true);
+    notify("人格删除失败：" + error.message, true);
   } finally {
     if (button.isConnected) setButtonBusy(button, false);
   }
@@ -1969,6 +2002,8 @@ let qpPairing = null;
 let qpCountdownTimer = null;
 let qpStatusTimer = null;
 let qpStatusInFlight = false;
+let qpDialogController = null;
+let qpCreateToken = 0;
 
 function qpStopTimers() {
   window.clearInterval(qpCountdownTimer);
@@ -2013,9 +2048,9 @@ function qpRenderState(state) {
   const label = document.getElementById("qp-status");
   label.textContent = QP_STATE_LABELS[normalized];
   const active = normalized === "waiting";
-  document.getElementById("qp-copy").disabled = !active;
-  document.getElementById("qp-revoke").disabled = !active;
-  if (normalized === "consumed") toast("客户端已获取配置并完成绑定");
+  qpDialogController?.setDisabled("copy", !active);
+  qpDialogController?.setDisabled("revoke", !active);
+  if (normalized === "consumed") notify("客户端已获取配置并完成绑定");
   if (!active) qpStopTimers();
 }
 
@@ -2028,7 +2063,7 @@ function qpUpdateCountdown() {
 }
 
 async function qpRefreshStatus() {
-  if (!qpPairing || qpPairing.state !== "waiting") return;
+  if (!qpDialogController?.isOpen() || !qpPairing || qpPairing.state !== "waiting") return;
   const response = await apiPost("pairing/status", {
     pairing_id: qpPairing.pairing_id
   });
@@ -2038,6 +2073,7 @@ async function qpRefreshStatus() {
 }
 
 function qpStartTimers() {
+  if (!qpDialogController?.isOpen()) return;
   qpStopTimers();
   qpCountdownTimer = window.setInterval(qpUpdateCountdown, 250);
   qpStatusTimer = window.setInterval(() => {
@@ -2050,6 +2086,7 @@ function qpStartTimers() {
 }
 
 async function qpCreate() {
+  const token = ++qpCreateToken;
   const empty = document.getElementById("qp-empty");
   const result = document.getElementById("qp-result");
   empty.hidden = false;
@@ -2061,6 +2098,7 @@ async function qpCreate() {
     const response = await apiPost("pairing/create", {
       protocol_version: "1.0"
     });
+    if (token !== qpCreateToken || !qpDialogController?.isOpen()) return;
     qpPairing = response.pairing;
     document.getElementById("qp-qr").src = qpPairing.qr_svg_data_uri;
     const code = qpPairing.short_code;
@@ -2071,23 +2109,71 @@ async function qpCreate() {
     qpUpdateCountdown();
     qpStartTimers();
   } catch (error) {
+    if (token !== qpCreateToken || !qpDialogController?.isOpen()) return;
     document.getElementById("qp-empty-text").textContent =
       `生成失败：${error.message}（可关闭后重试）`;
   }
 }
 
 function qpClose() {
-  document.getElementById("quick-pairing-modal").hidden = true;
-  qpStopTimers();
+  qpDialogController?.close();
+}
+
+function openQuickPairingDialog() {
+  if (qpDialogController?.isOpen()) return;
+  const source = document.getElementById("quick-pairing-source");
+  if (!source) return;
+  const body = document.createElement("div");
+  body.className = "qp-dialog-body";
+  while (source.firstChild) body.appendChild(source.firstChild);
+  qpDialogController = window.SeriesUI.dialog({
+    title: "快速绑定",
+    body,
+    width: "min(430px, 100%)",
+    bodyClassName: "qp-dialog-body",
+    closeOnBackdrop: true,
+    closeOnEscape: true,
+    actions: [
+      { id: "copy", label: "复制配对码", variant: "secondary", closeOnClick: false, busyLabel: "复制中…" },
+      { id: "revoke", label: "撤销", variant: "danger", closeOnClick: false, busyLabel: "撤销中…" },
+      { id: "regenerate", label: "重新生成", variant: "secondary", closeOnClick: false, busyLabel: "生成中…" },
+      { id: "close", label: "关闭", variant: "primary" },
+    ],
+    onAction: async (id) => {
+      if (id === "copy") await qpCopy();
+      else if (id === "revoke") await qpRevoke();
+      else if (id === "regenerate") await qpCreate();
+    },
+    onClose: () => {
+      qpCreateToken += 1;
+      while (body.firstChild) source.appendChild(body.firstChild);
+      qpDialogController = null;
+      qpStopTimers();
+      qpPairing = null;
+    },
+  });
+  qpCreate();
 }
 
 async function qpCopy() {
   if (!qpPairing || qpPairing.state !== "waiting") return;
-  try {
-    await navigator.clipboard.writeText(qpPairing.short_code);
-    toast("配对码已复制");
-  } catch (_error) {
-    window.prompt("复制 6 位配对码", qpPairing.short_code);
+  const copied = window.SeriesUI?.copy
+    ? await window.SeriesUI.copy(qpPairing.short_code)
+    : false;
+  if (copied) {
+    notify("配对码已复制");
+    return;
+  }
+  if (window.SeriesUI?.prompt) {
+    await window.SeriesUI.prompt({
+      title: "复制 6 位配对码",
+      message: "自动复制不可用，请手动复制下面的配对码：",
+      input: { value: qpPairing.short_code, label: "配对码" },
+      confirmText: "关闭",
+      cancelText: "取消",
+    });
+  } else {
+    notify("自动复制不可用，请手动复制配对码", true);
   }
 }
 
@@ -2098,25 +2184,15 @@ async function qpRevoke() {
       pairing_id: qpPairing.pairing_id
     });
     qpRenderState(response.pairing.state);
-    toast("配对已撤销");
+    notify("配对已撤销");
   } catch (error) {
-    toast(`撤销失败：${error.message}`, true);
+    notify(`撤销失败：${error.message}`, true);
   }
 }
 
 function bindQuickPairingModal() {
   document.getElementById("open-quick-pairing-button")
-    .addEventListener("click", () => {
-      document.getElementById("quick-pairing-modal").hidden = false;
-      qpCreate();
-    });
-  document.getElementById("qp-close").addEventListener("click", qpClose);
-  document.getElementById("quick-pairing-modal").addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) qpClose();
-  });
-  document.getElementById("qp-copy").addEventListener("click", qpCopy);
-  document.getElementById("qp-revoke").addEventListener("click", qpRevoke);
-  document.getElementById("qp-regenerate").addEventListener("click", qpCreate);
+    .addEventListener("click", openQuickPairingDialog);
 }
 
 async function loadQuickPairingStatus() {
@@ -2216,7 +2292,7 @@ async function savePersonaSettings() {
     },
     okToast: "实时人格来源已保存并启用",
     onError: (error) => {
-      toast(
+      notify(
         sourceSaved
           ? "实时人格来源已启用，但状态刷新失败：" + error.message
           : "角色身份保存失败：" + error.message,
@@ -2274,11 +2350,11 @@ async function saveTtsSettings() {
     document.getElementById("tts-max-audio-seconds").value
   );
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 120) {
-    toast("单次合成超时必须在 1 到 120 秒之间", true);
+    notify("单次合成超时必须在 1 到 120 秒之间", true);
     return;
   }
   if (!Number.isInteger(maxAudioSeconds) || maxAudioSeconds < 5 || maxAudioSeconds > 300) {
-    toast("单轮语音最长必须在 5 到 300 秒之间（整数）", true);
+    notify("单轮语音最长必须在 5 到 300 秒之间（整数）", true);
     return;
   }
   await saveSection({
@@ -2380,11 +2456,11 @@ async function loadIdentityCandidates() {
     const response = await apiGet("pairing/identity-candidates");
     renderIdentityCandidates(response.identity_catalog);
     if (response.identity_catalog?.status === "ok") {
-      toast("已从“情”读取自然人候选");
+      notify("已从“情”读取自然人候选");
     }
   } catch (error) {
     renderIdentityCandidates({ status: "error", candidates: [] });
-    toast("读取自然人失败：" + error.message, true);
+    notify("读取自然人失败：" + error.message, true);
   } finally {
     setButtonBusy(button, false);
     button.disabled = false;
@@ -2796,7 +2872,7 @@ async function loadDiagnostics({ silent = false } = {}) {
           "诊断日志暂不可用";
         document.getElementById("diagnostics-root-cause").textContent =
           "当前根因：诊断接口读取失败";
-        toast("读取诊断日志失败：" + error.message, true);
+        notify("读取诊断日志失败：" + error.message, true);
       }
       return false;
     } finally {
@@ -2926,6 +3002,23 @@ function bindEvents() {
       });
     });
   setActiveSettingsGroup("runtime");
+  setActiveDialogueTab("models");
+  document.querySelectorAll("[data-dialogue-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => setActiveDialogueTab(tab.dataset.dialogueTab));
+    tab.addEventListener("keydown", (event) => {
+      const tabs = Array.from(document.querySelectorAll("[data-dialogue-tab]"));
+      const current = tabs.indexOf(event.currentTarget);
+      let target = -1;
+      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target < 0) return;
+      event.preventDefault();
+      tabs[target].click();
+      tabs[target].focus();
+    });
+  });
   document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
     tab.addEventListener("click", () => {
       setActiveSettingsGroup(tab.dataset.settingsTab);
