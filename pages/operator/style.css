@@ -697,7 +697,7 @@ body[data-series-ui] .tts-advanced .field-grid > div { display: grid; gap: 6px; 
 body[data-series-ui] .tts-advanced .field-note { margin-top: 10px; }
 
 body[data-series-ui] .mode-switch { display: flex; align-items: center; gap: 9px; cursor: pointer; }
-body[data-series-ui] .mode-switch input { width: 18px; min-height: 18px; }
+body[data-series-ui] .mode-switch input { flex: none; }
 
 body[data-series-ui] .boundary-note {
   display: grid;

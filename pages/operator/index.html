@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.7.4-1" />
-  <link rel="stylesheet" href="./series-ui.css?v=1.7.4-1" />
+  <link rel="stylesheet" href="./style.css?v=1.7.5-1" />
+  <link rel="stylesheet" href="./series-ui.css?v=1.7.5-1" />
   </head>
 <body data-series-ui="1">
   <main class="shell">
@@ -57,7 +57,7 @@
         <h2 id="fast-action-title">快速动作决策</h2>
         <p>使用独立的快速动作模型服务并行判断角色动作，不等待临专属链路主回复。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由临专属链路主回复处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地「说话 / 待机」，避免两个模型重复决策。</p>
         <label class="mode-switch" for="fast-action-enabled">
-          <input id="fast-action-enabled" type="checkbox" checked />
+          <input id="fast-action-enabled" class="si-toggle" type="checkbox" checked />
           <span>启用异步快速动作</span>
         </label>
         <label for="fast-action-provider-id">快速动作模型服务商</label>
@@ -92,11 +92,11 @@
         <h2 id="tts-title">语音合成（TTS）</h2>
         <p>优先使用「声」插件的 voice.audio_output 语音契约；「声」未安装时自动回退 AstrBot TTS，无需手动处理。两个开关都关闭时仅下发文字回复。</p>
         <label class="mode-switch" for="voice-hub-tts-enabled">
-          <input id="voice-hub-tts-enabled" type="checkbox" checked />
+          <input id="voice-hub-tts-enabled" class="si-toggle" type="checkbox" checked />
           <span>优先使用「声」语音输出</span>
         </label>
         <label class="mode-switch" for="astrbot-tts-enabled">
-          <input id="astrbot-tts-enabled" type="checkbox" />
+          <input id="astrbot-tts-enabled" class="si-toggle" type="checkbox" />
           <span>启用 AstrBot TTS 总开关</span>
         </label>
         <details id="tts-advanced" class="tts-advanced">
@@ -173,7 +173,7 @@
             <input id="quest-chain-excluded" type="text" maxlength="512" autocomplete="off" placeholder="例如：我会牢牢记住你" />
           </div>
           <label class="mode-switch" for="quest-chain-allow-fallback">
-            <input id="quest-chain-allow-fallback" type="checkbox" />
+            <input id="quest-chain-allow-fallback" class="si-toggle" type="checkbox" />
             <span>链路故障时自动回退直管模型，保证对话不中断；关闭则直接报错</span>
           </label>
           <p class="field-note">慢钩子超时即熔断，用该插件最近成功的富化缓存兜底；直管模型调用，不进共享事件总线。</p>
@@ -188,7 +188,7 @@
         <h2 id="quest-tool-filter-title">Quest 工具过滤</h2>
         <p>仅具身会话（伴夏/Quest）生效：在模型请求级裁剪 QQ 群管、直播、桌面皮套等 Quest 上无意义的工具，其他平台会话完全不受影响。</p>
         <label class="mode-switch" for="quest-tool-filter-enabled">
-          <input id="quest-tool-filter-enabled" type="checkbox" checked />
+          <input id="quest-tool-filter-enabled" class="si-toggle" type="checkbox" checked />
           <span>启用 Quest 工具过滤</span>
         </label>
         <div id="quest-tool-filter-mode" class="segmented-control tool-filter-mode" role="radiogroup" aria-label="工具过滤模式">
@@ -205,13 +205,13 @@
         <h2 id="knowledge-environment-title">「知」与「境」集成</h2>
         <p>对话时带入凝心溯溪-「知」的全局知识证据（仅 global 域）与「境」的缓存环境事实（只读缓存，不联网）；两者都是只读契约，未安装对应插件时自动降级，无副作用。保存后立即生效。</p>
         <label class="mode-switch" for="enable-global-knowledge">
-          <input id="enable-global-knowledge" type="checkbox" checked />
+          <input id="enable-global-knowledge" class="si-toggle" type="checkbox" checked />
           <span>读取「知」的全局知识（仅 global 域，不含私人用户域）</span>
         </label>
         <label for="global-knowledge-top-k">每轮最多带入的知识条数（1-10）</label>
         <input id="global-knowledge-top-k" type="number" min="1" max="10" step="1" value="5" inputmode="numeric" />
         <label class="mode-switch" for="enable-environment-context">
-          <input id="enable-environment-context" type="checkbox" checked />
+          <input id="enable-environment-context" class="si-toggle" type="checkbox" checked />
           <span>读取「境」的缓存环境事实（只读缓存，不触发联网）</span>
         </label>
         <p id="knowledge-environment-status" class="field-status" role="status">尚未读取</p>
@@ -635,15 +635,15 @@
         <div class="diagnostics-switches" aria-label="诊断开关">
           <p class="field-help">开关保存后开启后立即生效，日志写入数据目录；全部只记录脱敏结构化摘要，不含对话内容。</p>
           <label class="mode-switch" for="diagnostic-log-enabled">
-            <input id="diagnostic-log-enabled" type="checkbox" />
+            <input id="diagnostic-log-enabled" class="si-toggle" type="checkbox" />
             <span>“临”独立日志写盘</span>
           </label>
           <label class="mode-switch" for="diagnostic-plugin-timing-enabled">
-            <input id="diagnostic-plugin-timing-enabled" type="checkbox" />
+            <input id="diagnostic-plugin-timing-enabled" class="si-toggle" type="checkbox" />
             <span>插件钩子耗时采集（需先开启独立日志）</span>
           </label>
           <label class="mode-switch" for="diagnostic-platform-log-enabled">
-            <input id="diagnostic-platform-log-enabled" type="checkbox" />
+            <input id="diagnostic-platform-log-enabled" class="si-toggle" type="checkbox" />
             <span>同步摘要到 AstrBot 平台日志</span>
           </label>
           <div class="inline-actions">
@@ -654,7 +654,7 @@
         <div class="inline-actions">
           <button id="load-diagnostics" type="button" aria-busy="false">刷新日志</button>
           <label class="mode-switch diagnostics-autoscroll-toggle" for="diagnostics-auto-scroll">
-            <input id="diagnostics-auto-scroll" type="checkbox" checked />
+            <input id="diagnostics-auto-scroll" class="si-toggle" type="checkbox" checked />
             <span>自动滚动</span>
           </label>
         </div>
@@ -702,7 +702,7 @@
     </div>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./series-ui.js?v=1.7.4-1"></script>
-  <script type="module" src="./app.js?v=1.7.4-1"></script>
+  <script src="./series-ui.js?v=1.7.5-1"></script>
+  <script type="module" src="./app.js?v=1.7.5-1"></script>
 </body>
 </html>
