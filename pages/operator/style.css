@@ -300,7 +300,8 @@ body[data-series-ui] .persona-panel {
   grid-column: 1 / -1;
   min-height: 0;
   padding: 0;
-  overflow: hidden;
+  /* sticky 操作栏需要不被裁剪，圆角改由内部元素承担 */
+  overflow: visible;
 }
 
 body[data-series-ui] .persona-heading {
@@ -865,6 +866,157 @@ body[data-series-ui] .service-metrics { grid-template-columns: 1fr; }
   }
 }
 
+/* 页头状态 chip：只保留一行结论，避免页头占掉首屏 */
+body[data-series-ui] .runtime-state.state-chip {
+  align-self: start;
+  padding: 7px 13px;
+  border: 1px solid var(--si-line);
+  border-radius: 999px;
+  background: var(--si-surface-soft);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+body[data-series-ui] .runtime-state.state-chip .state-dot {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 0 4px var(--si-warning-soft);
+}
+
+/* 能力健康摘要：默认折叠为一行，异常时自动展开 */
+body[data-series-ui] .capability-health { margin-bottom: 17px; }
+
+body[data-series-ui] .capability-health > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 15px;
+}
+
+body[data-series-ui] .capability-health summary::-webkit-details-marker { display: none; }
+
+body[data-series-ui] .capability-summary-label {
+  color: var(--si-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+body[data-series-ui] .capability-health #capability-summary-text { font-weight: 760; }
+
+body[data-series-ui] .capability-health.has-problem {
+  border-color: rgba(209, 75, 90, .35);
+}
+
+body[data-series-ui] .capability-health.has-problem #capability-summary-text { color: var(--si-danger); }
+
+body[data-series-ui] .capability-health.has-standby #capability-summary-text { color: var(--si-warning); }
+
+body[data-series-ui] .capability-health .capability-strip {
+  margin: 10px 12px 12px;
+}
+
+/* 运行分区二级 tab */
+body[data-series-ui] .runtime-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+body[data-series-ui] .runtime-tabs .segment { flex: 0 0 auto; }
+
+body[data-series-ui] .settings-group [data-runtime-panel][hidden] { display: none; }
+
+/* 人格操作栏沿用共享 actionbar，移动端保留安全区 */
+body[data-series-ui] .persona-editor-actions.si-actionbar {
+  margin-top: 14px;
+  border-radius: 0 0 var(--si-radius) var(--si-radius);
+}
+
+@media (max-width: 760px) {
+  body[data-series-ui] .page-header { padding-bottom: 10px; }
+  body[data-series-ui] .page-header > div > p { display: none; }
+  body[data-series-ui] .page-header h1 { font-size: 26px; }
+  body[data-series-ui] .runtime-state.state-chip { width: 100%; justify-content: center; }
+  body[data-series-ui] .capability-health .capability-strip { margin: 8px 10px 10px; }
+  body[data-series-ui] .persona-editor-actions.si-actionbar { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+}
+
+/* 首次绑定四步：状态 + 一键跳到对应设置 */
+body[data-series-ui] .binding-steps-panel .binding-step-list {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+body[data-series-ui] .binding-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--si-line);
+  border-radius: var(--si-radius-sm);
+  background: var(--si-surface-soft);
+}
+
+body[data-series-ui] .binding-step.is-done { border-color: rgba(17, 135, 107, .35); }
+body[data-series-ui] .binding-step.is-todo { border-color: rgba(185, 107, 16, .38); }
+
+body[data-series-ui] .binding-step-index {
+  flex: 0 0 26px;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--si-primary-strong);
+  background: var(--si-primary-soft);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+body[data-series-ui] .binding-step.is-done .binding-step-index {
+  color: var(--si-success);
+  background: var(--si-success-soft);
+}
+
+body[data-series-ui] .binding-step-copy {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+body[data-series-ui] .binding-step-copy .binding-step-state {
+  color: var(--si-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  body[data-series-ui] .binding-step { flex-wrap: wrap; }
+  body[data-series-ui] .binding-step-copy { flex-basis: calc(100% - 40px); }
+  body[data-series-ui] .binding-step button { width: 100%; }
+}
+
+/* 能力条：技术词给一句中文解释，折叠展开时可见 */
+body[data-series-ui] .capability-item .capability-hint {
+  grid-column: 1 / -1;
+  display: block;
+  margin-top: 2px;
+  color: var(--si-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+/* 降低动效：绑定步骤与跳转在系统开启减少动画时不做过渡/平滑滚动 */
 @media (prefers-reduced-motion: reduce) {
-  body[data-series-ui] .wave-bars span { animation: none !important; }
+  html { scroll-behavior: auto; }
+  body[data-series-ui] .binding-step,
+  body[data-series-ui] .capability-health,
+  body[data-series-ui] .persona-editor-actions.si-actionbar { transition: none !important; }
 }

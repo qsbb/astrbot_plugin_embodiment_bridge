@@ -423,7 +423,7 @@
   "enable_runtime_diagnostics": {
     "description": "启动和显式 health 时读取系列运行时诊断",
     "type": "bool",
-    "hint": "依赖「更新管理」（update_manager）系列插件的 update_manager.series_runtime@1.0 契约，只读，不能更新、安装、启停、重载或联网。未安装对应插件时自动降级，无副作用。",
+    "hint": "依赖「核」（update_manager）系列插件的 update_manager.series_runtime@1.0 契约，只读，不能更新、安装、启停、重载或联网。未安装对应插件时自动降级，无副作用。",
     "default": true
   },
   "stt_timeout_seconds": {

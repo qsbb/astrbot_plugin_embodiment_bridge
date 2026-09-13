@@ -209,6 +209,36 @@ function renderCapability(name, available, enabled) {
   item.querySelector("strong").textContent = active
     ? enabled ? "可用" : "已配置"
     : "不可用";
+  refreshCapabilitySummary();
+}
+
+function refreshCapabilitySummary() {
+  const details = document.getElementById("capability-health");
+  const label = document.getElementById("capability-summary-text");
+  if (!details || !label) return;
+  const items = [...details.querySelectorAll("[data-capability]")];
+  if (!items.length) return;
+  const unavailable = items.filter((item) => item.classList.contains("unavailable")).length;
+  const standby = items.filter((item) => item.classList.contains("standby")).length;
+  const known = items.filter((item) => (
+    item.classList.contains("unavailable") ||
+    item.classList.contains("standby") ||
+    item.classList.contains("available")
+  )).length;
+  if (known < items.length) {
+    label.textContent = `读取中 · ${known}/${items.length}`;
+    return;
+  }
+  label.textContent = unavailable
+    ? `${unavailable} 项不可用`
+    : standby
+      ? `${standby} 项已配置未启用`
+      : `${items.length} 项全部可用`;
+  details.classList.toggle("has-problem", unavailable > 0);
+  details.classList.toggle("has-standby", unavailable === 0 && standby > 0);
+  if (unavailable > 0 && details.dataset.userCollapsed !== "true") {
+    details.open = true;
+  }
 }
 
 // 系列插件集成状态（只读，审计 C-6）：渲染 service-status 加法字段
@@ -359,6 +389,7 @@ function renderServiceStatus(service) {
   control.classList.toggle("primary", !enabled);
   control.disabled = serviceState.config_writable !== true;
 
+  refreshBindingSteps();
   if (status === "running") setRuntimeState("ready", "服务运行中");
   else if (status === "stopped") setRuntimeState("error", "服务已关闭");
   else setRuntimeState("warning", "服务需要检查");
@@ -1196,6 +1227,102 @@ function setActiveDialogueTab(group) {
   });
 }
 
+let runtimeTabPinnedByUser = false;
+let lastDiagnosticRootCause = "";
+
+const BINDING_STEP_TARGETS = {
+  service: { group: "runtime", runtime: "service", focus: "pairing-listener-public-url", label: "服务地址" },
+  platform: { group: "dialogue", dialogue: "platform", focus: "trusted-platform-id", label: "平台实例" },
+  identity: { group: "devices", focus: "quest-client-id", label: "基础身份" },
+  pairing: { group: "devices", focus: "open-quick-pairing-button", label: "快速绑定" },
+};
+
+function bindingStepStates() {
+  const value = (id) => String(document.getElementById(id)?.value || "").trim();
+  const publicUrl = value("pairing-public-url") || value("pairing-listener-public-url");
+  const port = value("listener-port");
+  const platform = value("trusted-platform-id");
+  const clientId = value("quest-client-id");
+  const badge = document.getElementById("quick-pairing-badge");
+  const pairingReady = badge?.classList.contains("ready") === true;
+  return {
+    service: {
+      done: Boolean(publicUrl && port),
+      detail: publicUrl
+        ? (port ? "公网访问地址与监听端口已填写" : "缺少监听端口")
+        : "还没有填写公网访问地址",
+    },
+    platform: {
+      done: Boolean(platform),
+      detail: platform ? "已选择平台实例" : "尚未选择平台实例",
+    },
+    identity: {
+      done: Boolean(clientId),
+      detail: clientId ? `设备名：${clientId}` : "还没有填写设备名",
+    },
+    pairing: {
+      done: pairingReady,
+      detail: pairingReady ? "已就绪，可以生成二维码 / 配对码" : "需要先补齐服务地址与平台实例",
+    },
+  };
+}
+
+function refreshBindingSteps() {
+  const list = document.getElementById("binding-steps");
+  const summary = document.getElementById("binding-summary");
+  if (!list || !summary) return;
+  const states = bindingStepStates();
+  let done = 0;
+  list.querySelectorAll("[data-binding-step]").forEach((step) => {
+    const state = states[step.dataset.bindingStep];
+    if (!state) return;
+    step.classList.toggle("is-done", state.done);
+    step.classList.toggle("is-todo", !state.done);
+    const label = step.querySelector("[data-binding-state]");
+    if (label) {
+      label.textContent = `${state.done ? "已完成" : "待补充"} · ${state.detail}`;
+    }
+    if (state.done) done += 1;
+  });
+  const nextKey = Object.keys(states).find((key) => !states[key].done);
+  summary.textContent = nextKey
+    ? `已完成 ${done}/4 步；下一步：${BINDING_STEP_TARGETS[nextKey]?.label || nextKey}`
+    : "4 步都已完成，可以直接在具身客户端扫码绑定。";
+}
+
+function goToBindingStep(key) {
+  const target = BINDING_STEP_TARGETS[key];
+  if (!target) return;
+  setActiveSettingsGroup(target.group);
+  if (target.group === "dialogue" && target.dialogue) setActiveDialogueTab(target.dialogue);
+  if (target.group === "runtime" && target.runtime) {
+    setActiveRuntimeTab(target.runtime, { user: true });
+  }
+  const field = document.getElementById(target.focus);
+  if (!field) return;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  field.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  if (typeof field.focus === "function") field.focus({ preventScroll: true });
+}
+
+function setActiveRuntimeTab(name, { user = false } = {}) {
+  const panels = document.querySelectorAll("[data-runtime-panel]");
+  const valid = [...panels].some((panel) => panel.dataset.runtimePanel === name);
+  const target = valid ? name : "service";
+  if (user) runtimeTabPinnedByUser = true;
+  document.querySelectorAll("[data-runtime-tab]").forEach((tab) => {
+    const selected = tab.dataset.runtimeTab === target;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  panels.forEach((panel) => {
+    const selected = panel.dataset.runtimePanel === target;
+    panel.hidden = !selected;
+    panel.setAttribute("aria-hidden", String(!selected));
+  });
+}
+
 function setActiveSettingsGroup(group) {
   document.querySelectorAll("[data-settings-tab]").forEach((tab) => {
     const selected = tab.dataset.settingsTab === group;
@@ -2012,18 +2139,6 @@ function qpStopTimers() {
   qpStatusTimer = null;
 }
 
-function qpSetBusy(busy, text) {
-  const button = document.getElementById("open-quick-pairing-button");
-  if (busy) {
-    button.disabled = true;
-    button.setAttribute("aria-busy", "true");
-    button.textContent = text || "正在生成…";
-  } else {
-    button.setAttribute("aria-busy", "false");
-    button.textContent = "生成配对二维码 / 6 位配对码";
-    button.disabled = qpButtonReady !== true;
-  }
-}
 
 function qpFormatRemaining(seconds) {
   const remaining = Math.max(0, Math.ceil(seconds));
@@ -2115,9 +2230,6 @@ async function qpCreate() {
   }
 }
 
-function qpClose() {
-  qpDialogController?.close();
-}
 
 function openQuickPairingDialog() {
   if (qpDialogController?.isOpen()) return;
@@ -2222,6 +2334,7 @@ async function loadQuickPairingStatus() {
       button.disabled = true;
       qpButtonReady = false;
     }
+    refreshBindingSteps();
     return true;
   } catch (error) {
     badge.textContent = "读取失败";
@@ -2861,6 +2974,7 @@ async function loadDiagnostics({ silent = false } = {}) {
       document.getElementById("diagnostics-root-cause").textContent = rootCause.code
         ? `当前根因：${rootCause.stage_label || rootCause.stage} · ${rootCause.reason_label || rootCause.code}`
         : "当前根因：未发现明确的失败事件";
+      maybeAutoFocusDiagnostics(String(rootCause.code || ""));
       renderDiagnosticSummary(events);
       renderDiagnosticEvents(events);
       renderClientPerf(diagnostics.client);
@@ -2872,6 +2986,7 @@ async function loadDiagnostics({ silent = false } = {}) {
           "诊断日志暂不可用";
         document.getElementById("diagnostics-root-cause").textContent =
           "当前根因：诊断接口读取失败";
+        maybeAutoFocusDiagnostics("diagnostics-unavailable");
         notify("读取诊断日志失败：" + error.message, true);
       }
       return false;
@@ -2884,6 +2999,17 @@ async function loadDiagnostics({ silent = false } = {}) {
   } finally {
     diagnosticsRefreshInFlight = null;
   }
+}
+
+function maybeAutoFocusDiagnostics(code) {
+  if (!code) {
+    lastDiagnosticRootCause = "";
+    return;
+  }
+  if (code === lastDiagnosticRootCause) return;
+  lastDiagnosticRootCause = code;
+  if (runtimeTabPinnedByUser) return;
+  setActiveRuntimeTab("diagnostics");
 }
 
 function stopDiagnosticsRefresh() {
@@ -3002,6 +3128,44 @@ function bindEvents() {
       });
     });
   setActiveSettingsGroup("runtime");
+  setActiveRuntimeTab("service");
+  const capabilityHealth = document.getElementById("capability-health");
+  if (capabilityHealth) {
+    refreshCapabilitySummary();
+    capabilityHealth.addEventListener("toggle", () => {
+      if (capabilityHealth.open) capabilityHealth.dataset.userCollapsed = "false";
+      else if (capabilityHealth.classList.contains("has-problem")) capabilityHealth.dataset.userCollapsed = "true";
+    });
+  }
+  document.querySelectorAll("[data-runtime-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => setActiveRuntimeTab(tab.dataset.runtimeTab, { user: true }));
+    tab.addEventListener("keydown", (event) => {
+      const tabs = Array.from(document.querySelectorAll("[data-runtime-tab]"));
+      const current = tabs.indexOf(event.currentTarget);
+      let target = -1;
+      if (event.key === "ArrowRight") target = (current + 1) % tabs.length;
+      if (event.key === "ArrowLeft") target = (current - 1 + tabs.length) % tabs.length;
+      if (event.key === "Home") target = 0;
+      if (event.key === "End") target = tabs.length - 1;
+      if (target < 0) return;
+      event.preventDefault();
+      tabs[target].click();
+      tabs[target].focus();
+    });
+  });
+  document.querySelectorAll("[data-binding-goto]").forEach((button) => {
+    button.addEventListener("click", () => goToBindingStep(button.dataset.bindingGoto));
+  });
+  document.addEventListener("input", (event) => {
+    if (event.target.closest?.("#settings-group-devices, #settings-group-runtime, #dialogue-panel-platform")) {
+      refreshBindingSteps();
+    }
+  });
+  document.addEventListener("change", (event) => {
+    if (event.target.closest?.("#settings-group-devices, #settings-group-runtime, #dialogue-panel-platform")) {
+      refreshBindingSteps();
+    }
+  });
   setActiveDialogueTab("models");
   document.querySelectorAll("[data-dialogue-tab]").forEach((tab) => {
     tab.addEventListener("click", () => setActiveDialogueTab(tab.dataset.dialogueTab));
@@ -3336,6 +3500,7 @@ async function initializeBridgeAndData() {
     bridgeInitPromise = null;
   }
   await loadInitialData();
+  refreshBindingSteps();
   if (!personaConversionJobId) {
     const context = restorePersonaConversionContext();
     personaConversionJobId = String(context?.job_id || "");

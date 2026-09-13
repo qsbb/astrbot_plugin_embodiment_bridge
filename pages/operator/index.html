@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.7.1-1" />
-  <link rel="stylesheet" href="./series-ui.css" />
+  <link rel="stylesheet" href="./style.css?v=1.7.1-2" />
+  <link rel="stylesheet" href="./series-ui.css?v=1.7.1-2" />
   </head>
 <body data-series-ui="1">
   <main class="shell">
@@ -17,7 +17,7 @@
         <h1>具身服务控制台</h1>
         <p>管理具身客户端对话服务（临专属链路）与角色身份</p>
       </div>
-      <div class="runtime-state" role="status" aria-live="polite" aria-atomic="true">
+      <div class="runtime-state state-chip" role="status" aria-live="polite" aria-atomic="true">
         <span class="state-dot" aria-hidden="true"></span>
         <span id="runtime-label">正在读取设置</span>
       </div>
@@ -68,48 +68,62 @@
       </div>
     </section>
 
-    <section class="capability-strip" aria-label="Bridge 能力状态">
+    <details id="capability-health" class="capability-health si-disclosure">
+      <summary>
+        <span class="capability-summary-label">Bridge 能力状态</span>
+        <strong id="capability-summary-text">读取中</strong>
+      </summary>
+      <section class="capability-strip" aria-label="Bridge 能力状态">
       <div class="capability-item" data-capability="dialogue">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>对话模型</span>
         <strong>读取中</strong>
+        <small class="capability-hint">用于具身对话与触碰/动作决策的 Provider（模型服务）。</small>
       </div>
       <div class="capability-item" data-capability="bridge">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>临专属链路</span>
         <strong>读取中</strong>
+        <small class="capability-hint">具身客户端直连的对话链路，普通文字与语音不经过 AstrBot EventBus。</small>
       </div>
       <div class="capability-item" data-capability="identity_configured">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>身份配置</span>
         <strong>读取中</strong>
+        <small class="capability-hint">Quest 客户端身份与绑定材料是否齐全；未配置时只能先完成绑定。</small>
       </div>
       <div class="capability-item" data-capability="stt">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>语音识别</span>
         <strong>读取中</strong>
+        <small class="capability-hint">STT：把客户端语音转成文字。</small>
       </div>
       <div class="capability-item" data-capability="tts">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>语音合成</span>
         <strong>读取中</strong>
+        <small class="capability-hint">TTS：把回复文字合成为语音。</small>
       </div>
       <div class="capability-item" data-capability="avatar_actions">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>角色动作</span>
         <strong>读取中</strong>
+        <small class="capability-hint">只允许白名单动作（如 talk / idle），不会执行任意脚本。</small>
       </div>
       <div class="capability-item" data-capability="interaction_decision">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>交互决策</span>
         <strong>读取中</strong>
+        <small class="capability-hint">触碰与动作的并行快速判断，不等待主回复。</small>
       </div>
       <div class="capability-item" data-capability="direct_provider_fallback">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>直连回退</span>
         <strong>读取中</strong>
+        <small class="capability-hint">链路不可用时直接调用已实例化 Provider 的兜底路径。</small>
       </div>
-    </section>
+      </section>
+    </details>
 
 
 
@@ -123,7 +137,7 @@
       <div id="dialogue-panel-models" class="dialogue-panel" role="tabpanel" aria-labelledby="dialogue-tab-models" data-dialogue-panel="models">
       <section class="setting-panel" aria-labelledby="model-title">
         <span class="section-label">决策与回退</span>
-        <h2 id="model-title">临直连 / 交互决策模型</h2>
+        <h2 id="model-title">临具身对话模型</h2>
         <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus。这里只显示已实例化 Provider 的安全摘要，不读取密钥或原始配置。</p>
         <label for="chat-provider-id">Provider</label>
         <select id="chat-provider-id" disabled>
@@ -435,7 +449,7 @@
               <input id="persona-profile-id" type="hidden" value="" />
               <p id="persona-conversion-progress" class="conversion-progress" role="status" aria-live="polite" hidden></p>
               <p id="persona-profile-status" class="field-status" role="status">请选择来源或从左侧打开已有人格。</p>
-              <div class="persona-editor-actions">
+              <div class="persona-editor-actions si-actionbar">
                 <button id="convert-persona-button" type="button" aria-busy="false" disabled>转换为临人格</button>
                 <button id="cancel-persona-conversion-button" class="danger-quiet" type="button" aria-busy="false" hidden>取消转换</button>
                 <button id="save-persona-profile-button" class="primary" type="button" aria-busy="false" disabled>保存人格</button>
@@ -448,6 +462,47 @@
       </div>
 
       <div id="settings-group-devices" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-devices" data-settings-group="devices" hidden>
+      <section class="setting-panel binding-steps-panel" aria-labelledby="binding-steps-title">
+        <span class="section-label">首次绑定</span>
+        <h2 id="binding-steps-title">设备绑定四步</h2>
+        <p>按顺序补齐即可在具身客户端扫码绑定；每一步都能跳到对应设置，未完成的步骤会标成“待补充”。</p>
+        <ol id="binding-steps" class="binding-step-list">
+          <li class="binding-step" data-binding-step="service">
+            <span class="binding-step-index" aria-hidden="true">1</span>
+            <div class="binding-step-copy">
+              <strong>服务地址</strong>
+              <span class="binding-step-state" data-binding-state>检查中</span>
+            </div>
+            <button type="button" class="button compact" data-binding-goto="service">去设置</button>
+          </li>
+          <li class="binding-step" data-binding-step="platform">
+            <span class="binding-step-index" aria-hidden="true">2</span>
+            <div class="binding-step-copy">
+              <strong>平台实例</strong>
+              <span class="binding-step-state" data-binding-state>检查中</span>
+            </div>
+            <button type="button" class="button compact" data-binding-goto="platform">去设置</button>
+          </li>
+          <li class="binding-step" data-binding-step="identity">
+            <span class="binding-step-index" aria-hidden="true">3</span>
+            <div class="binding-step-copy">
+              <strong>基础身份</strong>
+              <span class="binding-step-state" data-binding-state>检查中</span>
+            </div>
+            <button type="button" class="button compact" data-binding-goto="identity">去设置</button>
+          </li>
+          <li class="binding-step" data-binding-step="pairing">
+            <span class="binding-step-index" aria-hidden="true">4</span>
+            <div class="binding-step-copy">
+              <strong>快速绑定</strong>
+              <span class="binding-step-state" data-binding-state>检查中</span>
+            </div>
+            <button type="button" class="button compact" data-binding-goto="pairing">去生成</button>
+          </li>
+        </ol>
+        <p id="binding-summary" class="field-status" role="status" aria-live="polite">正在检查绑定步骤…</p>
+      </section>
+
       <section class="setting-panel identity-panel" aria-labelledby="quest-identity-title">
         <span class="section-label">身份与绑定</span>
         <h2 id="quest-identity-title">Quest 身份</h2>
@@ -513,7 +568,12 @@
       </div>
 
       <div id="settings-group-runtime" class="settings-group" role="tabpanel" aria-labelledby="settings-tab-runtime" data-settings-group="runtime">
-      <section class="setting-panel" aria-labelledby="public-url-title">
+      <div id="runtime-tabs" class="runtime-tabs segmented-control" role="tablist" aria-label="运行分区">
+        <button id="runtime-tab-service" class="segment active" type="button" role="tab" aria-selected="true" aria-controls="runtime-panel-service" data-runtime-tab="service" tabindex="0">服务</button>
+        <button id="runtime-tab-integration" class="segment" type="button" role="tab" aria-selected="false" aria-controls="runtime-panel-integration" data-runtime-tab="integration" tabindex="-1">集成</button>
+        <button id="runtime-tab-diagnostics" class="segment" type="button" role="tab" aria-selected="false" aria-controls="runtime-panel-diagnostics" data-runtime-tab="diagnostics" tabindex="-1">诊断</button>
+      </div>
+      <section id="runtime-panel-service" class="setting-panel" data-runtime-panel="service" role="tabpanel" aria-labelledby="runtime-tab-service public-url-title">
         <span class="section-label">配对地址</span>
         <h2 id="public-url-title">公网访问地址</h2>
         <p>具身客户端访问本服务使用的地址。「快速绑定未就绪」最常见的原因就是这里没有配置。保存后立即生效，无需重启。</p>
@@ -526,7 +586,7 @@
         <button id="save-public-url-button" class="primary" type="button" aria-busy="false" disabled>保存配对地址</button>
       </section>
 
-      <section class="setting-panel integrations-panel" aria-labelledby="integrations-title">
+      <section id="runtime-panel-integration" class="setting-panel integrations-panel" data-runtime-panel="integration" role="tabpanel" aria-labelledby="runtime-tab-integration integrations-title">
         <span class="section-label">系列集成</span>
         <h2 id="integrations-title">系列插件集成状态</h2>
         <p>只读展示「凝心溯溪」系列集成项的识别与运行状态，随服务状态每秒自动刷新；只含状态与原因，不含身份标识与密钥。</p>
@@ -535,7 +595,7 @@
         </ul>
       </section>
 
-      <section class="setting-panel diagnostics-panel" aria-labelledby="diagnostics-title">
+      <section id="runtime-panel-diagnostics" class="setting-panel diagnostics-panel" data-runtime-panel="diagnostics" role="tabpanel" aria-labelledby="runtime-tab-diagnostics diagnostics-title" hidden>
         <span class="section-label">诊断</span>
         <h2 id="diagnostics-title">“临”独立日志</h2>
         <p>每秒自动刷新脱敏后的任务阶段、事件状态、错误码和耗时；模型转换仅显示生成与结构校验状态，不显示隐藏推理内容。</p>
@@ -609,7 +669,7 @@
     </div>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./series-ui.js"></script>
-  <script type="module" src="./app.js?v=1.7.1-1"></script>
+  <script src="./series-ui.js?v=1.7.1-2"></script>
+  <script type="module" src="./app.js?v=1.7.1-2"></script>
 </body>
 </html>

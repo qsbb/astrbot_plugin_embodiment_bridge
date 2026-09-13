@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.7.1-1"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.7.1-1" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.1-1")
+    assert '<script type="module" src="./app.js?v=1.7.1-2"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.7.1-2" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.1-2")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -254,7 +254,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "provider?.adapter_type" in js
     assert "provider?.provider_type" in js
     assert "可切换为空值并关闭关系上下文" in js
-    assert "临直连 / 交互决策模型" in html
+    assert "临具身对话模型" in html
     assert "普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus" in html
     assert "临专属链路的普通对话仍可使用桥接默认模型" in js
     assert "实时对话不可用" not in js
@@ -445,7 +445,7 @@ def test_operator_page_settings_panels_grouped_into_category_tabs() -> None:
     # 页面级分类标签栏：运行 / 设备与绑定 / 对话与模型 / 人格。
     assert 'id="settings-tabs"' in html
     assert 'aria-label="设置分类"' in html
-    assert html.count('role="tablist"') == 3  # 页面级 + 人格工作区子 tab + 对话二级 tab
+    assert html.count('role="tablist"') == 4  # 页面级 + 人格工作区子 tab + 对话二级 tab + 运行分区子 tab
     for tab_id, group in (
         ("settings-tab-runtime", "runtime"),
         ("settings-tab-devices", "devices"),
@@ -493,7 +493,22 @@ def test_operator_page_settings_panels_grouped_into_category_tabs() -> None:
     assert 'aria-labelledby="persona-title"' in slices["persona"]
     assert 'aria-labelledby="quest-identity-title"' in slices["devices"]
     assert 'aria-labelledby="identity-title"' in slices["devices"]
-    assert 'aria-labelledby="diagnostics-title"' in slices["runtime"]
+    assert 'aria-labelledby="runtime-tab-diagnostics diagnostics-title"' in slices["runtime"]
+    # 运行分区二级 tab：服务 / 集成 / 诊断。
+    for runtime_tab, panel_id in (
+        ("service", "runtime-panel-service"),
+        ("integration", "runtime-panel-integration"),
+        ("diagnostics", "runtime-panel-diagnostics"),
+    ):
+        assert f'data-runtime-tab="{runtime_tab}"' in slices["runtime"]
+        assert f'id="{panel_id}"' in slices["runtime"]
+        assert f'data-runtime-panel="{runtime_tab}"' in slices["runtime"]
+    assert 'id="runtime-panel-diagnostics"' in slices["runtime"]
+    assert 'data-runtime-panel="diagnostics" role="tabpanel"' in slices["runtime"]
+    assert "function setActiveRuntimeTab(name, { user = false } = {})" in js
+    assert 'setActiveRuntimeTab("service")' in js
+    assert 'panel.dataset.runtimePanel === target' in js or 'panel.dataset.runtimePanel === target' in js
+    assert "panel.hidden = !selected;" in js
     # 人格工作区内部子 tab 保持原样（两级 tab 是预期形态）。
     assert 'id="persona-workflow-tabs"' in slices["persona"]
 
@@ -562,11 +577,12 @@ def test_operator_page_exposes_integration_panel_and_direct_fallback_switch() ->
 
     # ① 集成状态只读面板（审计 C-6）：位于「运行」标签、诊断面板之前。
     runtime_start = html.index('data-settings-group="runtime"')
-    assert 'aria-labelledby="integrations-title"' in html[runtime_start:]
+    assert 'aria-labelledby="runtime-tab-integration integrations-title"' in html[runtime_start:]
     panel_start = html.index('class="setting-panel integrations-panel"')
     panel_end = html.index("</section>", panel_start)
     panel = html[panel_start:panel_end]
     assert panel_start < html.index('class="setting-panel diagnostics-panel"')
+    assert 'data-runtime-panel="integration"' in panel
     assert 'id="integrations-title"' in panel
     assert 'id="integrations-list"' in panel
     assert "只读展示" in panel
@@ -695,3 +711,76 @@ def test_pairing_dialog_preserves_actions_and_focus_contract() -> None:
     assert "const token = ++qpCreateToken;" in js
     assert "token !== qpCreateToken" in js
     assert "qpDialogController?.isOpen()" in js
+
+
+def test_operator_page_header_chip_capability_fold_and_persona_actionbar() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    # 页头状态收敛为一个 chip。
+    assert 'class="runtime-state state-chip"' in html
+    assert "body[data-series-ui] .runtime-state.state-chip" in css
+
+    # 能力健康默认折叠为一行摘要，异常时自动展开。
+    assert 'id="capability-health"' in html
+    assert 'id="capability-summary-text"' in html
+    assert 'class="capability-health si-disclosure"' in html
+    assert "function refreshCapabilitySummary()" in js
+    assert "refreshCapabilitySummary();" in js
+    assert "details.dataset.userCollapsed !== \"true\"" in js
+    assert "details.classList.toggle(\"has-problem\", unavailable > 0);" in js
+    assert "项全部可用" in js
+
+    # 人格主从布局的操作栏改为共享 sticky actionbar，且面板不再裁剪。
+    assert 'class="persona-editor-actions si-actionbar"' in html
+    assert "overflow: visible;" in css
+    assert "body[data-series-ui] .persona-editor-actions.si-actionbar" in css
+
+
+def test_operator_page_diagnostics_auto_focus_is_once_per_root_cause() -> None:
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+
+    assert "let runtimeTabPinnedByUser = false;" in js
+    assert "let lastDiagnosticRootCause = \"\";" in js
+    assert "function maybeAutoFocusDiagnostics(code)" in js
+    assert "if (code === lastDiagnosticRootCause) return;" in js
+    assert "if (runtimeTabPinnedByUser) return;" in js
+    assert 'maybeAutoFocusDiagnostics(String(rootCause.code || ""));' in js
+    assert 'maybeAutoFocusDiagnostics("diagnostics-unavailable");' in js
+    assert 'setActiveRuntimeTab(tab.dataset.runtimeTab, { user: true })' in js
+
+
+def test_operator_page_binding_steps_are_actionable() -> None:
+    html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
+    js = (PAGE_ROOT / "app.js").read_text(encoding="utf-8")
+    css = (PAGE_ROOT / "style.css").read_text(encoding="utf-8")
+
+    assert 'id="binding-steps"' in html
+    assert 'id="binding-summary"' in html
+    for step in ("service", "platform", "identity", "pairing"):
+        assert f'data-binding-step="{step}"' in html
+        assert f'data-binding-goto="{step}"' in html
+
+    # 状态推导与跳转目标都来自现有 DOM，不新增后端接口。
+    for focus_id in (
+        "pairing-listener-public-url",
+        "trusted-platform-id",
+        "quest-client-id",
+        "open-quick-pairing-button",
+    ):
+        assert f'focus: "{focus_id}"' in js
+    assert "function bindingStepStates()" in js
+    assert "function refreshBindingSteps()" in js
+    assert "function goToBindingStep(key)" in js
+    assert "BINDING_STEP_TARGETS[key]" in js
+    assert "setActiveSettingsGroup(target.group);" in js
+    assert "setActiveDialogueTab(target.dialogue);" in js
+    assert "setActiveRuntimeTab(target.runtime, { user: true });" in js
+    assert "已完成 ${done}/4 步；下一步：" in js
+    # 输入变化与服务状态轮询都会让步骤状态保持最新
+    assert "refreshBindingSteps();" in js
+    assert 'document.addEventListener("input", (event) => {' in js
+
+    assert "body[data-series-ui] .binding-step" in css
+    assert ".binding-step.is-done" in css
