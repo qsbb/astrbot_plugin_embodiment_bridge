@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.7.1"
+EXPECTED_VERSION = "1.7.2"
 
 
 def test_metadata_entrypoint_and_changelog_share_release_version() -> None:

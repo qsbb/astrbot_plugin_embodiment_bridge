@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
+  <meta name="color-scheme" content="light" />
   <link rel="icon" href="data:," />
   <title>凝心溯溪-临｜具身服务控制台</title>
-  <link rel="stylesheet" href="./style.css?v=1.7.1-2" />
-  <link rel="stylesheet" href="./series-ui.css?v=1.7.1-2" />
+  <link rel="stylesheet" href="./style.css?v=1.7.2-1" />
+  <link rel="stylesheet" href="./series-ui.css?v=1.7.2-1" />
   </head>
 <body data-series-ui="1">
   <main class="shell">
@@ -78,13 +78,13 @@
         <span class="capability-dot" aria-hidden="true"></span>
         <span>对话模型</span>
         <strong>读取中</strong>
-        <small class="capability-hint">用于具身对话与触碰/动作决策的 Provider（模型服务）。</small>
+        <small class="capability-hint">用于具身对话与触碰/动作决策的模型服务。</small>
       </div>
       <div class="capability-item" data-capability="bridge">
         <span class="capability-dot" aria-hidden="true"></span>
         <span>临专属链路</span>
         <strong>读取中</strong>
-        <small class="capability-hint">具身客户端直连的对话链路，普通文字与语音不经过 AstrBot EventBus。</small>
+        <small class="capability-hint">具身客户端直连的对话链路，普通文字与语音不经过 AstrBot 共享消息链路。</small>
       </div>
       <div class="capability-item" data-capability="identity_configured">
         <span class="capability-dot" aria-hidden="true"></span>
@@ -108,7 +108,7 @@
         <span class="capability-dot" aria-hidden="true"></span>
         <span>角色动作</span>
         <strong>读取中</strong>
-        <small class="capability-hint">只允许白名单动作（如 talk / idle），不会执行任意脚本。</small>
+        <small class="capability-hint">只允许白名单动作（如「说话 / 待机」），不会执行任意脚本。</small>
       </div>
       <div class="capability-item" data-capability="interaction_decision">
         <span class="capability-dot" aria-hidden="true"></span>
@@ -120,7 +120,7 @@
         <span class="capability-dot" aria-hidden="true"></span>
         <span>直连回退</span>
         <strong>读取中</strong>
-        <small class="capability-hint">链路不可用时直接调用已实例化 Provider 的兜底路径。</small>
+        <small class="capability-hint">链路不可用时直接调用已实例化模型服务的兜底路径。</small>
       </div>
       </section>
     </details>
@@ -138,8 +138,8 @@
       <section class="setting-panel" aria-labelledby="model-title">
         <span class="section-label">决策与回退</span>
         <h2 id="model-title">临具身对话模型</h2>
-        <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus。这里只显示已实例化 Provider 的安全摘要，不读取密钥或原始配置。</p>
-        <label for="chat-provider-id">Provider</label>
+        <p>用于触碰与动作决策，以及管理员明确开启的直连回退。普通文字和语音由临专属链路直管模型处理，不进入 AstrBot 共享消息链路。这里只显示已实例化模型服务的安全摘要，不读取密钥或原始配置。</p>
+        <label for="chat-provider-id">对话模型服务商</label>
         <select id="chat-provider-id" disabled>
           <option value="">正在读取可用模型</option>
         </select>
@@ -150,12 +150,12 @@
       <section class="setting-panel" aria-labelledby="fast-action-title">
         <span class="section-label">异步动作</span>
         <h2 id="fast-action-title">快速动作决策</h2>
-        <p>使用独立的快速 Provider 并行判断角色动作，不等待临专属链路主回复。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由临专属链路主回复处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地 talk/idle，避免两个模型重复决策。</p>
+        <p>使用独立的快速动作模型服务并行判断角色动作，不等待临专属链路主回复。它只输出白名单动作，不生成回复；关闭、未配置或启动前发现模型缺失时由临专属链路主回复处理。快速通道已经接管本轮后若超时、失败或没有选出动作，则只回退到本地「说话 / 待机」，避免两个模型重复决策。</p>
         <label class="mode-switch" for="fast-action-enabled">
           <input id="fast-action-enabled" type="checkbox" checked />
           <span>启用异步快速动作</span>
         </label>
-        <label for="fast-action-provider-id">快速 Provider</label>
+        <label for="fast-action-provider-id">快速动作模型服务商</label>
         <select id="fast-action-provider-id" disabled>
           <option value="">正在读取可用模型</option>
         </select>
@@ -171,13 +171,13 @@
       <div id="dialogue-panel-voice" class="dialogue-panel" role="tabpanel" aria-labelledby="dialogue-tab-voice" data-dialogue-panel="voice" hidden>
       <section class="setting-panel" aria-labelledby="stt-provider-title">
         <span class="section-label">语音输入</span>
-        <h2 id="stt-provider-title">语音识别 Provider</h2>
-        <p>选择 AstrBot 已实例化的正式 STT Provider；这里只读取安全摘要，不读取或显示 API 地址、密钥和原始 Provider 配置。</p>
-        <label for="stt-provider-id">STT Provider</label>
+        <h2 id="stt-provider-title">语音识别模型服务商</h2>
+        <p>选择 AstrBot 已实例化的正式语音识别模型服务商；这里只读取安全摘要，不读取或显示 API 地址、密钥和原始 Provider 配置。</p>
+        <label for="stt-provider-id">语音识别模型服务商</label>
         <select id="stt-provider-id" disabled>
           <option value="">正在读取可用语音识别模型</option>
         </select>
-        <p id="stt-provider-help" class="field-help">AstrBot 暂无普通插件通用的 STT 契约；第三方语音识别需要通过 AstrBot 正式 STTProvider 机制注册后才能选择。</p>
+        <p id="stt-provider-help" class="field-help">AstrBot 暂无普通插件通用的语音识别接口；第三方语音识别需要通过 AstrBot 正式 STTProvider 机制注册后才能选择。</p>
         <p id="stt-status" class="field-status" role="status">尚未读取</p>
         <button id="save-stt-button" class="primary" type="button" aria-busy="false" disabled>保存语音识别</button>
       </section>
@@ -644,7 +644,7 @@
 
     <section class="boundary-note" aria-label="权限边界">
       <strong>自然人绑定不会授予权限</strong>
-      <span>自然人只提供已验证账号映射；具身会话仍须通过 principal 与服务端白名单授权，且不会决定角色人格。</span>
+      <span>自然人只提供已验证账号映射；具身会话仍须通过已验证会话身份与服务端白名单授权，且不会决定角色人格。</span>
     </section>
 
     <div id="startup-error" class="startup-error" role="alert" hidden></div>
@@ -669,7 +669,7 @@
     </div>
 
   <script src="/api/plugin/page/bridge-sdk.js"></script>
-  <script src="./series-ui.js?v=1.7.1-2"></script>
-  <script type="module" src="./app.js?v=1.7.1-2"></script>
+  <script src="./series-ui.js?v=1.7.2-1"></script>
+  <script type="module" src="./app.js?v=1.7.2-1"></script>
 </body>
 </html>

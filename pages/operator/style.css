@@ -253,7 +253,15 @@ body[data-series-ui] .setting-panel {
   display: grid;
   gap: 13px;
   align-content: start;
-  min-height: 410px;
+  min-height: 0;
+}
+
+/* 面板内的主操作按钮不再被网格拉成整行巨型按钮 */
+body[data-series-ui] .setting-panel > button,
+body[data-series-ui] .setting-panel > .inline-actions > button {
+  justify-self: end;
+  width: auto;
+  min-width: 148px;
 }
 
 body[data-series-ui] .setting-panel h2 { margin: 0; }
@@ -1019,4 +1027,31 @@ body[data-series-ui] .capability-item .capability-hint {
   body[data-series-ui] .binding-step,
   body[data-series-ui] .capability-health,
   body[data-series-ui] .persona-editor-actions.si-actionbar { transition: none !important; }
+}
+
+/* 桌面：对话与模型的子面板并排两列（能横向放下就不再纵向堆叠） */
+@media (min-width: 1024px) {
+  body[data-series-ui] .dialogue-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 17px;
+    /* 两张卡等高，避免一侧短卡留下突兀的缺口 */
+    align-items: stretch;
+  }
+}
+
+/* 运行区：页签独占整行，避免与面板一起被双列网格拆开 */
+body[data-series-ui] .settings-group > .runtime-tabs {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+/* 服务台卡片补齐内边距，与其它卡片一致 */
+body[data-series-ui] .service-console {
+  padding: clamp(15px, 1.8vw, 22px);
+}
+
+/* 人格编辑器：为底部 sticky 操作栏预留空间，避免保存按钮压住输入区 */
+body[data-series-ui] .persona-editor-main {
+  padding-bottom: 76px;
 }

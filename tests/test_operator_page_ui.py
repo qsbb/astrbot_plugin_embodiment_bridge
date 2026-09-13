@@ -22,9 +22,9 @@ def test_operator_page_is_discoverable_and_uses_page_bridge() -> None:
 
     html = (PAGE_ROOT / "index.html").read_text(encoding="utf-8")
     assert '<script src="/api/plugin/page/bridge-sdk.js"></script>' in html
-    assert '<script type="module" src="./app.js?v=1.7.1-2"></script>' in html
-    assert '<link rel="stylesheet" href="./style.css?v=1.7.1-2" />' in html
-    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.1-2")
+    assert '<script type="module" src="./app.js?v=1.7.2-1"></script>' in html
+    assert '<link rel="stylesheet" href="./style.css?v=1.7.2-1" />' in html
+    assert html.index("bridge-sdk.js") < html.index("./app.js?v=1.7.2-1")
     assert "凝心溯溪-临｜具身服务控制台" in html
     assert 'id="startup-error"' in html
     assert 'role="alert"' in html
@@ -255,7 +255,8 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "provider?.provider_type" in js
     assert "可切换为空值并关闭关系上下文" in js
     assert "临具身对话模型" in html
-    assert "普通文字和语音由临专属链路直管模型处理，不进入 AstrBot EventBus" in html
+    assert "普通文字和语音由临专属链路直管模型处理，不进入 AstrBot 共享消息链路" in html
+    assert "EventBus" not in html
     assert "临专属链路的普通对话仍可使用桥接默认模型" in js
     assert "实时对话不可用" not in js
     assert "candidate.display_name" in js
@@ -280,7 +281,7 @@ def test_operator_page_exposes_only_safe_model_and_identity_workflows() -> None:
     assert "@media (max-width: 820px)" in css
     assert "prefers-reduced-motion" in css
     assert "页面 Bridge 请求超时" in js
-    assert "AstrBot 暂无普通插件通用的 STT 契约" in html
+    assert "AstrBot 暂无普通插件通用的语音识别接口" in html
     assert "正式 STTProvider 机制注册" in html
     assert "API 地址、密钥和原始 Provider 配置" in html
     assert "legacy_private_mimo_disabled" in js

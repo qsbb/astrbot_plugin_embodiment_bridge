@@ -478,7 +478,7 @@ function renderOperatorSettings(settings) {
     ? operatorSettings.providers
     : [];
   if (!providers.length) {
-    select.replaceChildren(new Option("没有可用的决策 / 回退 Provider", ""));
+    select.replaceChildren(new Option("没有可用的决策 / 回退模型服务", ""));
     select.disabled = true;
   } else {
     fillSelect(select, {
@@ -770,7 +770,7 @@ function renderFastActionSettings(settings) {
   if (document.activeElement !== timeoutInput) timeoutInput.value = String(timeoutValue);
   timeoutInput.disabled = !writable;
   timeoutHelp.textContent = Number.isFinite(effectiveTimeout)
-    ? `有效超时：${effectiveTimeout.toFixed(1)} 秒 · 策略：${String(fastActionSettings.timeout_policy_revision || "v3")}` +
+    ? `当前实际按 ${effectiveTimeout.toFixed(1)} 秒执行；旧设置已自动适配（策略 ${String(fastActionSettings.timeout_policy_revision || "v3")}` +
       (fastActionSettings.timeout_migrated === true ? " · 旧4秒策略已安全迁移到6秒" : "")
     : "有效超时：读取中";
   button.disabled = !writable || (enabled && !select.value);
@@ -778,7 +778,7 @@ function renderFastActionSettings(settings) {
   const messages = {
     ready: "快速动作模型已就绪，动作与主回复会并行处理。",
     disabled: "快速动作已关闭；动作继续由临专属链路主回复处理。",
-    provider_not_configured: "功能默认开启，请选择一个响应较快的 Provider。",
+    provider_not_configured: "功能默认开启，请选择一个响应较快的模型服务。",
     selected_missing: "已选快速模型当前不可用；动作会回退临专属链路主回复，不会自动换模型。",
     llm_api_unavailable: "当前 AstrBot 版本未提供快速模型调用接口。"
   };
@@ -862,11 +862,11 @@ function renderSttSettings(settings) {
   button.disabled = !writable;
 
   const messages = {
-    ready: "所选 STT Provider 已就绪。",
-    selected_missing: "所选 STT Provider 已删除、禁用或尚未实例化；不会自动切换其他模型。",
-    legacy_default_ready: "正在兼容旧版默认 STT 设置；请保存一个明确的 STT Provider。",
-    legacy_default_missing: "旧版默认 STT 当前不可用；请重新选择正式 STT Provider。",
-    legacy_private_mimo_disabled: "旧版插件私有 MiMo 配置已停用；请改选 AstrBot 正式 STT Provider。",
+    ready: "所选语音识别模型服务商已就绪。",
+    selected_missing: "所选语音识别模型服务商已删除、禁用或尚未实例化；不会自动切换其他模型。",
+    legacy_default_ready: "正在兼容旧版默认 STT 设置；请保存一个明确的语音识别模型服务商。",
+    legacy_default_missing: "旧版默认 STT 当前不可用；请重新选择正式语音识别模型服务商。",
+    legacy_private_mimo_disabled: "旧版插件私有 MiMo 配置已停用；请改选 AstrBot 正式语音识别模型服务商。",
     disabled: "Quest 语音识别已关闭；文本对话不受影响。",
     adapter_unavailable: "当前 Bridge 没有可用的 STT 适配器；文本对话不受影响。",
     closed: "语音识别适配器已关闭。"
@@ -952,7 +952,7 @@ function renderPlatformSettings(platform) {
   const messages = {
     ready: "\u5df2\u8fde\u63a5\u8be5\u5e73\u53f0\uff0c\u7528\u4e8e\u4e34\u4e13\u5c5e\u94fe\u8def\u7684\u5408\u6210\u4e8b\u4ef6\u4e0e\u8eab\u4efd\u4e0a\u4e0b\u6587\uff1b\u666e\u901a\u5bf9\u8bdd\u4e0d\u8fdb\u5165 AstrBot EventBus\u3002",
     trusted_platform_not_configured: "\u5c1a\u672a\u914d\u7f6e\u53ef\u4fe1\u5e73\u53f0\uff0c\u666e\u901a\u5bf9\u8bdd\u6682\u4e0d\u53ef\u7528\u3002\u8bf7\u4fdd\u5b58\u5df2\u542f\u7528\u7684 AstrBot \u5e73\u53f0\u5b9e\u4f8b ID\u3002",
-    astrbot_event_api_unavailable: "\u5f53\u524d AstrBot \u7248\u672c\u4e0d\u63d0\u4f9b EventBus \u5e73\u53f0\u63a5\u53e3\u3002",
+    astrbot_event_api_unavailable: "当前 AstrBot 版本不提供共享消息链路接口。",
     trusted_platform_unavailable: "\u5df2\u914d\u7f6e\u7684\u5e73\u53f0\u5f53\u524d\u4e0d\u5b58\u5728\u6216\u672a\u542f\u7528\u3002",
     disabled: "AstrBot \u6b63\u5f0f\u6d88\u606f\u94fe\u8def\u5df2\u5173\u95ed\u3002"
   };
@@ -2643,7 +2643,7 @@ function diagnosticMeta(event) {
     parts.push(`活跃 ${Math.round(event.active_ms)}ms`);
   }
   if (Number.isFinite(event.provider_wait_ms) && event.provider_wait_ms > 0) {
-    parts.push(`Provider 等待 ${Math.round(event.provider_wait_ms)}ms`);
+    parts.push(`模型服务商等待 ${Math.round(event.provider_wait_ms)}ms`);
   }
   if (Number.isFinite(event.provider_total_ms) && event.provider_total_ms > 0) {
     parts.push(`Provider 总 ${Math.round(event.provider_total_ms)}ms`);
@@ -2891,7 +2891,7 @@ function renderUnifiedTimeline(client, serverEvents) {
           parts.push(`耗时 ${Math.round(event.wall_ms)}ms`);
         }
         if (Number.isFinite(event.provider_wait_ms) && event.provider_wait_ms > 0) {
-          parts.push(`Provider 等待 ${Math.round(event.provider_wait_ms)}ms`);
+          parts.push(`模型服务商等待 ${Math.round(event.provider_wait_ms)}ms`);
         }
         line.textContent = parts.join(" · ");
         container.append(line);
