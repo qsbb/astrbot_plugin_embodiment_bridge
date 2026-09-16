@@ -85,7 +85,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.7.5"
+__version__ = "1.7.6"
 
 # SSE 面板流必须是短时、可取消的观测窗口，不能把浏览器长连接变成常驻任务。
 WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS = 1.0
@@ -1307,6 +1307,155 @@ class EmbodimentBridgePlugin(Star):
 
     def series_control_snapshot(self) -> dict[str, Any]:
         return self.series_control.series_control_snapshot()
+
+    async def series_control_native_write(
+        self, patch: dict[str, Any], *, expected_revision: int | None = None
+    ) -> dict[str, Any]:
+        """一键固化入口（核调用）：把值写进本插件自身的 AstrBot 配置。
+
+        配置所有权仍在本插件：核只提交白名单字段，本插件负责备份、
+        校验、落盘与运行时同步，任何失败都回滚内存并返回 error。
+        """
+        return await self.series_control.series_control_native_write(
+            patch, expected_revision=expected_revision
+        )
+
+    def _log_series_control_warning(self, message: str, exc: object) -> None:
+        """固化路径的告警：诊断日志不可用时不得影响主流程。"""
+        logger = getattr(self, "_component_logger", None)
+        warning = getattr(logger, "warning", None)
+        if not callable(warning):
+            return
+        try:
+            warning(message, exc)
+        except Exception:
+            pass
+
+    def _backup_native_config(self) -> str:
+        """写原生配置前先备份当前原生值，返回 backup_id。
+
+        AstrBot 配置文件的物理路径不在插件控制范围内，因此备份写入插件
+        数据目录：`native-backup-<UTC 时间戳>.json`（含原生值快照与当前
+        配置映射），供人工恢复。失败返回空串并记录 warning。
+        """
+        try:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            payload: dict[str, Any] = {
+                "plugin_id": "astrbot_plugin_embodiment_bridge",
+                "series_id": "ningxin_suxi",
+                "backup_id": stamp,
+                "native_values": self.series_control.native_values(),
+            }
+            try:
+                document = {str(key): value for key, value in self.config.items()}
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                document = {}
+            if document:
+                payload["config"] = document
+            target = self.data_dir / f"native-backup-{stamp}.json"
+            tmp_path = target.with_name(f".{target.name}.tmp")
+            tmp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            tmp_path.replace(target)
+            return stamp
+        except Exception as exc:
+            self._log_series_control_warning(
+                "[embodiment-bridge] native backup failed: %s", exc
+            )
+            return ""
+
+    def _restore_series_control_values(
+        self, previous: dict[str, tuple[bool, Any]]
+    ) -> None:
+        """落盘失败时回滚内存里的原生配置值。"""
+        for key, (existed, value) in previous.items():
+            try:
+                if existed:
+                    self.config[key] = value
+                else:
+                    self.config.pop(key, None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                continue
+
+    def _resync_series_control_runtime(self) -> None:
+        """按当前模式与覆盖层重新应用运行时策略（失败不改配置）。"""
+        try:
+            self.series_control.sync_runtime()
+        except Exception as exc:
+            self._log_series_control_warning(
+                "[embodiment-bridge] series control resync failed: %s", exc
+            )
+
+    async def _apply_native_series_control_values(
+        self, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        """把给定字段写进原生配置并落盘（固化用；失败不改内存）。"""
+        if not isinstance(values, dict) or not values:
+            return {"status": "error", "reason": "INVALID_PATCH"}
+        clean = {str(name): value for name, value in values.items()}
+        backup_id = self._backup_native_config()
+        try:
+            writable = config_is_writable(self.config)
+        except Exception:
+            writable = False
+        if not writable:
+            return {
+                "status": "error",
+                "reason": "PERSIST_FAILED:native_config_unavailable",
+            }
+
+        previous: dict[str, tuple[bool, Any]] = {}
+        for key in clean:
+            try:
+                exists = key in self.config
+            except TypeError:
+                exists = False
+            try:
+                value = self.config.get(key)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                value = None
+            previous[key] = (exists, value)
+
+        try:
+            async with self._config_save_lock:
+                try:
+                    committed = await save_config_changes(self.config, dict(clean))
+                except Exception as exc:
+                    self._restore_series_control_values(previous)
+                    self._resync_series_control_runtime()
+                    return {
+                        "status": "error",
+                        "reason": f"PERSIST_FAILED:{exc}",
+                    }
+                if committed is not True:
+                    self._restore_series_control_values(previous)
+                    self._resync_series_control_runtime()
+                    return {
+                        "status": "error",
+                        "reason": "PERSIST_FAILED:superseded",
+                    }
+        except Exception as exc:
+            self._restore_series_control_values(previous)
+            self._resync_series_control_runtime()
+            return {"status": "error", "reason": f"PERSIST_FAILED:{exc}"}
+
+        # 不同 AstrBot 版本的保存 API 不保证回写内存，这里显式合并一次。
+        try:
+            for key, value in clean.items():
+                self.config[key] = value
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            self._log_series_control_warning(
+                "[embodiment-bridge] native config memory sync failed: %s", exc
+            )
+        self._resync_series_control_runtime()
+        return {
+            "status": "ok",
+            "written": sorted(clean),
+            "skipped": [],
+            "backup_id": backup_id,
+        }
 
     def series_control_set_mode(self, mode: str) -> dict[str, Any]:
         return self.series_control.series_control_set_mode(mode)

@@ -9,6 +9,7 @@ identity configuration through the series contract.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import tempfile
@@ -220,9 +221,11 @@ class SeriesControlAdapter:
             "capabilities": [
                 "read_schema",
                 "read_snapshot",
+                "read_native",
                 "validate_patch",
                 "apply_patch",
                 "reset_override",
+                "write_native",
             ],
             "read_only": False,
             "secrets_in_response": False,
@@ -254,14 +257,71 @@ class SeriesControlAdapter:
     def series_control_snapshot(self) -> dict[str, Any]:
         fields: dict[str, dict[str, Any]] = {}
         for name in _FIELDS:
+            spec = _FIELDS[name]
             managed = name in self._overlay and self._mode == "managed"
-            fields[name] = {
+            item: dict[str, Any] = {
                 "native_configured": self._native_configured(name),
                 "managed_configured": name in self._overlay,
                 "effective_source": "managed" if managed else "plugin",
                 "effective_value": self.effective_value(name),
             }
+            # 原生配置现值：供核「一键读取 / 一键固化」使用；secret 不回传。
+            if spec.get("secret") or spec.get("write_only"):
+                item["secret"] = True
+            else:
+                item["native_value"] = self._native(name)
+            fields[name] = item
         return {"status": "ok", "revision": self._revision, "fields": fields}
+
+    def native_values(self) -> dict[str, Any]:
+        """原生配置现值快照（固化备份与一键读取共用）。"""
+        return {name: self._native(name) for name in _FIELDS}
+
+    async def series_control_native_write(
+        self, patch: dict[str, Any], *, expected_revision: int | None = None
+    ) -> dict[str, Any]:
+        """一键固化：把当前生效值写入插件自身配置（核掉线后仍按此运行）。
+
+        只接受 _FIELDS 内的可写字段；先复用本仓白名单 + 类型校验，
+        再交给插件层备份 + 原子落盘。任何失败都返回 error，不修改覆盖层。
+        """
+        revision = self._revision if expected_revision is None else expected_revision
+        result = self._validate(dict(patch or {}), revision)
+        if result.get("status") != "ok":
+            return result
+        clean = dict(result.get("patch") or {})
+        hook = getattr(self.plugin, "_apply_native_series_control_values", None)
+        if not callable(hook):
+            return {
+                "status": "error",
+                "reason": "UNSUPPORTED",
+                "revision": self._revision,
+            }
+        try:
+            outcome = hook(clean)
+            if inspect.isawaitable(outcome):
+                outcome = await outcome
+        except Exception as exc:
+            return {
+                "status": "error",
+                "reason": f"PERSIST_FAILED:{exc}",
+                "revision": self._revision,
+            }
+        if not isinstance(outcome, dict) or outcome.get("status") != "ok":
+            reason = str((outcome or {}).get("reason") or "PERSIST_FAILED")
+            return {
+                "status": "error",
+                "reason": reason,
+                "revision": self._revision,
+            }
+        return {
+            "status": "ok",
+            "reason": "APPLIED",
+            "revision": self._revision,
+            "written": list(outcome.get("written") or sorted(clean)),
+            "skipped": list(outcome.get("skipped") or []),
+            "backup_id": str(outcome.get("backup_id") or ""),
+        }
 
     def _validate(self, patch: dict[str, Any], expected_revision: int) -> dict[str, Any]:
         if expected_revision != self._revision:

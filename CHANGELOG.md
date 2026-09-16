@@ -1,4 +1,9 @@
 ## Unreleased
+## 1.7.6 - 2026-09-16
+
+### 变更
+
+- 支持核接管「一键读取当前配置 / 一键固化到插件」：snapshot 暴露 native_value；固化走 AstrBot save_config_changes 原子落盘（先备份快照、失败回滚运行时与内存）。
 
 ## 1.7.5 - 2026-09-14
 
