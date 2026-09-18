@@ -219,10 +219,8 @@ class BridgeServiceControl:
             # 只含名称/状态/可用性/原因码与 label，绝不含身份标识与密钥。
             "integrations": _integration_projection(integrations),
             "capabilities": {
-                # Legacy aggregate retained for existing clients.  New clients
-                # should use the explicit fields below.  eventbus 两个键自
-                # 1.3.0 起废弃（主消息链路已移除），恒 False，仅为不破坏旧
-                # 客户端解析而保留键位。
+                # 兼容字段：eventbus / eventbus_dialogue 恒为 False，
+                # 仅保留键位供旧客户端解析；新客户端请使用下方显式字段。
                 "dialogue": bridge_dialogue or direct_provider_fallback,
                 "bridge": bridge_dialogue,
                 "eventbus": False,

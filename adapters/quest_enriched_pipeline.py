@@ -9,7 +9,7 @@
 - 直管调用 ``context.llm_generate(chat_provider_id=...)``，不进 AstrBot 的
   ProcessStage / agent_runner。
 
-本模块只新增、不改写现有事件总线路径；QQ 链路不受影响。
+本模块独立于 AstrBot 的 ProcessStage / agent_runner 运行。
 """
 
 from __future__ import annotations

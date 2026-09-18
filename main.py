@@ -85,7 +85,7 @@ from .transport.http_sse import HttpSseTransport, TransportConfig
 from .transport.pairing import PairingHttpApi
 
 
-__version__ = "1.7.6"
+__version__ = "1.7.7"
 
 # SSE 面板流必须是短时、可取消的观测窗口，不能把浏览器长连接变成常驻任务。
 WEBUI_SERVICE_STATUS_STREAM_INTERVAL_SECONDS = 1.0
@@ -464,8 +464,7 @@ class EmbodimentBridgePlugin(Star):
             relationship_person_id=relationship_person_id,
             identity_sync_ready=identity_sync_ready,
         )
-        # 临专属链路（Quest 专用富化直管链）自 1.3.0 起是唯一对话链路：
-        # AstrBot 共享事件总线路径已移除，全部具身对话只走临。
+        # 临专属链路（Quest 专用富化直管链）是唯一的对话链路。
         self.quest_enriched_pipeline = QuestEnrichedPipelineAdapter(
             context,
             self._component_logger,

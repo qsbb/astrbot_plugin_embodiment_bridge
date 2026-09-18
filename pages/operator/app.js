@@ -43,7 +43,7 @@ const notify = (message, error = false) => {
     window.SeriesUI.toast(message, error ? "error" : "info");
     return;
   }
-  const fallback = document.querySelector("[data-toast-fallback], #bridge-error, #startup-error, #page-error");
+  const fallback = document.querySelector("#startup-error");
   if (fallback) {
     fallback.textContent = String(message || "");
     fallback.hidden = false;
@@ -65,6 +65,8 @@ function setDiagnosticAutoScroll(enabled) {
   }
 }
 
+// resolveBridge / parseResponse / apiGet / apiPost 与系列共享实现同源：
+// 跨插件自包含，刻意不随 series-ui 分发，改动需与各仓共享副本保持同步。
 async function resolveBridge(timeout = 8000) {
   if (window.AstrBotPluginPage) return window.AstrBotPluginPage;
   if (typeof window.waitForAstrBotBridge === "function") {
@@ -827,7 +829,7 @@ function renderFastActionSettings(settings) {
   );
   status.textContent = writable
     ? messages[reason] || (enabled
-      ? "快速动作状态未知，普通回复链路不受影响。"
+      ? "快速动作状态未知。"
       : messages.disabled)
     : "当前 AstrBot 配置对象不支持安全保存。";
 }
@@ -3547,6 +3549,7 @@ function withBridgeTimeout(promise, timeout, message) {
   });
 }
 
+// 见文件上方说明：apiGet / apiPost 与系列共享实现同源，跨插件自包含，不随 series-ui 分发。
 async function apiGet(name) {
   if (!bridge || !bridgeReady) throw new Error("页面 Bridge 尚未连接");
   return parseResponse(

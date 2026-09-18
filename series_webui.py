@@ -428,7 +428,7 @@ class SeriesWebUIPanels:
             "rows": rows,
             "actions": self._actions(),
             "footer": (
-                "EventBus 主消息链路自 1.3.0 起已移除，因此只读展示为固定关闭；"
+                "EventBus 链路已停用；"
                 "配对 token、短码、设备密钥、绑定地址与底层路径均不会返回。"
             ),
         }

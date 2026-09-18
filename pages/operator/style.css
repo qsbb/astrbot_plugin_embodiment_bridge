@@ -656,7 +656,10 @@ body[data-series-ui] .diagnostic-line.status-timeout {
 }
 
 body[data-series-ui] .diagnostics-empty { margin: 0; color: var(--si-muted); font-size: 13px; }
-body[data-series-ui] .inline-actions { display: flex; justify-content: flex-start; }
+body[data-series-ui] .inline-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; }
+
+/* 「实现说明」折叠块：正文段落在盒内留白 */
+body[data-series-ui] .si-disclosure > p { margin: 0; padding: 11px 14px; }
 
 body[data-series-ui] .identity-basic-card {
   display: grid;
@@ -1103,9 +1106,8 @@ body[data-series-ui] .run-summary .metric-item + .metric-item {
 body[data-series-ui] .run-summary .metric-item strong { font-size: 15px; }
 body[data-series-ui] .run-summary-capability { display: grid; gap: 8px; align-content: start; }
 body[data-series-ui] .run-summary .capability-health { margin: 0; }
-body[data-series-ui] .run-summary-hint { margin: 0; }
 
-/* 卡内能力条改紧凑 pill：含义走 title，明细由页头 chip 或本区块展开 */
+/* 卡内能力条改紧凑 pill：含义由可见 hint 整行展示，宽窄屏策略一致 */
 body[data-series-ui] .run-summary .capability-strip {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
@@ -1114,6 +1116,7 @@ body[data-series-ui] .run-summary .capability-strip {
 
 body[data-series-ui] .run-summary .capability-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   min-height: 0;
@@ -1134,7 +1137,7 @@ body[data-series-ui] .run-summary .capability-item span:not(.capability-dot) {
 }
 
 body[data-series-ui] .run-summary .capability-item strong { flex: 0 0 auto; font-size: 12px; }
-body[data-series-ui] .run-summary .capability-hint { display: none; }
+body[data-series-ui] .run-summary .capability-hint { flex-basis: 100%; }
 
 /* 「服务」二级面板：连接信息 + 缺项一键跳转 */
 body[data-series-ui] .connection-facts {
@@ -1250,8 +1253,6 @@ body[data-series-ui] .runtime-state.state-chip.is-open .state-chip-caret {
     grid-column: 2;
     grid-row: 1;
   }
-  body[data-series-ui] .run-summary .capability-hint,
-  body[data-series-ui] .run-summary-hint { display: none; }
   body[data-series-ui] .run-summary .metric-item { padding: 4px 10px; }
   body[data-series-ui] .run-summary .metric-item strong { font-size: 15px; }
 }
