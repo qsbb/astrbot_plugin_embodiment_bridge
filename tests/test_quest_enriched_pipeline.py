@@ -12,6 +12,7 @@ from astrbot_plugin_embodiment_bridge.adapters.astrbot_pipeline import (
     MessagePipelineEmpty,
     MessagePipelineUnavailable,
 )
+from .test_model_router_integration import Router, route
 
 
 # --------------------------------------------------------------------------- #
@@ -109,6 +110,7 @@ def make_adapter(
     enabled: bool = True,
     per_hook_budget: float = 6.0,
     platform_id: str = "qq",
+    chat_provider_id: str = "deepseek/test",
     **kwargs: Any,
 ) -> qep.QuestEnrichedPipelineAdapter:
     ctx = context or ContextStub()
@@ -142,7 +144,7 @@ def make_adapter(
         SimpleNamespace(),
         enabled=enabled,
         platform_id=platform_id,
-        chat_provider_id="deepseek/test",
+        chat_provider_id=chat_provider_id,
         per_hook_budget_seconds=per_hook_budget,
         **kwargs,
     )
@@ -396,5 +398,212 @@ def test_excluded_plugin_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
         sent = context.last_llm_kwargs
         assert "[应被跳过]" not in sent["system_prompt"]
         assert "[保留]" in sent["system_prompt"]
+
+    asyncio.run(scenario())
+
+
+# --------------------------------------------------------------------------- #
+# 聊天 Provider 路由（本地显式 → 核 conversation → 原有失败行为）
+# --------------------------------------------------------------------------- #
+
+
+class RoutedContextStub(ContextStub):
+    """ContextStub + 核路由（官方 ``get_registered_star`` → ``star_cls``）。"""
+
+    def __init__(
+        self,
+        *,
+        providers: tuple[str, ...] = (),
+        router: Any | None = None,
+        star_error: Exception | None = None,
+        llm_text: str = "核路由的回复。",
+    ) -> None:
+        super().__init__(llm_text=llm_text)
+        self.provider_ids = set(providers)
+        self.router = router
+        self.star_error = star_error
+        self.calls: list[dict[str, Any]] = []
+        self.provider_calls: list[str] = []
+        self.star_calls: list[str] = []
+
+    def get_provider_by_id(self, provider_id: str) -> Any:
+        self.provider_calls.append(provider_id)
+        return object() if provider_id in self.provider_ids else None
+
+    def get_registered_star(self, star_name: str) -> Any:
+        self.star_calls.append(star_name)
+        if self.star_error is not None:
+            raise self.star_error
+        if self.router is None:
+            return None
+        return SimpleNamespace(name=star_name, star_cls=self.router)
+
+    async def llm_generate(self, **kwargs: Any) -> Any:
+        self.calls.append(dict(kwargs))
+        self.last_llm_kwargs = kwargs
+        return SimpleNamespace(completion_text=self.llm_text, result_chain=None)
+
+
+def test_quest_chain_prefers_local_provider_without_core_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        router = Router(
+            {
+                "conversation": route(
+                    "conversation", provider_id="core-chat", model="core-model"
+                )
+            }
+        )
+        context = RoutedContextStub(
+            providers=("local-chat", "core-chat"), router=router
+        )
+        adapter = make_adapter(
+            monkeypatch, context=context, chat_provider_id="local-chat"
+        )
+
+        assert adapter.availability_reason == "ready"
+        decision = await adapter.generate(session=make_session(), user_text="你好")
+
+        assert decision.should_reply is True
+        sent = context.last_llm_kwargs
+        assert sent["chat_provider_id"] == "local-chat"
+        assert "model" not in sent
+        # 本地显式 Provider 有效时完全不碰核
+        assert router.calls == []
+
+    asyncio.run(scenario())
+
+
+def test_quest_chain_uses_core_conversation_route_and_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        router = Router(
+            {
+                "conversation": route(
+                    "conversation", provider_id="core-chat", model="core-model"
+                )
+            }
+        )
+        context = RoutedContextStub(providers=("core-chat",), router=router)
+        # 本地配置已失效（不在 AstrBot 注册表中）→ 走核路由
+        adapter = make_adapter(
+            monkeypatch, context=context, chat_provider_id="stale-chat"
+        )
+
+        assert adapter.availability_reason == "ready"
+        decision = await adapter.generate(session=make_session(), user_text="你好")
+
+        assert decision.should_reply is True
+        sent = context.last_llm_kwargs
+        assert sent["chat_provider_id"] == "core-chat"
+        assert sent["model"] == "core-model"
+        assert set(router.calls) == {"conversation"}
+
+        # 本地为空（未配置）时同样走核路由
+        empty_local = RoutedContextStub(providers=("core-chat",), router=router)
+        unconfigured = make_adapter(
+            monkeypatch, context=empty_local, chat_provider_id=""
+        )
+        assert unconfigured.availability_reason == "ready"
+        await unconfigured.generate(session=make_session(), user_text="你好")
+        assert empty_local.last_llm_kwargs["chat_provider_id"] == "core-chat"
+
+    asyncio.run(scenario())
+
+
+def test_quest_chain_without_local_or_core_keeps_existing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        context = RoutedContextStub()
+        adapter = make_adapter(monkeypatch, context=context, chat_provider_id="")
+
+        assert adapter.availability_reason == "chat_provider_not_configured"
+        with pytest.raises(
+            MessagePipelineUnavailable, match="chat_provider_not_configured"
+        ):
+            await adapter.generate(session=make_session(), user_text="你好")
+
+    asyncio.run(scenario())
+
+
+def test_quest_chain_core_failures_never_break_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        # 本地有效 + 核解析抛异常：本地照常工作。
+        healthy = RoutedContextStub(
+            providers=("local-chat",), router=Router(error=RuntimeError("核坏了"))
+        )
+        local_only = make_adapter(
+            monkeypatch, context=healthy, chat_provider_id="local-chat"
+        )
+        assert local_only.availability_reason == "ready"
+        decision = await local_only.generate(session=make_session(), user_text="你好")
+        assert decision.should_reply is True
+        assert healthy.last_llm_kwargs["chat_provider_id"] == "local-chat"
+        assert "model" not in healthy.last_llm_kwargs
+
+        # 本地无效 + 核解析抛异常 / 核接口本身抛异常：静默回退原有失败行为。
+        for broken in (
+            RoutedContextStub(router=Router(error=RuntimeError("核坏了"))),
+            RoutedContextStub(star_error=RuntimeError("接口坏了")),
+        ):
+            adapter = make_adapter(
+                monkeypatch, context=broken, chat_provider_id="stale-chat"
+            )
+            assert adapter.availability_reason == "chat_provider_not_configured"
+            with pytest.raises(
+                MessagePipelineUnavailable, match="chat_provider_not_configured"
+            ):
+                await adapter.generate(session=make_session(), user_text="你好")
+
+    asyncio.run(scenario())
+
+
+def test_quest_chain_drops_model_when_provider_rejects_the_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        router = Router(
+            {
+                "conversation": route(
+                    "conversation", provider_id="core-chat", model="core-model"
+                )
+            }
+        )
+        context = RoutedContextStub(providers=("core-chat",), router=router)
+        attempts: list[dict[str, Any]] = []
+
+        async def legacy_llm_generate(
+            *,
+            chat_provider_id: str,
+            prompt: str,
+            system_prompt: str,
+            contexts: Any = None,
+            tools: Any = None,
+            image_urls: Any = None,
+        ) -> Any:
+            # 旧版签名不接受 per-call ``model`` 覆写 → 调用即 TypeError。
+            del prompt, system_prompt, contexts, tools, image_urls
+            return SimpleNamespace(
+                completion_text=context.llm_text, result_chain=None
+            )
+
+        async def recording_llm_generate(**kwargs: Any) -> Any:
+            attempts.append(dict(kwargs))
+            return await legacy_llm_generate(**kwargs)
+
+        context.llm_generate = recording_llm_generate  # type: ignore[method-assign]
+        adapter = make_adapter(monkeypatch, context=context, chat_provider_id="")
+
+        decision = await adapter.generate(session=make_session(), user_text="你好")
+
+        assert decision.should_reply is True
+        assert [
+            (item["chat_provider_id"], item.get("model")) for item in attempts
+        ] == [("core-chat", "core-model"), ("core-chat", None)]
 
     asyncio.run(scenario())

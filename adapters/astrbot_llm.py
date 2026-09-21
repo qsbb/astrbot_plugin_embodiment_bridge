@@ -4,6 +4,10 @@ import json
 from typing import Any, Protocol
 
 from .astrbot_persona import AstrBotPersonaAdapter, PersonaSnapshot
+from .model_router import (
+    resolve_model_route as resolve_routed_model_route,
+    resolve_provider_id_if_sync,
+)
 from ..core.intent_parser import IntentParser
 from ..core.models import InteractionEvent, ModelDecision
 
@@ -53,7 +57,9 @@ class AstrBotLLMAdapter:
 
     @property
     def available(self) -> bool:
-        return bool(self.chat_provider_id)
+        if self._local_provider_available():
+            return True
+        return bool(resolve_provider_id_if_sync(self.context, "conversation"))
 
     def configure_provider(self, chat_provider_id: str) -> None:
         self.chat_provider_id = str(chat_provider_id or "").strip()
@@ -109,7 +115,8 @@ class AstrBotLLMAdapter:
         knowledge: list[dict[str, Any]] | None = None,
         environment: dict[str, Any] | None = None,
     ) -> ModelDecision:
-        if not self.chat_provider_id:
+        provider_id, routed_model = await self._resolve_provider_route()
+        if not provider_id:
             raise RuntimeError("chat_provider_id is not configured")
 
         input_payload: dict[str, Any] = {
@@ -127,12 +134,50 @@ class AstrBotLLMAdapter:
             if self.persona_adapter is not None
             else None
         )
-        response = await self.context.llm_generate(
-            chat_provider_id=self.chat_provider_id,
-            prompt=json.dumps(input_payload, ensure_ascii=False, separators=(",", ":")),
-            system_prompt=self._system_prompt(persona_snapshot),
-        )
+        call_kwargs: dict[str, Any] = {
+            "chat_provider_id": provider_id,
+            "prompt": json.dumps(
+                input_payload, ensure_ascii=False, separators=(",", ":")
+            ),
+            "system_prompt": self._system_prompt(persona_snapshot),
+        }
+        if routed_model:
+            call_kwargs["model"] = routed_model
+        try:
+            response = await self.context.llm_generate(**call_kwargs)
+        except TypeError:
+            if "model" not in call_kwargs:
+                raise
+            # Older AstrBot ``llm_generate`` implementations may not accept the
+            # optional per-call model override. Retry once with provider only.
+            call_kwargs.pop("model")
+            response = await self.context.llm_generate(**call_kwargs)
         return self.parser.parse(response.completion_text)
+
+    async def _resolve_provider_route(self) -> tuple[str, str]:
+        """Resolve local explicit -> 核 conversation route -> no provider."""
+        if self._local_provider_available():
+            return self.chat_provider_id, ""
+        route = await resolve_routed_model_route(self.context, "conversation")
+        provider_id = str(route.get("provider_id") or "").strip()
+        if not provider_id:
+            return "", ""
+        model = route.get("model")
+        return provider_id, model if isinstance(model, str) else ""
+
+    def _local_provider_available(self) -> bool:
+        provider_id = self.chat_provider_id
+        if not provider_id:
+            return False
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if not callable(getter):
+            # Older/test contexts do not expose the registry lookup. Preserve
+            # the local explicit-provider behavior in that deployment shape.
+            return True
+        try:
+            return getter(provider_id) is not None
+        except Exception:
+            return False
 
     def _system_prompt(self, inherited: PersonaSnapshot | None = None) -> str:
         if self.quest_persona_prompt:

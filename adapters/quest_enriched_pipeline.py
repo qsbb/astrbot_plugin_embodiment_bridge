@@ -7,7 +7,11 @@
   超时熔断，慢钩子（如 memory_companion）超时即跳过并用该插件最近一次成功
   注入的缓存片段兜底，绝不让单个钩子拖死整轮；
 - 直管调用 ``context.llm_generate(chat_provider_id=...)``，不进 AstrBot 的
-  ProcessStage / agent_runner。
+  ProcessStage / agent_runner；
+- 聊天 Provider 解析顺序与 ``adapters/astrbot_llm.py`` 完全一致：本地显式
+  Provider（经 ``get_provider_by_id`` 校验）→ 核 ``conversation`` 路由（透传核
+  ``model``）→ 直接抛 ``chat_provider_not_configured``。核不可用或任何异常都
+  静默回退到原有行为。
 
 本模块独立于 AstrBot 的 ProcessStage / agent_runner 运行。
 """
@@ -34,6 +38,10 @@ from .astrbot_pipeline import (
     _abort_synthetic_event,
     _build_capture_event,
     _session_spatial_context,
+)
+from .model_router import (
+    resolve_model_route as resolve_routed_model_route,
+    resolve_provider_id_if_sync,
 )
 
 # 钩子贡献缓存片段的最大长度，避免异常插件撑爆内存。
@@ -143,7 +151,10 @@ class QuestEnrichedPipelineAdapter:
             return "disabled"
         if not self.platform_id:
             return "trusted_platform_not_configured"
-        if not self.chat_provider_id:
+        if (
+            not self._local_provider_available()
+            and not self._routed_provider_if_sync()
+        ):
             return "chat_provider_not_configured"
         try:
             platform_getter = self.context.get_platform_inst
@@ -209,7 +220,10 @@ class QuestEnrichedPipelineAdapter:
             raise MessagePipelineUnavailable("protected_context_not_authorized")
         if not self.platform_id:
             raise MessagePipelineUnavailable("trusted_platform_not_configured")
-        if not self.chat_provider_id:
+        # 本地显式 Provider 无效时先试核 conversation 路由；都拿不到才维持
+        # 原有行为（抛 chat_provider_not_configured）。
+        provider_id, _ = await self._resolve_provider_route()
+        if not provider_id:
             raise MessagePipelineUnavailable("chat_provider_not_configured")
 
         try:
@@ -512,21 +526,81 @@ class QuestEnrichedPipelineAdapter:
         llm_generate = _llm_generate(self.context)
         if llm_generate is None:
             raise MessagePipelineUnavailable("astrbot_llm_api_unavailable")
+        # 调用前解析：本地显式 Provider 优先（不带核 model），否则核
+        # conversation 路由（透传核 model），都没有则不调用。
+        provider_id, routed_model = await self._resolve_provider_route()
+        if not provider_id:
+            raise MessagePipelineUnavailable("chat_provider_not_configured")
         contexts = [dict(item) for item in (req.contexts or []) if isinstance(item, dict)]
+        call_kwargs: dict[str, Any] = {
+            "chat_provider_id": provider_id,
+            "prompt": str(getattr(req, "prompt", "") or ""),
+            "system_prompt": str(getattr(req, "system_prompt", "") or ""),
+            "contexts": contexts,
+            "tools": None,
+            "image_urls": list(getattr(req, "image_urls", None) or []),
+        }
+        if routed_model:
+            call_kwargs["model"] = routed_model
+        try:
+            return await self._invoke_llm(llm_generate, call_kwargs)
+        except TypeError:
+            if "model" not in call_kwargs:
+                raise
+            # 旧版 AstrBot 的 llm_generate 不接受 per-call model 覆写时，
+            # 去掉 model 重试一次，绝不让路由元数据打断本轮。
+            call_kwargs.pop("model")
+            return await self._invoke_llm(llm_generate, call_kwargs)
+
+    async def _invoke_llm(self, llm_generate: Any, call_kwargs: dict[str, Any]) -> Any:
         try:
             return await asyncio.wait_for(
-                llm_generate(
-                    chat_provider_id=self.chat_provider_id,
-                    prompt=str(getattr(req, "prompt", "") or ""),
-                    system_prompt=str(getattr(req, "system_prompt", "") or ""),
-                    contexts=contexts,
-                    tools=None,
-                    image_urls=list(getattr(req, "image_urls", None) or []),
-                ),
+                llm_generate(**call_kwargs),
                 timeout=self.llm_timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
-            raise MessagePipelineUnavailable("quest_enriched_pipeline_llm_timeout") from exc
+            raise MessagePipelineUnavailable(
+                "quest_enriched_pipeline_llm_timeout"
+            ) from exc
+
+    async def _resolve_provider_route(self) -> tuple[str, str]:
+        """解析本轮聊天 Provider：本地显式 → 核 conversation 路由 → 空。
+
+        返回 ``(provider_id, model)``。本地显式 Provider 命中时不带核 model；
+        核不可用或任何异常都静默返回空串，由调用方维持原有失败行为。
+        """
+        if self._local_provider_available():
+            return self.chat_provider_id, ""
+        try:
+            route = await resolve_routed_model_route(self.context, "conversation")
+        except Exception:
+            return "", ""
+        provider_id = str(route.get("provider_id") or "").strip()
+        if not provider_id:
+            return "", ""
+        model = route.get("model")
+        return provider_id, model if isinstance(model, str) else ""
+
+    def _local_provider_available(self) -> bool:
+        """本地显式 Provider 是否仍然有效（本地优先且不得带核 model）。"""
+        provider_id = self.chat_provider_id
+        if not provider_id:
+            return False
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if not callable(getter):
+            # 旧版/测试上下文不暴露注册表查询：保持既有本地显式行为。
+            return True
+        try:
+            return getter(provider_id) is not None
+        except Exception:
+            return False
+
+    def _routed_provider_if_sync(self) -> str:
+        """同步只读视图：核 conversation 路由的 provider id（失败为 ``""``）。"""
+        try:
+            return resolve_provider_id_if_sync(self.context, "conversation")
+        except Exception:
+            return ""
 
     # ------------------------------------------------------ contribution cache
     def _record_contribution(

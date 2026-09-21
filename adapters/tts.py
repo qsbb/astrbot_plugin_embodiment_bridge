@@ -8,6 +8,10 @@ from typing import Protocol
 import warnings
 import wave
 
+from .model_router import (
+    resolve_model_route as resolve_routed_model_route,
+    resolve_provider_id_if_sync,
+)
 from .stt import AdapterUnavailable
 
 
@@ -108,7 +112,7 @@ class AstrBotTTSAdapter:
         del emotion
         if self._closed or not self.enabled:
             raise AdapterUnavailable("AstrBot TTS adapter is disabled")
-        provider = self._provider()
+        provider = await self._resolve_provider()
         if provider is None:
             raise AdapterUnavailable("AstrBot TTS provider is not configured")
         if not text.strip():
@@ -134,11 +138,48 @@ class AstrBotTTSAdapter:
         self._closed = True
 
     def _provider(self) -> Any | None:
+        """Best-effort sync provider view for availability/status properties."""
         if not self.enabled:
             return None
+        routed = self._routed_provider_if_sync()
+        if routed is not None:
+            return routed
+        return self._default_provider()
+
+    async def _resolve_provider(self) -> Any | None:
+        """Resolve 核 TTS route before AstrBot's selected TTS provider."""
+        # 核的 ``voice`` 字段有意不消费：AstrBot 原生 TTSProvider 的
+        # ``get_audio(text)`` 不接收音色参数，音色只能由 provider 自身配置决定。
+        route = await resolve_routed_model_route(self.context, "tts")
+        routed_id = str(route.get("provider_id") or "").strip()
+        if routed_id:
+            routed = self._provider_by_id(routed_id)
+            if routed is not None:
+                return routed
+        return self._default_provider()
+
+    def _routed_provider_if_sync(self) -> Any | None:
+        try:
+            provider_id = resolve_provider_id_if_sync(self.context, "tts")
+        except Exception:
+            return None
+        return self._provider_by_id(provider_id) if provider_id else None
+
+    def _provider_by_id(self, provider_id: str) -> Any | None:
+        if not provider_id:
+            return None
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(provider_id)
+        except Exception:
+            return None
+
+    def _default_provider(self) -> Any | None:
         try:
             return self.context.get_using_tts_provider()
-        except (RuntimeError, ValueError):
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return None
 
 

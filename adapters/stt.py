@@ -6,6 +6,11 @@ from typing import Any, AsyncIterator, Protocol
 from uuid import uuid4
 import wave
 
+from .model_router import (
+    resolve_model_route as resolve_routed_model_route,
+    resolve_provider_id_if_sync,
+)
+
 
 INPUT_SAMPLE_RATE = 16_000
 INPUT_CHANNELS = 1
@@ -100,7 +105,7 @@ class AstrBotSTTAdapter:
             raise AdapterUnavailable("AstrBot STT adapter is disabled")
         if sample_rate != INPUT_SAMPLE_RATE:
             raise ValueError("STT input sample rate must be 16000 Hz")
-        provider = self._provider()
+        provider = await self._resolve_provider()
         method = getattr(provider, "transcribe_stream", None) if provider else None
         if not callable(method):
             raise AdapterUnavailable("Selected AstrBot STT provider has no streaming contract")
@@ -119,7 +124,7 @@ class AstrBotSTTAdapter:
     async def transcribe(self, pcm16: bytes, *, sample_rate: int) -> str:
         if self._closed:
             raise AdapterUnavailable("AstrBot STT adapter is disabled")
-        provider = self._provider()
+        provider = await self._resolve_provider()
         if provider is None:
             raise AdapterUnavailable(f"AstrBot STT unavailable: {self.status_reason}")
         if sample_rate != INPUT_SAMPLE_RATE:
@@ -231,20 +236,68 @@ class AstrBotSTTAdapter:
         return result
 
     def _provider(self) -> Any | None:
+        """Best-effort sync provider view for availability/status properties."""
         if self.provider_id:
-            return self._selected_provider()
+            selected = self._selected_provider()
+            if selected is not None:
+                return selected
+        routed = self._routed_provider_if_sync()
+        if routed is not None:
+            return routed
+        if self.provider_id:
+            # An explicitly selected local provider is fail-closed: never
+            # silently replace it with AstrBot's default after core fallback.
+            return None
         if self.legacy_default_enabled:
             return self._default_provider()
         return None
 
-    def _selected_provider(self) -> Any | None:
+    async def _resolve_provider(self) -> Any | None:
+        """Resolve local explicit -> 核 STT route -> legacy/default fallback."""
+        if self.provider_id:
+            selected = self._selected_provider()
+            if selected is not None:
+                return selected
+        route = await resolve_routed_model_route(self.context, "stt")
+        routed_id = str(route.get("provider_id") or "").strip()
+        if routed_id:
+            routed = self._provider_by_id(routed_id)
+            if routed is not None:
+                return routed
+        if self.provider_id:
+            return None
+        if self.legacy_default_enabled:
+            return self._default_provider()
+        return None
+
+    def _routed_provider_if_sync(self) -> Any | None:
+        try:
+            provider_id = resolve_provider_id_if_sync(self.context, "stt")
+        except Exception:
+            return None
+        return self._provider_by_id(provider_id) if provider_id else None
+
+    def _provider_by_id(self, provider_id: str) -> Any | None:
+        if not provider_id:
+            return None
+        getter = getattr(self.context, "get_provider_by_id", None)
+        if callable(getter):
+            try:
+                provider = getter(provider_id)
+                if provider is not None:
+                    return provider
+            except Exception:
+                return None
         for provider in self._all_providers():
             try:
-                if str(provider.meta().id or "").strip() == self.provider_id:
+                if str(provider.meta().id or "").strip() == provider_id:
                     return provider
             except (AttributeError, RuntimeError, TypeError, ValueError):
                 continue
         return None
+
+    def _selected_provider(self) -> Any | None:
+        return self._provider_by_id(self.provider_id)
 
     def _default_provider(self) -> Any | None:
         try:
